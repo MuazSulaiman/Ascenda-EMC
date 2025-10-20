@@ -1742,59 +1742,122 @@ def page_admin_import():
     st.subheader("5) Items (Products)")
     st.write("Columns: **product_id**, article_number, description, **business_unit**, **business_line**")
 
+    # Build a clean BU -> BL mapping once
     bl_df_lookup = query_df("""
-        SELECT bl.business_line_id, bl.name AS business_line, bu.name AS business_unit
+        SELECT bl.business_line_id AS bl_id,
+               bl.name            AS business_line,
+               bu.name            AS business_unit
         FROM business_lines bl
         JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
         WHERE bu.is_active IS TRUE AND bl.is_active IS TRUE
         ORDER BY bu.name, bl.name
     """)
-    bu_bl_to_id = {(r.business_unit.strip().lower(), r.business_line.strip().lower()): int(r.business_line_id)
-                   for r in bl_df_lookup.itertuples(index=False)}
 
-    with popout("➕ Add Item"):
-        with st.form("add_item_form", clear_on_submit=True):
-            product_id = st.text_input("Product ID * (must be unique)")
-            article = st.text_input("Article Number")
-            desc = st.text_input("Description")
-            bu_opts = [""] + sorted(list({r.business_unit for r in bl_df_lookup.itertuples(index=False)}))
-            sel_bu = st.selectbox("Business Unit *", bu_opts, index=0)
-            bl_opts = [""] if not sel_bu else [""] + [r.business_line for r in bl_df_lookup.itertuples(index=False) if r.business_unit == sel_bu]
-            sel_bl = st.selectbox("Business Line *", bl_opts, index=0)
-            submit_item = st.form_submit_button("Save Item", type="primary")
+    # Safeguard if empty
+    if bl_df_lookup.empty:
+        st.info("No active business lines found. Add a Business Line first.")
+    else:
+        # Map BU -> [(BL name, id), ...]
+        bu_to_bls = {}
+        for r in bl_df_lookup.itertuples(index=False):
+            bu_to_bls.setdefault(r.business_unit, []).append((r.business_line, int(r.bl_id)))
 
-        if submit_item:
-            if not (product_id.strip() and sel_bu and sel_bl):
-                st.error("Product ID, Business Unit, and Business Line are required.")
-            else:
-                try:
-                    bl_id = bu_bl_to_id.get((sel_bu.strip().lower(), sel_bl.strip().lower()))
-                    if not bl_id:
-                        st.error("Business Line not found under the selected Business Unit.")
-                    else:
-                        with engine.begin() as conn:
-                            res = conn.execute(
-                                text("""
-                                    INSERT INTO items(
-                                      product_id, article_number, description, business_line_id, is_active
-                                    ) VALUES (:pid, :article, :desc, :blid, TRUE)
-                                    ON CONFLICT (product_id) DO NOTHING
-                                """),
-                                {
-                                    "pid": product_id.strip(),
-                                    "article": (article.strip() or None),
-                                    "desc": (desc.strip() or None),
-                                    "blid": int(bl_id),
-                                },
-                            )
-                        if (res.rowcount or 0) > 0:
-                            st.success("Item added ✅")
+        bu_opts = [""] + sorted(bu_to_bls.keys())
+
+        # --- Reactivity helpers for dependent dropdowns ---
+        def _on_bu_change():
+            # reset BL whenever BU changes
+            st.session_state.setdefault("add_item_bl", "")
+            st.session_state["add_item_bl"] = ""
+
+        # Keep stable defaults in session state
+        st.session_state.setdefault("add_item_bu", "")
+        st.session_state.setdefault("add_item_bl", "")
+
+        # --- Dependent selects (OUTSIDE the form so they rerun immediately) ---
+        sel_bu = st.selectbox(
+            "Business Unit *",
+            options=bu_opts,
+            index=bu_opts.index(st.session_state["add_item_bu"]) if st.session_state["add_item_bu"] in bu_opts else 0,
+            key="add_item_bu",
+            on_change=_on_bu_change,
+        )
+
+        bl_opts = [""]
+        bl_label_to_id = {}
+        if sel_bu:
+            # Only show BLs that belong to selected BU
+            bl_opts += [name for (name, _id) in bu_to_bls.get(sel_bu, [])]
+            bl_label_to_id = {name: _id for (name, _id) in bu_to_bls.get(sel_bu, [])}
+
+        sel_bl = st.selectbox(
+            "Business Line *",
+            options=bl_opts,
+            index=bl_opts.index(st.session_state["add_item_bl"]) if st.session_state["add_item_bl"] in bl_opts else 0,
+            key="add_item_bl",
+            help="Choose a business unit first to load its lines."
+        )
+
+        if sel_bu and not (len(bl_opts) > 1):
+            st.warning("Selected Business Unit has no active Business Lines.")
+
+        # --- Form for the rest of the fields + submit ---
+        with popout("➕ Add Item"):
+            with st.form("add_item_form", clear_on_submit=True):
+                product_id = st.text_input("Product ID * (must be unique)")
+                article    = st.text_input("Article Number")
+                desc       = st.text_input("Description")
+                submit_item = st.form_submit_button("Save Item", type="primary")
+
+            if submit_item:
+                # Pull final BU/BL from session state
+                final_bu = st.session_state.get("add_item_bu", "").strip()
+                final_bl = st.session_state.get("add_item_bl", "").strip()
+
+                if not (product_id.strip() and final_bu and final_bl):
+                    st.error("Product ID, Business Unit, and Business Line are required.")
+                else:
+                    try:
+                        bl_id = bl_label_to_id.get(final_bl) if final_bu == sel_bu else None
+                        # If BU changed right before submit, rebuild a safe lookup:
+                        if bl_id is None:
+                            # Fallback: re-resolve from global map
+                            for (name, _id) in bu_to_bls.get(final_bu, []):
+                                if name == final_bl:
+                                    bl_id = _id
+                                    break
+
+                        if not bl_id:
+                            st.error("Business Line not found under the selected Business Unit.")
                         else:
-                            st.error("That Product ID already exists.")
-                except Exception as e:
-                    st.error("Could not add item.")
-                    st.caption(str(e))
+                            with engine.begin() as conn:
+                                res = conn.execute(
+                                    text("""
+                                        INSERT INTO items(
+                                          product_id, article_number, description, business_line_id, is_active
+                                        ) VALUES (:pid, :article, :desc, :blid, TRUE)
+                                        ON CONFLICT (product_id) DO NOTHING
+                                    """),
+                                    {
+                                        "pid": product_id.strip(),
+                                        "article": (article.strip() or None),
+                                        "desc": (desc.strip() or None),
+                                        "blid": int(bl_id),
+                                    },
+                                )
+                            if (res.rowcount or 0) > 0:
+                                st.success("Item added ✅")
+                                # optional: clear selections
+                                st.session_state["add_item_bl"] = ""
+                            else:
+                                st.error("That Product ID already exists.")
+                    except Exception as e:
+                        st.error("Could not add item.")
+                        st.caption(str(e))
 
+    # ---------------------
+    # Bulk upload (unchanged)
+    # ---------------------
     f3 = st.file_uploader("Upload Items", type=["xlsx", "csv"], key="items")
     if f3 is not None:
         df = _read_df_upload(f3)
@@ -1810,6 +1873,8 @@ def page_admin_import():
             try:
                 with engine.begin() as conn:
                     existing = set(pd.read_sql_query(text("SELECT product_id FROM items"), conn)["product_id"].astype(str).tolist())
+
+                    # Fast resolver using the map we already built
                     for i, r in enumerate(df.itertuples(index=False), start=1):
                         pid_raw = getattr(r, "product_id", None)
                         pid = (str(pid_raw).strip() if pd.notna(pid_raw) else "")
@@ -1821,7 +1886,14 @@ def page_admin_import():
                                 _update_progress(pb, ln, i, total, inserted, updated, skipped, label_prefix="Items")
                             continue
 
-                        bl_id = bu_bl_to_id.get((bu_name_raw.lower(), bl_name_raw.lower()))
+                        # Resolve BL id from the in-memory mapping; fall back if BU not present
+                        bl_id = None
+                        if bu_name_raw in bu_to_bls:
+                            for name, _id in bu_to_bls[bu_name_raw]:
+                                if name == bl_name_raw:
+                                    bl_id = _id
+                                    break
+
                         if not bl_id:
                             skipped += 1
                             if i % 200 == 0 or i == total:
