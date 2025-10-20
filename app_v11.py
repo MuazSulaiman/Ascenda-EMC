@@ -1215,14 +1215,50 @@ def page_user_settings():
             st.caption(str(e))
 
 # =============================
-# Page — Admin: Import Lookups (PostgreSQL port of your older version)
+# Page — Admin: Import Lookups (PostgreSQL + live progress)
 # =============================
+import time, re, unicodedata
+import pandas as pd
+import sqlalchemy as sa
 from sqlalchemy import text
 
 def page_admin_import():
     st.title("🛠️ Admin — Import Lookups (Excel/CSV)")
     st.caption("Files should have exact column names shown below. Existing rows are kept; duplicates are skipped.")
 
+    # -----------------------
+    # Progress UI helpers
+    # -----------------------
+    def _mk_status(title: str):
+        """Return (status_ctx, progress_widget, line_widget, has_status) with a safe fallback."""
+        has_status = hasattr(st, "status")
+        if has_status:
+            sts = st.status(title, expanded=True)
+            pb = st.progress(0)
+            ln = st.empty()
+            return (sts, pb, ln, True)
+        sp = st.spinner(title + "…")
+        pb = st.progress(0)
+        ln = st.empty()
+        return (sp, pb, ln, False)
+
+    def _update_progress(pb, ln, i, total, inserted=0, updated=0, skipped=0, every_toast=0, label_prefix=""):
+        frac = max(0.0, min(1.0, (i / float(total))) ) if total else 0.0
+        pb.progress(frac)
+        ln.write(f"{label_prefix} {i}/{total} · Inserted: {inserted} · Updated: {updated} · Skipped: {skipped}")
+        if every_toast and i % every_toast == 0:
+            st.toast(f"{label_prefix} {i}/{total}")
+
+    def _finish_status(sts_or_spinner, has_status: bool, final_text: str, ok: bool=True):
+        if has_status:
+            state = "complete" if ok else "error"
+            sts_or_spinner.update(label=final_text, state=state)
+        else:
+            (st.success if ok else st.error)(final_text)
+
+    # -----------------------
+    # Flash + utilities
+    # -----------------------
     if "flash_admin" in st.session_state:
         level, msg = st.session_state.pop("flash_admin")
         getattr(st, level)(msg)
@@ -1244,7 +1280,27 @@ def page_admin_import():
     def _parts_join(*parts):
         return " - ".join([p for p in [str(x).strip() for x in parts] if p and p != "None"])
 
+    def _norm_col(s: str) -> str:
+        if s is None:
+            return ""
+        s = unicodedata.normalize("NFKC", str(s))
+        s = s.replace("\u00A0", " ")
+        s = s.strip().lower()
+        s = re.sub(r"\s+", " ", s)
+        s = s.replace(" ", "_")
+        return s
+
+    def _read_df_upload(file):
+        if file.name.endswith(".xlsx"):
+            df = pd.read_excel(file, dtype=str)
+        else:
+            df = pd.read_csv(file, dtype=str)
+        df.columns = [_norm_col(c) for c in df.columns]
+        return df
+
+    # =====================
     # 1) Customers
+    # =====================
     st.subheader("1) Customers")
     st.write("Columns: **account_name**, sector, region, city")
 
@@ -1290,15 +1346,23 @@ def page_admin_import():
         if "account_name" not in df.columns:
             st.error("Missing required column: account_name")
         else:
+            total = len(df)
             inserted = 0
             skipped = 0
+            sts, pb, ln, has_status = _mk_status("Importing Customers…")
             try:
                 with engine.begin() as conn:
-                    for _, r in df.iterrows():
-                        acc_v = str(r.get("account_name", "")).strip()
+                    for i, r in enumerate(df.itertuples(index=False), start=1):
+                        acc_v = str(getattr(r, "account_name", "")).strip()
                         if not acc_v:
                             skipped += 1
+                            if i % 200 == 0 or i == total:
+                                _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Customers")
                             continue
+                        sector_v = str(getattr(r, "sector")).strip() if hasattr(r, "sector") and pd.notna(getattr(r, "sector")) else None
+                        region_v = str(getattr(r, "region")).strip() if hasattr(r, "region") and pd.notna(getattr(r, "region")) else None
+                        city_v   = str(getattr(r, "city")).strip()   if hasattr(r, "city")   and pd.notna(getattr(r, "city"))   else None
+
                         res = conn.execute(
                             text("""
                                 INSERT INTO customers(account_name, sector, region, city)
@@ -1307,25 +1371,27 @@ def page_admin_import():
                                   SELECT 1 FROM customers WHERE lower(account_name) = lower(:acc)
                                 )
                             """),
-                            {
-                                "acc": acc_v,
-                                "sector": (str(r.get("sector")).strip() if pd.notna(r.get("sector")) else None),
-                                "region": (str(r.get("region")).strip() if pd.notna(r.get("region")) else None),
-                                "city": (str(r.get("city")).strip() if pd.notna(r.get("city")) else None),
-                            },
+                            {"acc": acc_v, "sector": sector_v, "region": region_v, "city": city_v},
                         )
                         if (res.rowcount or 0) > 0:
                             inserted += 1
                         else:
                             skipped += 1
-                st.success(f"Customers import ✅ Inserted: {inserted} | Updated: 0 | Skipped: {skipped}")
+
+                        if i % 200 == 0 or i == total:
+                            _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Customers")
+                            time.sleep(0.001)
+
+                _finish_status(sts, has_status, f"Customers import ✅ Inserted: {inserted} | Updated: 0 | Skipped: {skipped}", ok=True)
             except Exception as e:
-                st.error("Import failed.")
+                _finish_status(sts, has_status, "Customers import failed ❌", ok=False)
                 st.caption(str(e))
 
     st.divider()
 
+    # =====================
     # 2) Target Audiences
+    # =====================
     st.subheader("2) Target Audiences")
     st.write("Columns: **customer_name**, title, name, department, position, potentiality, loyalty, mobile, landline, external_number, email")
 
@@ -1390,28 +1456,53 @@ def page_admin_import():
 
     f2 = st.file_uploader("Upload Target Audiences", type=["xlsx", "csv"], key="aud")
     if f2 is not None:
-        df = pd.read_excel(f2) if f2.name.endswith(".xlsx") else pd.read_csv(f2)
+        df = _read_df_upload(f2)
         needed = {"customer_name", "name"}
         if not needed.issubset(df.columns):
             st.error("Missing required columns: customer_name, name")
         else:
+            total = len(df)
             inserted = 0
+            updated = 0
             skipped = 0
+            sts, pb, ln, has_status = _mk_status("Importing Target Audiences…")
             try:
                 with engine.begin() as conn:
                     cdf = pd.read_sql_query(text("SELECT customer_id, account_name FROM customers"), conn)
                     cmap = {str(r.account_name).strip().lower(): int(r.customer_id) for r in cdf.itertuples(index=False)}
-                    for _, r in df.iterrows():
-                        cname = str(r.get("customer_name", "")).strip()
-                        aname = str(r.get("name", "")).strip()
+
+                    for i, r in enumerate(df.itertuples(index=False), start=1):
+                        cname = str(getattr(r, "customer_name", "")).strip()
+                        aname = str(getattr(r, "name", "")).strip()
                         if not (cname and aname):
                             skipped += 1
+                            if i % 200 == 0 or i == total:
+                                _update_progress(pb, ln, i, total, inserted, updated, skipped, label_prefix="Audiences")
                             continue
                         cid = cmap.get(cname.lower())
                         if not cid:
                             skipped += 1
+                            if i % 200 == 0 or i == total:
+                                _update_progress(pb, ln, i, total, inserted, updated, skipped, label_prefix="Audiences")
                             continue
-                        res = conn.execute(
+
+                        title_v = (str(getattr(r, "title")).strip() if hasattr(r, "title") and pd.notna(getattr(r, "title")) else None)
+                        dept_v  = (str(getattr(r, "department")).strip() if hasattr(r, "department") and pd.notna(getattr(r, "department")) else None)
+                        pos_v   = (str(getattr(r, "position")).strip() if hasattr(r, "position") and pd.notna(getattr(r, "position")) else None)
+                        pot_v   = (str(getattr(r, "potentiality")).strip() if hasattr(r, "potentiality") and pd.notna(getattr(r, "potentiality")) else None)
+                        loy_v   = (str(getattr(r, "loyalty")).strip() if hasattr(r, "loyalty") and pd.notna(getattr(r, "loyalty")) else None)
+                        mob_v   = (str(getattr(r, "mobile")).strip() if hasattr(r, "mobile") and pd.notna(getattr(r, "mobile")) else None)
+                        land_v  = (str(getattr(r, "landline")).strip() if hasattr(r, "landline") and pd.notna(getattr(r, "landline")) else None)
+                        extn_v  = (str(getattr(r, "external_number")).strip() if hasattr(r, "external_number") and pd.notna(getattr(r, "external_number")) else None)
+                        email_v = (str(getattr(r, "email")).strip() if hasattr(r, "email") and pd.notna(getattr(r, "email")) else None)
+
+                        # Upsert, count exactly
+                        existed = conn.execute(
+                            text("SELECT 1 FROM target_audiences WHERE customer_id=:cid AND lower(name)=lower(:n)"),
+                            {"cid": cid, "n": aname}
+                        ).fetchone() is not None
+
+                        conn.execute(
                             text("""
                                 INSERT INTO target_audiences(
                                   customer_id, title, name, department, position, potentiality, loyalty,
@@ -1431,31 +1522,30 @@ def page_admin_import():
                                       is_active=TRUE
                             """),
                             {
-                                "cid": cid,
-                                "title": (str(r.get("title")).strip() if pd.notna(r.get("title")) else None),
-                                "name": aname,
-                                "dept": (str(r.get("department")).strip() if pd.notna(r.get("department")) else None),
-                                "pos": (str(r.get("position")).strip() if pd.notna(r.get("position")) else None),
-                                "pot": (str(r.get("potentiality")).strip() if pd.notna(r.get("potentiality")) else None),
-                                "loy": (str(r.get("loyalty")).strip() if pd.notna(r.get("loyalty")) else None),
-                                "mob": (str(r.get("mobile")).strip() if pd.notna(r.get("mobile")) else None),
-                                "land": (str(r.get("landline")).strip() if pd.notna(r.get("landline")) else None),
-                                "extn": (str(r.get("external_number")).strip() if pd.notna(r.get("external_number")) else None),
-                                "email": (str(r.get("email")).strip() if pd.notna(r.get("email")) else None),
+                                "cid": cid, "title": title_v, "name": aname, "dept": dept_v, "pos": pos_v,
+                                "pot": pot_v, "loy": loy_v, "mob": mob_v, "land": land_v, "extn": extn_v, "email": email_v,
                             },
                         )
-                        if (res.rowcount or 0) > 0:
-                            inserted += 1  # treat upsert as success; we don’t split counts here to keep prior text
+
+                        if existed:
+                            updated += 1
                         else:
-                            skipped += 1
-                st.success(f"Target audiences import ✅ Inserted/Updated: {inserted} | Skipped: {skipped}")
+                            inserted += 1
+
+                        if i % 200 == 0 or i == total:
+                            _update_progress(pb, ln, i, total, inserted, updated, skipped, label_prefix="Audiences")
+                            time.sleep(0.001)
+
+                _finish_status(sts, has_status, f"Target audiences import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}", ok=True)
             except Exception as e:
-                st.error("Import failed.")
+                _finish_status(sts, has_status, "Target audiences import failed ❌", ok=False)
                 st.caption(str(e))
 
     st.divider()
 
+    # =====================
     # 3) Business Units
+    # =====================
     st.subheader("3) Business Units")
     st.write("Columns: **name**")
 
@@ -1487,40 +1577,48 @@ def page_admin_import():
 
     fbu = st.file_uploader("Upload Business Units", type=["xlsx", "csv"], key="bus")
     if fbu is not None:
-        df = pd.read_excel(fbu) if fbu.name.endswith(".xlsx") else pd.read_csv(fbu)
+        df = _read_df_upload(fbu)
         if "name" not in df.columns:
             st.error("Missing required column: name")
         else:
+            total = len(df)
             inserted = 0
             skipped = 0
+            sts, pb, ln, has_status = _mk_status("Importing Business Units…")
             try:
                 with engine.begin() as conn:
-                    for _, r in df.iterrows():
-                        nm = str(r.get("name", "")).strip()
+                    for i, r in enumerate(df.itertuples(index=False), start=1):
+                        nm = str(getattr(r, "name", "")).strip()
                         if not nm:
                             skipped += 1
-                            continue
-                        res = conn.execute(
-                            text("""
-                                INSERT INTO business_units(name, is_active)
-                                VALUES (:name, TRUE)
-                                ON CONFLICT (name) DO NOTHING
-                            """),
-                            {"name": nm},
-                        )
-                        if (res.rowcount or 0) > 0:
-                            inserted += 1
                         else:
-                            skipped += 1
+                            res = conn.execute(
+                                text("""
+                                    INSERT INTO business_units(name, is_active)
+                                    VALUES (:name, TRUE)
+                                    ON CONFLICT (name) DO NOTHING
+                                """),
+                                {"name": nm},
+                            )
+                            if (res.rowcount or 0) > 0:
+                                inserted += 1
+                            else:
+                                skipped += 1
+
+                        if i % 200 == 0 or i == total:
+                            _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Business Units")
+                            time.sleep(0.001)
+
+                _finish_status(sts, has_status, f"Business Units import ✅ Inserted: {inserted} | Skipped: {skipped}", ok=True)
             except Exception as e:
-                st.error("Import failed.")
+                _finish_status(sts, has_status, "Business Units import failed ❌", ok=False)
                 st.caption(str(e))
-            else:
-                st.success(f"Business Units import ✅ Inserted: {inserted} | Skipped: {skipped}")
 
     st.divider()
 
-    # 4) Business Lines (NEW)
+    # =====================
+    # 4) Business Lines
+    # =====================
     st.subheader("4) Business Lines")
     st.write("Columns: **business_unit**, **name**, **category**  (optional: supplier, product_group)")
 
@@ -1528,33 +1626,12 @@ def page_admin_import():
     bu_name_opts = [""] + bu_df_for_bl["name"].tolist()
     bu_name_to_id = {r.name: int(r.business_unit_id) for r in bu_df_for_bl.itertuples(index=False)}
 
-    # --- Helpers to normalize column names and read files safely ---
-    import re, unicodedata
-
-    def _norm_col(s: str) -> str:
-        if s is None:
-            return ""
-        s = unicodedata.normalize("NFKC", str(s))
-        s = s.replace("\u00A0", " ")
-        s = s.strip().lower()
-        s = re.sub(r"\s+", " ", s)
-        s = s.replace(" ", "_")
-        return s
-
-    def _read_df_upload(file):
-        if file.name.endswith(".xlsx"):
-            df = pd.read_excel(file, dtype=str)
-        else:
-            df = pd.read_csv(file, dtype=str)
-        df.columns = [_norm_col(c) for c in df.columns]
-        return df
-
     with popout("➕ Add Business Line"):
         with st.form("add_bl_form", clear_on_submit=True):
             bu_sel = st.selectbox("Business Unit *", bu_name_opts, index=0)
             bl_name = st.text_input("Business Line Name *")
             supplier = st.text_input("Supplier")
-            category = st.text_input("Category *")  # required
+            category = st.text_input("Category *")
             prod_group = st.text_input("Product Group")
             submit_bl = st.form_submit_button("Save Business Line", type="primary")
         if submit_bl:
@@ -1593,35 +1670,41 @@ def page_admin_import():
 
     fbl = st.file_uploader("Upload Business Lines", type=["xlsx", "csv"], key="blines")
     if fbl is not None:
-        try:
-            df = _read_df_upload(fbl)
-            st.caption(f"Detected columns: {list(df.columns)}")
-            needed = {"business_unit", "name", "category"}
-            if not needed.issubset(set(df.columns)):
-                missing = sorted(list(needed - set(df.columns)))
-                st.error(f"Missing required columns: {', '.join(missing)}")
-            else:
-                inserted, skipped = 0, 0
+        df = _read_df_upload(fbl)
+        st.caption(f"Detected columns: {list(df.columns)}")
+        needed = {"business_unit", "name", "category"}
+        if not needed.issubset(set(df.columns)):
+            missing = sorted(list(needed - set(df.columns)))
+            st.error(f"Missing required columns: {', '.join(missing)}")
+        else:
+            total = len(df)
+            inserted, skipped = 0, 0
+            sts, pb, ln, has_status = _mk_status("Importing Business Lines…")
+            try:
                 with engine.begin() as conn:
                     budf = pd.read_sql_query(text("SELECT business_unit_id, name FROM business_units"), conn)
                     bumap = {str(r.name).strip().lower(): int(r.business_unit_id) for r in budf.itertuples(index=False)}
 
-                    for _, r in df.iterrows():
-                        bu_name_raw = (str(r.get("business_unit")) if pd.notna(r.get("business_unit")) else "").strip()
-                        bl_name_raw = (str(r.get("name")) if pd.notna(r.get("name")) else "").strip()
-                        cat_raw = (str(r.get("category")) if pd.notna(r.get("category")) else "").strip()
+                    for i, r in enumerate(df.itertuples(index=False), start=1):
+                        bu_name_raw = (str(getattr(r, "business_unit")) if hasattr(r, "business_unit") and pd.notna(getattr(r, "business_unit")) else "").strip()
+                        bl_name_raw = (str(getattr(r, "name")) if hasattr(r, "name") and pd.notna(getattr(r, "name")) else "").strip()
+                        cat_raw     = (str(getattr(r, "category")) if hasattr(r, "category") and pd.notna(getattr(r, "category")) else "").strip()
 
                         if not (bu_name_raw and bl_name_raw and cat_raw):
                             skipped += 1
+                            if i % 200 == 0 or i == total:
+                                _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Business Lines")
                             continue
 
                         bu_id_tmp = bumap.get(bu_name_raw.lower())
                         if not bu_id_tmp:
                             skipped += 1
+                            if i % 200 == 0 or i == total:
+                                _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Business Lines")
                             continue
 
-                        supplier = (str(r.get("supplier")).strip() if pd.notna(r.get("supplier")) else None)
-                        prod_group = (str(r.get("product_group")).strip() if pd.notna(r.get("product_group")) else None)
+                        supplier_v = (str(getattr(r, "supplier")).strip() if hasattr(r, "supplier") and pd.notna(getattr(r, "supplier")) else None)
+                        prod_group_v = (str(getattr(r, "product_group")).strip() if hasattr(r, "product_group") and pd.notna(getattr(r, "product_group")) else None)
 
                         res = conn.execute(
                             text("""
@@ -1632,9 +1715,9 @@ def page_admin_import():
                             {
                                 "bid": bu_id_tmp,
                                 "name": bl_name_raw,
-                                "supplier": supplier,
+                                "supplier": supplier_v,
                                 "category": cat_raw,
-                                "pg": prod_group,
+                                "pg": prod_group_v,
                             },
                         )
                         if (res.rowcount or 0) > 0:
@@ -1642,14 +1725,20 @@ def page_admin_import():
                         else:
                             skipped += 1
 
-                st.success(f"Business Lines import ✅ Inserted: {inserted} | Skipped: {skipped}")
-        except Exception as e:
-            st.error("Import failed.")
-            st.caption(str(e))
+                        if i % 200 == 0 or i == total:
+                            _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Business Lines")
+                            time.sleep(0.001)
+
+                _finish_status(sts, has_status, f"Business Lines import ✅ Inserted: {inserted} | Skipped: {skipped}", ok=True)
+            except Exception as e:
+                _finish_status(sts, has_status, "Business Lines import failed ❌", ok=False)
+                st.caption(str(e))
 
     st.divider()
 
+    # =====================
     # 5) Items (Products)
+    # =====================
     st.subheader("5) Items (Products)")
     st.write("Columns: **product_id**, article_number, description, **business_unit**, **business_line**")
 
@@ -1670,9 +1759,7 @@ def page_admin_import():
             desc = st.text_input("Description")
             bu_opts = [""] + sorted(list({r.business_unit for r in bl_df_lookup.itertuples(index=False)}))
             sel_bu = st.selectbox("Business Unit *", bu_opts, index=0)
-            bl_opts = [""]
-            if sel_bu:
-                bl_opts = [""] + [r.business_line for r in bl_df_lookup.itertuples(index=False) if r.business_unit == sel_bu]
+            bl_opts = [""] if not sel_bu else [""] + [r.business_line for r in bl_df_lookup.itertuples(index=False) if r.business_unit == sel_bu]
             sel_bl = st.selectbox("Business Line *", bl_opts, index=0)
             submit_item = st.form_submit_button("Save Item", type="primary")
 
@@ -1686,7 +1773,6 @@ def page_admin_import():
                         st.error("Business Line not found under the selected Business Unit.")
                     else:
                         with engine.begin() as conn:
-                            # Try insert; if conflict, nothing happens → we show error (same behavior you had)
                             res = conn.execute(
                                 text("""
                                     INSERT INTO items(
@@ -1711,31 +1797,39 @@ def page_admin_import():
 
     f3 = st.file_uploader("Upload Items", type=["xlsx", "csv"], key="items")
     if f3 is not None:
-        df = pd.read_excel(f3) if f3.name.endswith(".xlsx") else pd.read_csv(f3)
+        df = _read_df_upload(f3)
         needed = {"product_id", "business_unit", "business_line"}
         if not needed.issubset(df.columns):
             st.error("Missing required columns: product_id, business_unit, business_line")
         else:
+            total = len(df)
             inserted = 0
             updated = 0
             skipped = 0
+            sts, pb, ln, has_status = _mk_status("Importing Items…")
             try:
                 with engine.begin() as conn:
                     existing = set(pd.read_sql_query(text("SELECT product_id FROM items"), conn)["product_id"].astype(str).tolist())
-                    for _, r in df.iterrows():
-                        pid_raw = r.get("product_id")
-                        pid = str(pid_raw).strip() if pd.notna(pid_raw) else ""
-                        bu_name_raw = str(r.get("business_unit", "")).strip()
-                        bl_name_raw = str(r.get("business_line", "")).strip()
+                    for i, r in enumerate(df.itertuples(index=False), start=1):
+                        pid_raw = getattr(r, "product_id", None)
+                        pid = (str(pid_raw).strip() if pd.notna(pid_raw) else "")
+                        bu_name_raw = (str(getattr(r, "business_unit", "")).strip() if hasattr(r, "business_unit") else "")
+                        bl_name_raw = (str(getattr(r, "business_line", "")).strip() if hasattr(r, "business_line") else "")
                         if not (pid and bu_name_raw and bl_name_raw):
                             skipped += 1
+                            if i % 200 == 0 or i == total:
+                                _update_progress(pb, ln, i, total, inserted, updated, skipped, label_prefix="Items")
                             continue
+
                         bl_id = bu_bl_to_id.get((bu_name_raw.lower(), bl_name_raw.lower()))
                         if not bl_id:
                             skipped += 1
+                            if i % 200 == 0 or i == total:
+                                _update_progress(pb, ln, i, total, inserted, updated, skipped, label_prefix="Items")
                             continue
-                        article_v = str(r.get("article_number")).strip() if pd.notna(r.get("article_number")) else None
-                        desc_v = str(r.get("description")).strip() if pd.notna(r.get("description")) else None
+
+                        article_v = (str(getattr(r, "article_number")).strip() if hasattr(r, "article_number") and pd.notna(getattr(r, "article_number")) else None)
+                        desc_v    = (str(getattr(r, "description")).strip()    if hasattr(r, "description")    and pd.notna(getattr(r, "description"))    else None)
 
                         conn.execute(
                             text("""
@@ -1749,19 +1843,26 @@ def page_admin_import():
                             """),
                             {"pid": pid, "article": article_v, "desc": desc_v, "blid": int(bl_id)},
                         )
+
                         if pid in existing:
                             updated += 1
                         else:
                             inserted += 1
 
-                st.success(f"Items import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}")
+                        if i % 200 == 0 or i == total:
+                            _update_progress(pb, ln, i, total, inserted, updated, skipped, label_prefix="Items")
+                            time.sleep(0.001)
+
+                _finish_status(sts, has_status, f"Items import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}", ok=True)
             except Exception as e:
-                st.error("Import failed.")
+                _finish_status(sts, has_status, "Items import failed ❌", ok=False)
                 st.caption(str(e))
 
     st.divider()
 
+    # =====================
     # 6) Objectives
+    # =====================
     st.subheader("6) Objectives")
     st.write("Columns: **name**")
 
@@ -1789,30 +1890,37 @@ def page_admin_import():
 
     fobj = st.file_uploader("Upload Objectives", type=["xlsx", "csv"], key="objs")
     if fobj is not None:
-        df = pd.read_excel(fobj) if fobj.name.endswith(".xlsx") else pd.read_csv(fobj)
+        df = _read_df_upload(fobj)
         if "name" not in df.columns:
             st.error("Missing required column: name")
         else:
+            total = len(df)
             inserted = 0
             skipped = 0
+            sts, pb, ln, has_status = _mk_status("Importing Objectives…")
             try:
                 with engine.begin() as conn:
-                    for _, r in df.iterrows():
-                        nm = str(r.get("name", "")).strip()
+                    for i, r in enumerate(df.itertuples(index=False), start=1):
+                        nm = str(getattr(r, "name", "")).strip()
                         if not nm:
                             skipped += 1
-                            continue
-                        res = conn.execute(
-                            text("INSERT INTO objectives(name, is_active) VALUES(:n, TRUE) ON CONFLICT (name) DO NOTHING"),
-                            {"n": nm},
-                        )
-                        if (res.rowcount or 0) > 0:
-                            inserted += 1
                         else:
-                            skipped += 1
-                st.success(f"Objectives import ✅ Inserted: {inserted} | Skipped: {skipped}")
+                            res = conn.execute(
+                                text("INSERT INTO objectives(name, is_active) VALUES(:n, TRUE) ON CONFLICT (name) DO NOTHING"),
+                                {"n": nm},
+                            )
+                            if (res.rowcount or 0) > 0:
+                                inserted += 1
+                            else:
+                                skipped += 1
+
+                        if i % 200 == 0 or i == total:
+                            _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Objectives")
+                            time.sleep(0.001)
+
+                _finish_status(sts, has_status, f"Objectives import ✅ Inserted: {inserted} | Skipped: {skipped}", ok=True)
             except Exception as e:
-                st.error("Import failed.")
+                _finish_status(sts, has_status, "Objectives import failed ❌", ok=False)
                 st.caption(str(e))
 
     # ============================
@@ -2170,7 +2278,7 @@ def page_admin_import():
                         st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
                     st.rerun()
 
-    # ---- Items ----
+    # ---- Items (Manage)
     with tabs[4]:
         idf = query_df("""
             SELECT i.product_id,
@@ -2212,7 +2320,6 @@ def page_admin_import():
                     exec_sql("UPDATE items SET is_active=:b WHERE product_id=:pid", {"b": new_active, "pid": pid})
                     st.success("Updated ✅")
 
-            # Edit
             with colC:
                 edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
                 with edit_box:
@@ -2254,15 +2361,16 @@ def page_admin_import():
                                                {"a": art.strip(), "pid": pid})
                                 if not dup.empty:
                                     st.error("Article Number already exists.")
-                                    return
-                                exec_sql(
-                                    """
-                                    UPDATE items
-                                    SET article_number=:a, description=:d, business_line_id=:bl
-                                    WHERE product_id=:pid
-                                    """,
-                                    {"a": art.strip(), "d": (desc.strip() or None), "bl": new_bl_id, "pid": pid},
-                                )
+                                else:
+                                    exec_sql(
+                                        """
+                                        UPDATE items
+                                        SET article_number=:a, description=:d, business_line_id=:bl
+                                        WHERE product_id=:pid
+                                        """,
+                                        {"a": art.strip(), "d": (desc.strip() or None), "bl": new_bl_id, "pid": pid},
+                                    )
+                                    st.success("Saved ✅")
                             else:
                                 exec_sql(
                                     """
@@ -2272,7 +2380,7 @@ def page_admin_import():
                                     """,
                                     {"d": (desc.strip() or None), "bl": new_bl_id, "pid": pid},
                                 )
-                            st.success("Saved ✅")
+                                st.success("Saved ✅")
 
             dz_keybase = "mg_item_conf"
             conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
@@ -2292,7 +2400,7 @@ def page_admin_import():
                         st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
                     st.rerun()
 
-    # ---- Objectives (with Activate / Deactivate)
+    # ---- Objectives (Manage)
     with tabs[5]:
         odf = query_df("SELECT objective_id, name, COALESCE(is_active, TRUE) AS is_active FROM objectives ORDER BY name")
         if odf.empty:
