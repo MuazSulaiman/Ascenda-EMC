@@ -1261,8 +1261,7 @@ def page_admin_import():
             else:
                 try:
                     with engine.begin() as conn:
-                        # No unique on account_name in schema → enforce app-side de-dup by lower(name)
-                        res = conn.execute(
+                        conn.execute(
                             text("""
                                 INSERT INTO customers(account_name, sector, region, city)
                                 SELECT :acc, :sector, :region, :city
@@ -1277,11 +1276,7 @@ def page_admin_import():
                                 "city": (city.strip() or None),
                             },
                         )
-                        added = res.rowcount or 0
-                    if added > 0:
-                        st.success("Customer added ✅")
-                    else:
-                        st.info("A customer with that name already exists — nothing added.")
+                    st.success("Customer added ✅")
                 except Exception as e:
                     st.error("Could not add customer.")
                     st.caption(str(e))
@@ -1360,7 +1355,6 @@ def page_admin_import():
                         st.error("Selected customer was not found.")
                     else:
                         with engine.begin() as conn:
-                            # UNIQUE (customer_id, name) in schema → upsert-safe
                             res = conn.execute(
                                 text("""
                                     INSERT INTO target_audiences(
@@ -1463,8 +1457,7 @@ def page_admin_import():
             else:
                 try:
                     with engine.begin() as conn:
-                        # business_units.name UNIQUE
-                        res = conn.execute(
+                        conn.execute(
                             text("""
                                 INSERT INTO business_units(name, is_active)
                                 VALUES (:name, TRUE)
@@ -1472,10 +1465,7 @@ def page_admin_import():
                             """),
                             {"name": bu_name.strip()},
                         )
-                    if (res.rowcount or 0) > 0:
-                        st.success("Business Unit added ✅")
-                    else:
-                        st.info("That Business Unit already exists — nothing added.")
+                    st.success("Business Unit added ✅")
                 except Exception as e:
                     st.error("Could not add Business Unit.")
                     st.caption(str(e))
@@ -1523,17 +1513,13 @@ def page_admin_import():
     bu_name_opts = [""] + bu_df_for_bl["name"].tolist()
     bu_name_to_id = {r.name: int(r.business_unit_id) for r in bu_df_for_bl.itertuples(index=False)}
 
-    # --- Helpers to normalize column names and read files safely ---
+    # --- Helpers to normalize/read uploads ---
     import re, unicodedata
-
     def _norm_col(s: str) -> str:
         if s is None:
             return ""
-        s = unicodedata.normalize("NFKC", str(s))
-        s = s.replace("\u00A0", " ")
-        s = s.strip().lower()
-        s = re.sub(r"\s+", " ", s)
-        s = s.replace(" ", "_")
+        s = unicodedata.normalize("NFKC", str(s)).replace("\u00A0", " ").strip().lower()
+        s = re.sub(r"\s+", " ", s).replace(" ", "_")
         return s
 
     def _read_df_upload(file):
@@ -1562,7 +1548,6 @@ def page_admin_import():
                         st.error("Selected Business Unit not found.")
                     else:
                         with engine.begin() as conn:
-                            # UNIQUE (business_unit_id, name)
                             res = conn.execute(
                                 text("""
                                     INSERT INTO business_lines(
@@ -1645,67 +1630,80 @@ def page_admin_import():
 
     st.divider()
 
-    # 5) Items (Products)
+    # 5) Items (Products) — SINGLE SOURCE OF TRUTH (no duplicates)
     st.subheader("5) Items (Products)")
     st.write("Columns: **product_id**, article_number, description, **business_unit**, **business_line**")
 
-    bl_df_lookup = query_df("""
-        SELECT bl.business_line_id, bl.name AS business_line, bu.name AS business_unit
-        FROM business_lines bl
-        JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
-        WHERE bu.is_active IS TRUE AND bl.is_active IS TRUE
-        ORDER BY bu.name, bl.name
+    # Live BUs
+    bu_df_live = query_df("""
+        SELECT business_unit_id, name
+        FROM business_units
+        WHERE is_active IS TRUE
+        ORDER BY name
     """)
-    bu_bl_to_id = {(r.business_unit.strip().lower(), r.business_line.strip().lower()): int(r.business_line_id)
-                   for r in bl_df_lookup.itertuples(index=False)}
+    bu_labels = [""] + bu_df_live["name"].tolist()
 
     with popout("➕ Add Item"):
+        # Ensure unique key: only one add_item_form exists in the entire page
         with st.form("add_item_form", clear_on_submit=True):
             product_id = st.text_input("Product ID * (must be unique)")
             article = st.text_input("Article Number")
             desc = st.text_input("Description")
-            bu_opts = [""] + sorted(list({r.business_unit for r in bl_df_lookup.itertuples(index=False)}))
-            sel_bu = st.selectbox("Business Unit *", bu_opts, index=0)
-            bl_opts = [""]
-            if sel_bu:
-                bl_opts = [""] + [r.business_line for r in bl_df_lookup.itertuples(index=False) if r.business_unit == sel_bu]
-            sel_bl = st.selectbox("Business Line *", bl_opts, index=0)
+
+            sel_bu_label = st.selectbox("Business Unit *", bu_labels, index=0)
+
+            sel_bu_id = None
+            if sel_bu_label:
+                sel_bu_id = int(bu_df_live.loc[bu_df_live["name"] == sel_bu_label, "business_unit_id"].iloc[0])
+
+            if sel_bu_id:
+                bl_df_live = query_df(
+                    """
+                    SELECT business_line_id, name
+                    FROM business_lines
+                    WHERE is_active IS TRUE AND business_unit_id = :bid
+                    ORDER BY name
+                    """,
+                    {"bid": sel_bu_id}
+                )
+            else:
+                bl_df_live = pd.DataFrame(columns=["business_line_id", "name"])
+
+            bl_labels = [""] + bl_df_live["name"].tolist()
+            sel_bl_label = st.selectbox("Business Line *", bl_labels, index=0)
+
             submit_item = st.form_submit_button("Save Item", type="primary")
 
         if submit_item:
-            if not (product_id.strip() and sel_bu and sel_bl):
+            if not (product_id.strip() and sel_bu_label and sel_bl_label):
                 st.error("Product ID, Business Unit, and Business Line are required.")
             else:
                 try:
-                    bl_id = bu_bl_to_id.get((sel_bu.strip().lower(), sel_bl.strip().lower()))
-                    if not bl_id:
-                        st.error("Business Line not found under the selected Business Unit.")
-                    else:
-                        with engine.begin() as conn:
-                            # items.product_id PK, items.article_number UNIQUE
-                            res = conn.execute(
-                                text("""
-                                    INSERT INTO items(
-                                      product_id, article_number, description, business_line_id, is_active
-                                    ) VALUES (:pid, :article, :desc, :blid, TRUE)
-                                    ON CONFLICT (product_id) DO NOTHING
-                                """),
-                                {
-                                    "pid": product_id.strip(),
-                                    "article": (article.strip() or None),
-                                    "desc": (desc.strip() or None),
-                                    "blid": int(bl_id),
-                                },
-                            )
-                        if (res.rowcount or 0) > 0:
-                            st.success("Item added ✅")
-                        else:
-                            st.error("That Product ID already exists.")
+                    bl_id = int(bl_df_live.loc[bl_df_live["name"] == sel_bl_label, "business_line_id"].iloc[0])
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("""
+                                INSERT INTO items(
+                                  product_id, article_number, description, business_line_id, is_active
+                                ) VALUES (:pid, :article, :desc, :blid, TRUE)
+                                ON CONFLICT (product_id) DO UPDATE
+                                  SET article_number   = EXCLUDED.article_number,
+                                      description      = EXCLUDED.description,
+                                      business_line_id = EXCLUDED.business_line_id,
+                                      is_active        = TRUE
+                            """),
+                            {"pid": product_id.strip(),
+                             "article": (article.strip() or None),
+                             "desc": (desc.strip() or None),
+                             "blid": bl_id},
+                        )
+                    st.success("Item saved ✅")
                 except Exception as e:
                     st.error("Could not add item.")
                     st.caption(str(e))
 
-    f3 = st.file_uploader("Upload Items", type=["xlsx", "csv"], key="items")
+    # Items CSV/XLSX Import (unique key "items_upload" to avoid collisions)
+    f3 = st.file_uploader("Upload Items", type=["xlsx", "csv"], key="items_upload")
     if f3 is not None:
         df = pd.read_excel(f3) if f3.name.endswith(".xlsx") else pd.read_csv(f3)
         needed = {"product_id", "business_unit", "business_line"}
@@ -1715,112 +1713,80 @@ def page_admin_import():
             inserted = 0
             updated = 0
             skipped = 0
+            skip_reasons = []
+
+            # Build live maps once
+            bu_map = {r.name.strip().lower(): int(r.business_unit_id) for r in bu_df_live.itertuples(index=False)}
+            bl_map = {}  # (bu_id, bl_name_lower) -> bl_id
+            if bu_map:
+                bl_rows = query_df("""
+                    SELECT bl.business_unit_id, bl.business_line_id, bl.name
+                    FROM business_lines bl
+                    WHERE bl.is_active IS TRUE
+                """)
+                for r in bl_rows.itertuples(index=False):
+                    bl_map[(int(r.business_unit_id), str(r.name).strip().lower())] = int(r.business_line_id)
+
             try:
                 with engine.begin() as conn:
-                    for _, r in df.iterrows():
+                    for idx, r in df.iterrows():
                         pid_raw = r.get("product_id")
-                        pid = str(pid_raw).strip() if pd.notna(pid_raw) else ""
+                        pid = (str(pid_raw).strip() if pd.notna(pid_raw) else "")
                         bu_name_raw = str(r.get("business_unit", "")).strip()
                         bl_name_raw = str(r.get("business_line", "")).strip()
-                        if not (pid and bu_name_raw and bl_name_raw):
+
+                        if not pid:
                             skipped += 1
+                            skip_reasons.append(f"Row {idx+2}: missing product_id")
                             continue
-                        bl_id = bu_bl_to_id.get((bu_name_raw.lower(), bl_name_raw.lower()))
+                        if not bu_name_raw or not bl_name_raw:
+                            skipped += 1
+                            skip_reasons.append(f"Row {idx+2}: missing business_unit or business_line")
+                            continue
+
+                        bu_id = bu_map.get(bu_name_raw.lower())
+                        if not bu_id:
+                            skipped += 1
+                            skip_reasons.append(f"Row {idx+2}: business_unit '{bu_name_raw}' not found/active")
+                            continue
+
+                        bl_id = bl_map.get((bu_id, bl_name_raw.lower()))
                         if not bl_id:
                             skipped += 1
+                            skip_reasons.append(f"Row {idx+2}: business_line '{bl_name_raw}' not found/active under BU '{bu_name_raw}'")
                             continue
-                        article_v = str(r.get("article_number")).strip() if pd.notna(r.get("article_number")) else None
-                        desc_v = str(r.get("description")).strip() if pd.notna(r.get("description")) else None
 
-                        # Upsert on product_id; also update article/desc/line if already exists
-                        res = conn.execute(
+                        article_v = (str(r.get("article_number")).strip() if pd.notna(r.get("article_number")) else None)
+                        desc_v = (str(r.get("description")).strip() if pd.notna(r.get("description")) else None)
+
+                        existed = conn.execute(
+                            text("SELECT 1 FROM items WHERE product_id = :pid"),
+                            {"pid": pid}
+                        ).fetchone() is not None
+
+                        conn.execute(
                             text("""
                                 INSERT INTO items(product_id, article_number, description, business_line_id, is_active)
                                 VALUES (:pid, :article, :desc, :blid, TRUE)
                                 ON CONFLICT (product_id) DO UPDATE
-                                SET article_number = EXCLUDED.article_number,
-                                    description    = EXCLUDED.description,
+                                SET article_number   = EXCLUDED.article_number,
+                                    description      = EXCLUDED.description,
                                     business_line_id = EXCLUDED.business_line_id,
-                                    is_active = TRUE
+                                    is_active        = TRUE
                             """),
                             {"pid": pid, "article": article_v, "desc": desc_v, "blid": int(bl_id)},
                         )
-                        # rowcount is not reliable for upsert; approximate:
-                        # If the row existed and got updated, rowcount may be 1 as well.
-                        # We'll classify based on whether product_id was new by probing once:
-                        chk = conn.execute(text("SELECT 1 FROM items WHERE product_id = :pid"), {"pid": pid}).fetchone()
-                        if chk:
-                            # differentiate inserted vs updated by a simple heuristic:
-                            # Try to insert again with DO NOTHING—if rowcount==0, it existed → updated
-                            probe = conn.execute(
-                                text("INSERT INTO items(product_id) VALUES (:pid) ON CONFLICT (product_id) DO NOTHING"),
-                                {"pid": pid},
-                            )
-                            if (probe.rowcount or 0) > 0:
-                                inserted += 1
-                            else:
-                                updated += 1
+
+                        if existed:
+                            updated += 1
                         else:
                             inserted += 1
 
                 st.success(f"Items import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}")
-            except Exception as e:
-                st.error("Import failed.")
-                st.caption(str(e))
-
-    st.divider()
-
-    # 6) Objectives
-    st.subheader("6) Objectives")
-    st.write("Columns: **name**")
-
-    with popout("➕ Add Objective"):
-        with st.form("add_objective_form", clear_on_submit=True):
-            obj_name = st.text_input("Objective Name *")
-            submit_obj = st.form_submit_button("Save Objective", type="primary")
-        if submit_obj:
-            if not obj_name.strip():
-                st.error("Objective name is required.")
-            else:
-                try:
-                    with engine.begin() as conn:
-                        # objectives.name UNIQUE
-                        res = conn.execute(
-                            text("INSERT INTO objectives(name, is_active) VALUES(:n, TRUE) ON CONFLICT (name) DO NOTHING"),
-                            {"n": obj_name.strip()},
-                        )
-                    if (res.rowcount or 0) > 0:
-                        st.success("Objective added ✅")
-                    else:
-                        st.info("That objective already exists — nothing added.")
-                except Exception as e:
-                    st.error("Could not add objective.")
-                    st.caption(str(e))
-
-    fobj = st.file_uploader("Upload Objectives", type=["xlsx", "csv"], key="objs")
-    if fobj is not None:
-        df = pd.read_excel(fobj) if fobj.name.endswith(".xlsx") else pd.read_csv(fobj)
-        if "name" not in df.columns:
-            st.error("Missing required column: name")
-        else:
-            inserted = 0
-            skipped = 0
-            try:
-                with engine.begin() as conn:
-                    for _, r in df.iterrows():
-                        nm = str(r.get("name", "")).strip()
-                        if not nm:
-                            skipped += 1
-                            continue
-                        res = conn.execute(
-                            text("INSERT INTO objectives(name, is_active) VALUES(:n, TRUE) ON CONFLICT (name) DO NOTHING"),
-                            {"n": nm},
-                        )
-                        if (res.rowcount or 0) > 0:
-                            inserted += 1
-                        else:
-                            skipped += 1
-                st.success(f"Objectives import ✅ Inserted: {inserted} | Skipped: {skipped}")
+                if skipped and skip_reasons:
+                    preview = "\n".join(skip_reasons[:20])
+                    more = f"\n…and {len(skip_reasons)-20} more." if len(skip_reasons) > 20 else ""
+                    st.warning(f"Some rows were skipped:\n\n{preview}{more}")
             except Exception as e:
                 st.error("Import failed.")
                 st.caption(str(e))
@@ -2180,172 +2146,8 @@ def page_admin_import():
                         st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
                     st.rerun()
 
-    # 5) Items (Products)
-    st.subheader("5) Items (Products)")
-    st.write("Columns: **product_id**, article_number, description, **business_unit**, **business_line**")
-
-    # --- Live Business Units (always current) ---
-    bu_df_live = query_df("""
-        SELECT business_unit_id, name
-        FROM business_units
-        WHERE is_active IS TRUE
-        ORDER BY name
-    """)
-    bu_labels = [""] + bu_df_live["name"].tolist()
-
-    with popout("➕ Add Item"):
-        with st.form("add_item_form", clear_on_submit=True):
-            product_id = st.text_input("Product ID * (must be unique)")
-            article = st.text_input("Article Number")
-            desc = st.text_input("Description")
-
-            sel_bu_label = st.selectbox("Business Unit *", bu_labels, index=0)
-
-            # Resolve BU id from label (if any)
-            sel_bu_id = None
-            if sel_bu_label:
-                sel_bu_id = int(bu_df_live.loc[bu_df_live["name"] == sel_bu_label, "business_unit_id"].iloc[0])
-
-            # Load Business Lines for that BU LIVE
-            if sel_bu_id:
-                bl_df_live = query_df(
-                    """
-                    SELECT business_line_id, name
-                    FROM business_lines
-                    WHERE is_active IS TRUE AND business_unit_id = :bid
-                    ORDER BY name
-                    """,
-                    {"bid": sel_bu_id}
-                )
-            else:
-                bl_df_live = pd.DataFrame(columns=["business_line_id", "name"])
-
-            bl_labels = [""] + bl_df_live["name"].tolist()
-            sel_bl_label = st.selectbox("Business Line *", bl_labels, index=0)
-
-            submit_item = st.form_submit_button("Save Item", type="primary")
-
-        if submit_item:
-            if not (product_id.strip() and sel_bu_label and sel_bl_label):
-                st.error("Product ID, Business Unit, and Business Line are required.")
-            else:
-                try:
-                    bl_id = int(bl_df_live.loc[bl_df_live["name"] == sel_bl_label, "business_line_id"].iloc[0])
-                    with engine.begin() as conn:
-                        # Proper upsert; no probe insert
-                        conn.execute(
-                            text("""
-                                INSERT INTO items(
-                                  product_id, article_number, description, business_line_id, is_active
-                                ) VALUES (:pid, :article, :desc, :blid, TRUE)
-                                ON CONFLICT (product_id) DO UPDATE
-                                  SET article_number   = EXCLUDED.article_number,
-                                      description      = EXCLUDED.description,
-                                      business_line_id = EXCLUDED.business_line_id,
-                                      is_active        = TRUE
-                            """),
-                            {"pid": product_id.strip(),
-                             "article": (article.strip() or None),
-                             "desc": (desc.strip() or None),
-                             "blid": bl_id},
-                        )
-                    st.success("Item saved ✅")
-                except Exception as e:
-                    st.error("Could not add item.")
-                    st.caption(str(e))
-
-    # --- CSV/XLSX Import (upsert, with clean inserted/updated counts and reasons for skips) ---
-    f3 = st.file_uploader("Upload Items", type=["xlsx", "csv"], key="items")
-    if f3 is not None:
-        df = pd.read_excel(f3) if f3.name.endswith(".xlsx") else pd.read_csv(f3)
-        needed = {"product_id", "business_unit", "business_line"}
-        if not needed.issubset(df.columns):
-            st.error("Missing required columns: product_id, business_unit, business_line")
-        else:
-            inserted = 0
-            updated = 0
-            skipped = 0
-            skip_reasons = []
-
-            # Build live maps once
-            bu_map = {r.name.strip().lower(): int(r.business_unit_id) for r in bu_df_live.itertuples(index=False)}
-            bl_map = {}  # (bu_id, bl_name_lower) -> bl_id
-            if bu_map:
-                bl_rows = query_df("""
-                    SELECT bl.business_unit_id, bl.business_line_id, bl.name
-                    FROM business_lines bl
-                    WHERE bl.is_active IS TRUE
-                """)
-                for r in bl_rows.itertuples(index=False):
-                    bl_map[(int(r.business_unit_id), str(r.name).strip().lower())] = int(r.business_line_id)
-
-            try:
-                with engine.begin() as conn:
-                    for idx, r in df.iterrows():
-                        pid_raw = r.get("product_id")
-                        pid = (str(pid_raw).strip() if pd.notna(pid_raw) else "")
-                        bu_name_raw = str(r.get("business_unit", "")).strip()
-                        bl_name_raw = str(r.get("business_line", "")).strip()
-
-                        if not pid:
-                            skipped += 1
-                            skip_reasons.append(f"Row {idx+2}: missing product_id")
-                            continue
-                        if not bu_name_raw or not bl_name_raw:
-                            skipped += 1
-                            skip_reasons.append(f"Row {idx+2}: missing business_unit or business_line")
-                            continue
-
-                        bu_id = bu_map.get(bu_name_raw.lower())
-                        if not bu_id:
-                            skipped += 1
-                            skip_reasons.append(f"Row {idx+2}: business_unit '{bu_name_raw}' not found/active")
-                            continue
-
-                        bl_id = bl_map.get((bu_id, bl_name_raw.lower()))
-                        if not bl_id:
-                            skipped += 1
-                            skip_reasons.append(f"Row {idx+2}: business_line '{bl_name_raw}' not found/active under BU '{bu_name_raw}'")
-                            continue
-
-                        article_v = (str(r.get("article_number")).strip() if pd.notna(r.get("article_number")) else None)
-                        desc_v = (str(r.get("description")).strip() if pd.notna(r.get("description")) else None)
-
-                        # Pre-check existence (no probe insert)
-                        existed = conn.execute(
-                            text("SELECT 1 FROM items WHERE product_id = :pid"),
-                            {"pid": pid}
-                        ).fetchone() is not None
-
-                        conn.execute(
-                            text("""
-                                INSERT INTO items(product_id, article_number, description, business_line_id, is_active)
-                                VALUES (:pid, :article, :desc, :blid, TRUE)
-                                ON CONFLICT (product_id) DO UPDATE
-                                SET article_number   = EXCLUDED.article_number,
-                                    description      = EXCLUDED.description,
-                                    business_line_id = EXCLUDED.business_line_id,
-                                    is_active        = TRUE
-                            """),
-                            {"pid": pid, "article": article_v, "desc": desc_v, "blid": int(bl_id)},
-                        )
-
-                        if existed:
-                            updated += 1
-                        else:
-                            inserted += 1
-
-                st.success(f"Items import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}")
-                if skipped and skip_reasons:
-                    preview = "\n".join(skip_reasons[:20])
-                    more = f"\n…and {len(skip_reasons)-20} more." if len(skip_reasons) > 20 else ""
-                    st.warning(f"Some rows were skipped:\n\n{preview}{more}")
-            except Exception as e:
-                st.error("Import failed.")
-                st.caption(str(e))
-
-
-    # ---- Objectives (with Activate / Deactivate)
+    # ---- Items (Manage) — tabs[4] assumed to be implemented elsewhere or later
+    # ---- Objectives (Manage)
     with tabs[5]:
         odf = query_df("SELECT objective_id, name, COALESCE(is_active, TRUE) AS is_active FROM objectives ORDER BY name")
         if odf.empty:
@@ -2362,7 +2164,6 @@ def page_admin_import():
                 v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE objective_id=:id", {"id": oid})
                 st.caption(f"Refs → Visits: **{v_cnt}**")
 
-            # 🔁 Activate/Deactivate button
             with colB:
                 new_active = not active_now
                 label = "Deactivate" if active_now else "Activate"
@@ -2374,7 +2175,6 @@ def page_admin_import():
                         st.error("Could not update objective status.")
                         st.caption(str(e))
 
-            # ✏️ Edit name (hidden until opened)
             with colC:
                 edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
                 with edit_box:
@@ -2394,7 +2194,6 @@ def page_admin_import():
                                 exec_sql("UPDATE objectives SET name=:n WHERE objective_id=:id", {"n": nm_clean, "id": oid})
                                 st.success("Saved ✅")
 
-            # Danger Zone
             dz_keybase = "mg_obj_conf"
             conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
             danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
