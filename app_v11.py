@@ -55,6 +55,18 @@ st.set_page_config(page_title=APP_TITLE, layout="centered")
 # DB Utilities (PostgreSQL)
 # =============================
 
+from sqlalchemy import text
+
+def _get_secret(name: str, default: str = "") -> str:
+    # Prefer env var (Render). Fall back to st.secrets only if present locally.
+    val = os.environ.get(name)
+    if val:
+        return val
+    try:
+        return st.secrets[name]  # works only if you have .streamlit/secrets.toml locally
+    except Exception:
+        return default
+
 def query_df(sql: str, params: Optional[dict] = None) -> pd.DataFrame:
     """Run a read query and return a DataFrame (PostgreSQL)."""
     with engine.begin() as conn:
@@ -153,6 +165,9 @@ def _local_now() -> datetime:
 def _local_now_str() -> str:
     return _local_now().strftime("%Y-%m-%d %H:%M:%S")
 
+# Safe, Render-friendly secret access for Power BI
+PBI_PUSH_URL = _get_secret("PBI_PUSH_URL", "")
+
 def push_visit_to_pbi(row: dict) -> Tuple[bool, Optional[str]]:
     """
     Push a single visit to your Power BI streaming/push dataset.
@@ -160,7 +175,7 @@ def push_visit_to_pbi(row: dict) -> Tuple[bool, Optional[str]]:
     """
     push_url = PBI_PUSH_URL
     if not push_url:
-        return False, "Missing PBI_PUSH_URL (env var or st.secrets)."
+        return False, "Missing PBI_PUSH_URL (env var or secrets)."
 
     payload = {"rows": [row]}
     try:
@@ -220,6 +235,19 @@ def purge_expired_sessions() -> None:
 def delete_session(sid: str) -> None:
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM app_sessions WHERE session_id = :sid"), {"sid": sid})
+
+# Optional: guard if someone runs the app before init_db_v11.py locally
+def _ensure_sessions_table_exists():
+    ddl = """
+    CREATE TABLE IF NOT EXISTS app_sessions (
+      session_id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+      created_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at_utc TIMESTAMPTZ NOT NULL
+    )
+    """
+    with engine.begin() as conn:
+        conn.execute(text(ddl))
 
 # =============================
 # URL helpers (STABLE sid in URL)
@@ -302,6 +330,8 @@ def resolve_session_user() -> Optional[Dict[str, Any]]:
 
     return u
 
+# Run a tiny guard (safe no-op if table already exists), then load session
+_ensure_sessions_table_exists()
 if "user" not in st.session_state:
     purge_expired_sessions()
     st.session_state.user = resolve_session_user()
@@ -376,7 +406,8 @@ def login_block():
             st.error("User not found.")
             return
 
-        if int(u.get("is_active", 0)) != 1:
+        # Postgres BOOLEAN: treat False/None as inactive
+        if not bool(u.get("is_active", True)):
             st.error("Your account is inactive. Please contact the administrator.")
             return
 
@@ -405,7 +436,7 @@ def logout_button():
         set_url_param("page", None)
         st.rerun()
 
-## =============================
+# =============================
 # UI — Sidebar (page memory via URL + session)
 # =============================
 def sidebar_nav():
@@ -454,6 +485,7 @@ def sidebar_nav():
 # =============================
 def get_location_block(k) -> tuple[Optional[float], Optional[float], Optional[float]]:
     with st.expander("📍 Location (auto) — required for check-in", expanded=True):
+        # Hide the default locate button from Leaflet controls if any
         st.markdown("<style>.leaflet-control-locate{display:none!important}</style>", unsafe_allow_html=True)
 
         tried_key = k("geo_try")
@@ -467,10 +499,11 @@ def get_location_block(k) -> tuple[Optional[float], Optional[float], Optional[fl
                     st.rerun()
             return (None, None, None)
 
-        loc = streamlit_geolocation()  # requires HTTPS on mobile
-        lat = loc.get("latitude") if loc else None
-        lon = loc.get("longitude") if loc else None
-        acc = loc.get("accuracy") if loc else None
+        # NOTE: Works reliably over HTTPS (Render is HTTPS by default).
+        loc = streamlit_geolocation()  # dict or None
+        lat = loc.get("latitude") if isinstance(loc, dict) else None
+        lon = loc.get("longitude") if isinstance(loc, dict) else None
+        acc = loc.get("accuracy") if isinstance(loc, dict) else None
 
         c1, _ = st.columns([1, 3])
         with c1:
@@ -478,30 +511,44 @@ def get_location_block(k) -> tuple[Optional[float], Optional[float], Optional[fl
                 st.session_state.pop(tried_key, None)
                 st.rerun()
 
-        if not (lat and lon):
+        # Use None checks (0.0 is a valid coordinate)
+        if lat is None or lon is None:
             st.warning(
                 "We couldn't read your location.\n\n"
-                "• On mobile, GPS only works reliably over **HTTPS** (ngrok/Cloudflare/Streamlit Cloud).\n"
-                "• Ensure site permissions allow **Location** & **Precise Location**."
+                "• On **mobile**, GPS requires **HTTPS** (Render uses HTTPS).\n"
+                "• Allow **Location** (and **Precise location** on iOS) in browser permissions.\n"
+                "• If it still fails, try tapping **Retry location**."
             )
             return (None, None, None)
 
-        acc_txt = f" (~{acc:.0f} m accuracy)" if acc is not None else ""
-        st.success(f"Captured location: {float(lat):.6f}, {float(lon):.6f}{acc_txt}")
+        # Safe numeric casts
+        try:
+            flat = float(lat)
+            flon = float(lon)
+            facc = float(acc) if acc is not None else None
+        except (TypeError, ValueError):
+            st.warning("Location values looked invalid. Please try again.")
+            return (None, None, None)
 
-        m = folium.Map(location=[float(lat), float(lon)], zoom_start=16, control_scale=True)
-        folium.Marker([float(lat), float(lon)], tooltip="Your location").add_to(m)
+        acc_txt = f" (~{facc:.0f} m accuracy)" if facc is not None else ""
+        st.success(f"Captured location: {flat:.6f}, {flon:.6f}{acc_txt}")
+
+        m = folium.Map(location=[flat, flon], zoom_start=16, control_scale=True)
+        folium.Marker([flat, flon], tooltip="Your location").add_to(m)
         st_folium(m, height=300, key=k("geo_map"))
 
-        return (
-            float(lat) if lat is not None else None,
-            float(lon) if lon is not None else None,
-            float(acc) if acc is not None else None,
-        )
+        return (flat, flon, facc)
 
 # =============================
 # Page — Submit Visit (sticky submit + dedupe guard)
 # =============================
+from sqlalchemy.exc import IntegrityError
+try:
+    # psycopg 3 error class (optional, for finer duplicate checks)
+    from psycopg.errors import UniqueViolation
+except Exception:
+    UniqueViolation = None
+
 def page_submit_visit():
     st.title("📝 Submit Visit (v11)")
 
@@ -529,8 +576,8 @@ def page_submit_visit():
     saved_ok_key     = f"_{PAGE_NS}_saved_ok"
     geo_nonce_key    = f"_{PAGE_NS}_geo_nonce"
     geo_captured_key = f"_{PAGE_NS}_geo_captured"
-    busy_key         = f"_{PAGE_NS}_busy"           # NEW: lock while saving
-    intent_key       = f"_{PAGE_NS}_submit_intent"  # NEW: set True when any submit is pressed
+    busy_key         = f"_{PAGE_NS}_busy"           # lock while saving
+    intent_key       = f"_{PAGE_NS}_submit_intent"  # set True when any submit is pressed
 
     st.session_state.setdefault(nonce_key, 0)
     st.session_state.setdefault(geo_nonce_key, 0)
@@ -558,12 +605,17 @@ def page_submit_visit():
 
     # ---------------- Location (REQUIRED) ----------------
     lat, lon, acc = get_location_block(k)
-    if not (lat and lon):
+    if lat is None or lon is None:
         st.info("📍 Location is required before you can submit.")
         return
 
     # ---------------- Customer (REQUIRED) ----------------
-    cust_df = query_df("SELECT customer_id, account_name FROM customers WHERE is_active=1 ORDER BY account_name")
+    cust_df = query_df("""
+        SELECT customer_id, account_name
+        FROM customers
+        WHERE is_active IS TRUE
+        ORDER BY account_name
+    """)
     cust_names = [""] + cust_df["account_name"].tolist()
     cust_choice = st.selectbox("Customer *", cust_names, index=0, key=k("cust_sel"))
     customer_id = None
@@ -576,15 +628,15 @@ def page_submit_visit():
     aud_choice_label = ""     # label shown to user
     aud_choice_name = None    # raw 'name' from DB
 
-    aud_labels = [""]
-    aud_rows = []  # (label, audience_id, raw_name)
+    aud_labels = [""]  # list of strings for the selectbox
+    aud_rows = []      # list of tuples (label, audience_id, raw_name)
 
     if customer_id:
         aud_df = query_df(
             """
             SELECT audience_id, title, name, department, position
             FROM target_audiences
-            WHERE is_active=1 AND customer_id=:cid
+            WHERE is_active IS TRUE AND customer_id=:cid
             ORDER BY name
             """,
             {"cid": customer_id},
@@ -627,9 +679,7 @@ def page_submit_visit():
                 break
 
     # -------- Home Visit block (REQUIRED only if triggered) --------
-    is_home_visit = False
-    if aud_choice_label and aud_choice_label.strip().lower().startswith("home visit"):
-        is_home_visit = True
+    is_home_visit = bool(aud_choice_label and aud_choice_label.strip().lower().startswith("home visit"))
 
     patient_name = patient_phone = serial_no = None
     if is_home_visit:
@@ -639,7 +689,12 @@ def page_submit_visit():
             serial_no = st.text_input("Serial # *", key=k("serial_no"))
 
     # ---------------- Business Unit (REQUIRED) ----------------
-    bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+    bu_df = query_df("""
+        SELECT business_unit_id, name
+        FROM business_units
+        WHERE is_active IS TRUE
+        ORDER BY name
+    """)
     bu_names = [""] + bu_df["name"].tolist()
     bu_choice = st.selectbox("Business Unit *", bu_names, index=0, key=k("bu_sel"), on_change=_on_bu_change)
     bu_id = None
@@ -655,7 +710,10 @@ def page_submit_visit():
             """
             SELECT DISTINCT category
             FROM business_lines
-            WHERE is_active=1 AND business_unit_id=:bid AND category IS NOT NULL AND trim(category) <> ''
+            WHERE is_active IS TRUE
+              AND business_unit_id = :bid
+              AND category IS NOT NULL
+              AND trim(category) <> ''
             ORDER BY category
             """,
             {"bid": bu_id},
@@ -681,7 +739,9 @@ def page_submit_visit():
             """
             SELECT business_line_id, name
             FROM business_lines
-            WHERE is_active=1 AND business_unit_id=:bid AND category=:cat
+            WHERE is_active IS TRUE
+              AND business_unit_id = :bid
+              AND category = :cat
             ORDER BY name
             """,
             {"bid": bu_id, "cat": cat_choice},
@@ -711,7 +771,8 @@ def page_submit_visit():
             """
             SELECT product_id, article_number, description
             FROM items
-            WHERE is_active=1 AND business_line_id=:blid
+            WHERE is_active IS TRUE
+              AND business_line_id = :blid
             ORDER BY COALESCE(article_number, product_id)
             """,
             {"blid": business_line_id},
@@ -739,7 +800,12 @@ def page_submit_visit():
         product_id = label_to_pid.get(prod_choice)
 
     # ---------------- Objective (REQUIRED) + Evaluation (REQUIRED) + Notes (OPTIONAL) ----------------
-    obj_df = query_df("SELECT objective_id, name FROM objectives WHERE COALESCE(is_active,1)=1 ORDER BY name")
+    obj_df = query_df("""
+        SELECT objective_id, name
+        FROM objectives
+        WHERE COALESCE(is_active, TRUE) IS TRUE
+        ORDER BY name
+    """)
     obj_names = [""] + obj_df["name"].tolist()
     obj_choice = st.selectbox("Business Objective *", obj_names, index=0, key=k("obj_sel"))
     objective_id = None
@@ -776,8 +842,10 @@ def page_submit_visit():
                        COALESCE(i.description, '') AS description
                 FROM items i
                 JOIN business_lines bl ON bl.business_line_id = i.business_line_id
-                WHERE i.is_active = 1 AND bl.is_active = 1
-                  AND bl.business_unit_id = :bid AND bl.category = :cat
+                WHERE i.is_active IS TRUE
+                  AND bl.is_active IS TRUE
+                  AND bl.business_unit_id = :bid
+                  AND bl.category = :cat
                 ORDER BY COALESCE(i.article_number, i.product_id)
                 """,
                 {"bid": bu_id, "cat": cat_choice},
@@ -820,17 +888,7 @@ def page_submit_visit():
         help="Saves immediately. You’ll see a spinner while saving."
     )
 
-    #st.markdown('<div class="sticky-submit-wrap">', unsafe_allow_html=True)
-    #sticky_click = st.button(
-    #    "Submit",
-    #    type="primary",
-    #    key=k("submit_btn_sticky"),
-    #    disabled=st.session_state[busy_key]
-    #)
-    #st.markdown('</div>', unsafe_allow_html=True)
-
     # Any submit → set intent & lock, then rerun to process exactly once
-    #if (inline_click or sticky_click) and not st.session_state[busy_key]:
     if (inline_click) and not st.session_state[busy_key]:
         st.session_state[intent_key] = True
         st.session_state[busy_key]   = True
@@ -903,8 +961,8 @@ def page_submit_visit():
         # ----- All validations passed → persist -----
         visit_row = {
             "user_id": uid,
-            "submitted_at_utc": _utcnow_iso(),
-            "submitted_at_local": _local_now_str(),
+            "submitted_at_utc": _utcnow(),          # let SQLAlchemy pass as TIMESTAMPTZ
+            "submitted_at_local": _local_now_str(), # keep text field as before
             "latitude": lat,
             "longitude": lon,
             "accuracy_m": acc,
@@ -967,7 +1025,7 @@ def page_submit_visit():
 
             ok, err = push_visit_to_pbi(pbi_row)
             if not ok:
-                st.warning(f"Saved locally, but Power BI push failed → {err}")
+                st.warning(f"Saved, but Power BI push failed → {err}")
             else:
                 st.toast("Pushed to Power BI ✅", icon="✅")
 
@@ -980,13 +1038,19 @@ def page_submit_visit():
             st.session_state[busy_key] = False
             st.rerun()
 
-        except Exception as e:
-            msg = str(e)
-            if isinstance(e, sqlite3.IntegrityError) or "UNIQUE constraint failed: home_visits.serial_no" in msg:
+        except IntegrityError as e:
+            # Friendly duplicate check for unique serial_no on home_visits
+            emsg = str(e).lower()
+            if (UniqueViolation and isinstance(e.orig, UniqueViolation)) or ("duplicate key value violates unique constraint" in emsg) or ("unique constraint" in emsg and "home_visits_serial_no" in emsg):
                 st.error("Serial # already exists. Please verify and try again.")
             else:
                 st.error("Could not save your submission.")
-                st.caption(msg)
+                st.caption(str(e))
+            st.session_state[intent_key] = False
+            st.session_state[busy_key] = False
+        except Exception as e:
+            st.error("Could not save your submission.")
+            st.caption(str(e))
             st.session_state[intent_key] = False
             st.session_state[busy_key] = False
 
@@ -1007,7 +1071,7 @@ def page_my_submissions():
                i.article_number, i.description,
                bu.name AS business_unit,
                bl.name AS business_line,
-               bl.category AS category,            -- ← show category
+               bl.category AS category,
                o.name AS objective,
                v.evaluation,
                v.notes,
@@ -1018,21 +1082,21 @@ def page_my_submissions():
                  FROM shelf_movement_lines l
                  JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
                  WHERE h.visit_id = v.visit_id
-               ),0) AS shelf_lines_count,
+               ), 0) AS shelf_lines_count,
                COALESCE((
                  SELECT SUM(l.qty_checked)
                  FROM shelf_movement_lines l
                  JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
                  WHERE h.visit_id = v.visit_id
-               ),0) AS shelf_total_qty
+               ), 0) AS shelf_total_qty
         FROM visits v
-        JOIN customers c            ON v.customer_id = c.customer_id
+        JOIN customers c              ON v.customer_id = c.customer_id
         LEFT JOIN target_audiences ta ON v.audience_id = ta.audience_id
-        LEFT JOIN items i           ON v.product_id = i.product_id
-        JOIN business_lines bl      ON bl.business_line_id = v.business_line_id
-        JOIN business_units bu      ON bu.business_unit_id = bl.business_unit_id
-        JOIN objectives o           ON v.objective_id = o.objective_id
-        LEFT JOIN home_visits hv    ON hv.visit_id = v.visit_id
+        LEFT JOIN items i             ON v.product_id = i.product_id
+        JOIN business_lines bl        ON bl.business_line_id = v.business_line_id
+        JOIN business_units bu        ON bu.business_unit_id = bl.business_unit_id
+        JOIN objectives o             ON v.objective_id = o.objective_id
+        LEFT JOIN home_visits hv      ON hv.visit_id = v.visit_id
         WHERE v.user_id = :uid
         ORDER BY v.visit_id DESC
     """
@@ -1042,8 +1106,13 @@ def page_my_submissions():
         st.info("No submissions yet.")
     else:
         st.markdown(f"**Total: {len(df):,}**")
-        st.dataframe(df, width="stretch", hide_index=True)
-        st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"), "my_submissions.csv", "text/csv")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download CSV",
+            df.to_csv(index=False).encode("utf-8-sig"),
+            "my_submissions.csv",
+            "text/csv"
+        )
 
 # =============================
 # Page — User Settings
@@ -1081,7 +1150,7 @@ def page_user_settings():
     with c2:
         st.text_input("Role", value=row.get("role") or "", disabled=True)
         st.text_input("Business Unit", value=row.get("business_unit") or "", disabled=True)
-        st.text_input("Status", value=("Active" if int(row.get("is_active") or 0) == 1 else "Inactive"), disabled=True)
+        st.text_input("Status", value=("Active" if bool(row.get("is_active", True)) else "Inactive"), disabled=True)
 
     st.divider()
 
@@ -1133,10 +1202,13 @@ def page_user_settings():
             st.error("New password must be different from the current password.")
             st.stop()
 
-        # 8) Save
+        # 8) Save (PostgreSQL: use named params with exec_sql)
         try:
             new_hash = pbkdf2_sha256.hash(new_pw)
-            exec_sql("UPDATE users SET password_hash=? WHERE user_id=?", (new_hash, uid))
+            exec_sql(
+                "UPDATE users SET password_hash = :ph WHERE user_id = :uid",
+                {"ph": new_hash, "uid": uid}
+            )
             st.success("Password updated ✅")
         except Exception as e:
             st.error("Could not update password.")
@@ -1145,6 +1217,8 @@ def page_user_settings():
 # =============================
 # Page — Admin: Import Lookups
 # =============================
+from sqlalchemy import text
+
 def page_admin_import():
     st.title("🛠️ Admin — Import Lookups (Excel/CSV)")
     st.caption("Files should have exact column names shown below. Existing rows are kept; duplicates are skipped.")
@@ -1162,9 +1236,9 @@ def page_admin_import():
     if "danger_nonce" not in st.session_state:
         st.session_state["danger_nonce"] = 0
 
-    def _refcount(sql: str, params: tuple) -> int:
+    def _refcount(sql: str, params: dict) -> int:
         with engine.begin() as conn:
-            r = conn.exec_driver_sql(sql, params).fetchone()
+            r = conn.execute(text(sql), params).fetchone()
             return int(r[0]) if r and r[0] is not None else 0
 
     def _parts_join(*parts):
@@ -1187,18 +1261,24 @@ def page_admin_import():
             else:
                 try:
                     with engine.begin() as conn:
-                        conn.exec_driver_sql(
-                            """
-                            INSERT INTO customers(account_name, sector, region, city)
-                            SELECT ?,?,?,?
-                            WHERE NOT EXISTS (
-                              SELECT 1 FROM customers WHERE lower(account_name) = lower(?)
-                            )
-                            """,
-                            (acc.strip(), (sector.strip() or None), (region.strip() or None), (city.strip() or None), acc.strip()),
+                        # No unique on account_name in schema → enforce app-side de-dup by lower(name)
+                        res = conn.execute(
+                            text("""
+                                INSERT INTO customers(account_name, sector, region, city)
+                                SELECT :acc, :sector, :region, :city
+                                WHERE NOT EXISTS (
+                                  SELECT 1 FROM customers WHERE lower(account_name) = lower(:acc)
+                                )
+                            """),
+                            {
+                                "acc": acc.strip(),
+                                "sector": (sector.strip() or None),
+                                "region": (region.strip() or None),
+                                "city": (city.strip() or None),
+                            },
                         )
-                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
-                    if ch > 0:
+                        added = res.rowcount or 0
+                    if added > 0:
                         st.success("Customer added ✅")
                     else:
                         st.info("A customer with that name already exists — nothing added.")
@@ -1217,28 +1297,26 @@ def page_admin_import():
             try:
                 with engine.begin() as conn:
                     for _, r in df.iterrows():
-                        acc = str(r.get("account_name", "")).strip()
-                        if not acc:
+                        acc_val = str(r.get("account_name", "")).strip()
+                        if not acc_val:
                             skipped += 1
                             continue
-                        conn.exec_driver_sql(
-                            """
-                            INSERT INTO customers(account_name, sector, region, city)
-                            SELECT ?,?,?,?
-                            WHERE NOT EXISTS (
-                              SELECT 1 FROM customers WHERE lower(account_name) = lower(?)
-                            )
-                            """,
-                            (
-                                acc,
-                                (str(r.get("sector")).strip() if pd.notna(r.get("sector")) else None),
-                                (str(r.get("region")).strip() if pd.notna(r.get("region")) else None),
-                                (str(r.get("city")).strip() if pd.notna(r.get("city")) else None),
-                                acc,
-                            ),
+                        res = conn.execute(
+                            text("""
+                                INSERT INTO customers(account_name, sector, region, city)
+                                SELECT :acc, :sector, :region, :city
+                                WHERE NOT EXISTS (
+                                  SELECT 1 FROM customers WHERE lower(account_name) = lower(:acc)
+                                )
+                            """),
+                            {
+                                "acc": acc_val,
+                                "sector": (str(r.get("sector")).strip() if pd.notna(r.get("sector")) else None),
+                                "region": (str(r.get("region")).strip() if pd.notna(r.get("region")) else None),
+                                "city": (str(r.get("city")).strip() if pd.notna(r.get("city")) else None),
+                            },
                         )
-                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
-                        if ch > 0:
+                        if (res.rowcount or 0) > 0:
                             inserted += 1
                         else:
                             skipped += 1
@@ -1282,29 +1360,31 @@ def page_admin_import():
                         st.error("Selected customer was not found.")
                     else:
                         with engine.begin() as conn:
-                            conn.exec_driver_sql(
-                                """
-                                INSERT OR IGNORE INTO target_audiences(
-                                  customer_id, title, name, department, position, potentiality, loyalty,
-                                  mobile, landline, external_number, email
-                                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                                """,
-                                (
-                                    cid,
-                                    (title.strip() or None),
-                                    aud_name.strip(),
-                                    (dept.strip() or None),
-                                    (pos.strip() or None),
-                                    (pot.strip() or None),
-                                    (loy.strip() or None),
-                                    (mobile.strip() or None),
-                                    (land.strip() or None),
-                                    (extn.strip() or None),
-                                    (email.strip() or None),
-                                ),
+                            # UNIQUE (customer_id, name) in schema → upsert-safe
+                            res = conn.execute(
+                                text("""
+                                    INSERT INTO target_audiences(
+                                      customer_id, title, name, department, position, potentiality, loyalty,
+                                      mobile, landline, external_number, email, is_active
+                                    )
+                                    VALUES (:cid, :title, :name, :dept, :pos, :pot, :loy, :mob, :land, :extn, :email, TRUE)
+                                    ON CONFLICT (customer_id, name) DO NOTHING
+                                """),
+                                {
+                                    "cid": cid,
+                                    "title": (title.strip() or None),
+                                    "name": aud_name.strip(),
+                                    "dept": (dept.strip() or None),
+                                    "pos": (pos.strip() or None),
+                                    "pot": (pot.strip() or None),
+                                    "loy": (loy.strip() or None),
+                                    "mob": (mobile.strip() or None),
+                                    "land": (land.strip() or None),
+                                    "extn": (extn.strip() or None),
+                                    "email": (email.strip() or None),
+                                },
                             )
-                            ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
-                        if ch > 0:
+                        if (res.rowcount or 0) > 0:
                             st.success("Target audience added ✅")
                         else:
                             st.info("This customer + name already exists — nothing added.")
@@ -1335,29 +1415,30 @@ def page_admin_import():
                         if not cid:
                             skipped += 1
                             continue
-                        conn.exec_driver_sql(
-                            """
-                            INSERT OR REPLACE INTO target_audiences(
-                              customer_id, title, name, department, position, potentiality, loyalty,
-                              mobile, landline, external_number, email
-                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                            """,
-                            (
-                                cid,
-                                (str(r.get("title")).strip() if pd.notna(r.get("title")) else None),
-                                aname,
-                                (str(r.get("department")).strip() if pd.notna(r.get("department")) else None),
-                                (str(r.get("position")).strip() if pd.notna(r.get("position")) else None),
-                                (str(r.get("potentiality")).strip() if pd.notna(r.get("potentiality")) else None),
-                                (str(r.get("loyalty")).strip() if pd.notna(r.get("loyalty")) else None),
-                                (str(r.get("mobile")).strip() if pd.notna(r.get("mobile")) else None),
-                                (str(r.get("landline")).strip() if pd.notna(r.get("landline")) else None),
-                                (str(r.get("external_number")).strip() if pd.notna(r.get("external_number")) else None),
-                                (str(r.get("email")).strip() if pd.notna(r.get("email")) else None),
-                            ),
+                        res = conn.execute(
+                            text("""
+                                INSERT INTO target_audiences(
+                                  customer_id, title, name, department, position, potentiality, loyalty,
+                                  mobile, landline, external_number, email, is_active
+                                )
+                                VALUES (:cid, :title, :name, :dept, :pos, :pot, :loy, :mob, :land, :extn, :email, TRUE)
+                                ON CONFLICT (customer_id, name) DO NOTHING
+                            """),
+                            {
+                                "cid": cid,
+                                "title": (str(r.get("title")).strip() if pd.notna(r.get("title")) else None),
+                                "name": aname,
+                                "dept": (str(r.get("department")).strip() if pd.notna(r.get("department")) else None),
+                                "pos": (str(r.get("position")).strip() if pd.notna(r.get("position")) else None),
+                                "pot": (str(r.get("potentiality")).strip() if pd.notna(r.get("potentiality")) else None),
+                                "loy": (str(r.get("loyalty")).strip() if pd.notna(r.get("loyalty")) else None),
+                                "mob": (str(r.get("mobile")).strip() if pd.notna(r.get("mobile")) else None),
+                                "land": (str(r.get("landline")).strip() if pd.notna(r.get("landline")) else None),
+                                "extn": (str(r.get("external_number")).strip() if pd.notna(r.get("external_number")) else None),
+                                "email": (str(r.get("email")).strip() if pd.notna(r.get("email")) else None),
+                            },
                         )
-                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
-                        if ch > 0:
+                        if (res.rowcount or 0) > 0:
                             inserted += 1
                         else:
                             skipped += 1
@@ -1382,18 +1463,16 @@ def page_admin_import():
             else:
                 try:
                     with engine.begin() as conn:
-                        conn.exec_driver_sql(
-                            """
-                            INSERT INTO business_units(name, is_active)
-                            SELECT ?, 1
-                            WHERE NOT EXISTS (
-                              SELECT 1 FROM business_units WHERE lower(name) = lower(?)
-                            )
-                            """,
-                            (bu_name.strip(), bu_name.strip()),
+                        # business_units.name UNIQUE
+                        res = conn.execute(
+                            text("""
+                                INSERT INTO business_units(name, is_active)
+                                VALUES (:name, TRUE)
+                                ON CONFLICT (name) DO NOTHING
+                            """),
+                            {"name": bu_name.strip()},
                         )
-                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
-                    if ch > 0:
+                    if (res.rowcount or 0) > 0:
                         st.success("Business Unit added ✅")
                     else:
                         st.info("That Business Unit already exists — nothing added.")
@@ -1416,18 +1495,15 @@ def page_admin_import():
                         if not nm:
                             skipped += 1
                             continue
-                        conn.exec_driver_sql(
-                            """
-                            INSERT INTO business_units(name, is_active)
-                            SELECT ?, 1
-                            WHERE NOT EXISTS (
-                              SELECT 1 FROM business_units WHERE lower(name) = lower(?)
-                            )
-                            """,
-                            (nm, nm),
+                        res = conn.execute(
+                            text("""
+                                INSERT INTO business_units(name, is_active)
+                                VALUES (:name, TRUE)
+                                ON CONFLICT (name) DO NOTHING
+                            """),
+                            {"name": nm},
                         )
-                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
-                        if ch > 0:
+                        if (res.rowcount or 0) > 0:
                             inserted += 1
                         else:
                             skipped += 1
@@ -1443,7 +1519,7 @@ def page_admin_import():
     st.subheader("4) Business Lines")
     st.write("Columns: **business_unit**, **name**, **category**  (optional: supplier, product_group)")
 
-    bu_df_for_bl = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+    bu_df_for_bl = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
     bu_name_opts = [""] + bu_df_for_bl["name"].tolist()
     bu_name_to_id = {r.name: int(r.business_unit_id) for r in bu_df_for_bl.itertuples(index=False)}
 
@@ -1486,19 +1562,24 @@ def page_admin_import():
                         st.error("Selected Business Unit not found.")
                     else:
                         with engine.begin() as conn:
-                            conn.exec_driver_sql(
-                                """
-                                INSERT INTO business_lines(business_unit_id, name, supplier, category, product_group, is_active)
-                                SELECT ?,?,?,?,?,1
-                                WHERE NOT EXISTS (
-                                  SELECT 1 FROM business_lines WHERE business_unit_id=? AND lower(name)=lower(?)
-                                )
-                                """,
-                                (bu_id, bl_name.strip(), (supplier.strip() or None), category.strip(),
-                                 (prod_group.strip() or None), bu_id, bl_name.strip()),
+                            # UNIQUE (business_unit_id, name)
+                            res = conn.execute(
+                                text("""
+                                    INSERT INTO business_lines(
+                                      business_unit_id, name, supplier, category, product_group, is_active
+                                    )
+                                    VALUES (:bid, :name, :supplier, :category, :pg, TRUE)
+                                    ON CONFLICT (business_unit_id, name) DO NOTHING
+                                """),
+                                {
+                                    "bid": bu_id,
+                                    "name": bl_name.strip(),
+                                    "supplier": (supplier.strip() or None),
+                                    "category": category.strip(),
+                                    "pg": (prod_group.strip() or None),
+                                },
                             )
-                            ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
-                        if ch > 0:
+                        if (res.rowcount or 0) > 0:
                             st.success("Business Line added ✅")
                         else:
                             st.info("That Business Unit + Line already exists — nothing added.")
@@ -1538,15 +1619,21 @@ def page_admin_import():
                         supplier = (str(r.get("supplier")).strip() if pd.notna(r.get("supplier")) else None)
                         prod_group = (str(r.get("product_group")).strip() if pd.notna(r.get("product_group")) else None)
 
-                        conn.exec_driver_sql(
-                            """
-                            INSERT OR IGNORE INTO business_lines(business_unit_id, name, supplier, category, product_group, is_active)
-                            VALUES (?,?,?,?,?,1)
-                            """,
-                            (bu_id_tmp, bl_name_raw, supplier, cat_raw, prod_group),
+                        res = conn.execute(
+                            text("""
+                                INSERT INTO business_lines(business_unit_id, name, supplier, category, product_group, is_active)
+                                VALUES (:bid, :name, :supplier, :category, :pg, TRUE)
+                                ON CONFLICT (business_unit_id, name) DO NOTHING
+                            """),
+                            {
+                                "bid": bu_id_tmp,
+                                "name": bl_name_raw,
+                                "supplier": supplier,
+                                "category": cat_raw,
+                                "pg": prod_group,
+                            },
                         )
-                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
-                        if ch > 0:
+                        if (res.rowcount or 0) > 0:
                             inserted += 1
                         else:
                             skipped += 1
@@ -1566,7 +1653,7 @@ def page_admin_import():
         SELECT bl.business_line_id, bl.name AS business_line, bu.name AS business_unit
         FROM business_lines bl
         JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
-        WHERE bu.is_active=1 AND bl.is_active=1
+        WHERE bu.is_active IS TRUE AND bl.is_active IS TRUE
         ORDER BY bu.name, bl.name
     """)
     bu_bl_to_id = {(r.business_unit.strip().lower(), r.business_line.strip().lower()): int(r.business_line_id)
@@ -1595,24 +1682,25 @@ def page_admin_import():
                         st.error("Business Line not found under the selected Business Unit.")
                     else:
                         with engine.begin() as conn:
-                            exists = conn.exec_driver_sql("SELECT 1 FROM items WHERE product_id = ?", (product_id.strip(),)).fetchone()
-                            if exists:
-                                st.error("That Product ID already exists.")
-                            else:
-                                conn.exec_driver_sql(
-                                    """
+                            # items.product_id PK, items.article_number UNIQUE
+                            res = conn.execute(
+                                text("""
                                     INSERT INTO items(
                                       product_id, article_number, description, business_line_id, is_active
-                                    ) VALUES (?,?,?,?,1)
-                                    """,
-                                    (
-                                        product_id.strip(),
-                                        (article.strip() or None),
-                                        (desc.strip() or None),
-                                        int(bl_id),
-                                    ),
-                                )
-                        st.success("Item added ✅")
+                                    ) VALUES (:pid, :article, :desc, :blid, TRUE)
+                                    ON CONFLICT (product_id) DO NOTHING
+                                """),
+                                {
+                                    "pid": product_id.strip(),
+                                    "article": (article.strip() or None),
+                                    "desc": (desc.strip() or None),
+                                    "blid": int(bl_id),
+                                },
+                            )
+                        if (res.rowcount or 0) > 0:
+                            st.success("Item added ✅")
+                        else:
+                            st.error("That Product ID already exists.")
                 except Exception as e:
                     st.error("Could not add item.")
                     st.caption(str(e))
@@ -1629,7 +1717,6 @@ def page_admin_import():
             skipped = 0
             try:
                 with engine.begin() as conn:
-                    existing = set(pd.read_sql_query(sa.text("SELECT product_id FROM items"), conn)["product_id"].astype(str).tolist())
                     for _, r in df.iterrows():
                         pid_raw = r.get("product_id")
                         pid = str(pid_raw).strip() if pd.notna(pid_raw) else ""
@@ -1642,20 +1729,40 @@ def page_admin_import():
                         if not bl_id:
                             skipped += 1
                             continue
-                        article = str(r.get("article_number")).strip() if pd.notna(r.get("article_number")) else None
-                        desc = str(r.get("description")).strip() if pd.notna(r.get("description")) else None
-                        conn.exec_driver_sql(
-                            """
-                            INSERT OR REPLACE INTO items(
-                              product_id, article_number, description, business_line_id, is_active
-                            ) VALUES(?,?,?,?,1)
-                            """,
-                            (pid, article, desc, int(bl_id)),
+                        article_v = str(r.get("article_number")).strip() if pd.notna(r.get("article_number")) else None
+                        desc_v = str(r.get("description")).strip() if pd.notna(r.get("description")) else None
+
+                        # Upsert on product_id; also update article/desc/line if already exists
+                        res = conn.execute(
+                            text("""
+                                INSERT INTO items(product_id, article_number, description, business_line_id, is_active)
+                                VALUES (:pid, :article, :desc, :blid, TRUE)
+                                ON CONFLICT (product_id) DO UPDATE
+                                SET article_number = EXCLUDED.article_number,
+                                    description    = EXCLUDED.description,
+                                    business_line_id = EXCLUDED.business_line_id,
+                                    is_active = TRUE
+                            """),
+                            {"pid": pid, "article": article_v, "desc": desc_v, "blid": int(bl_id)},
                         )
-                        if pid in existing:
-                            updated += 1
+                        # rowcount is not reliable for upsert; approximate:
+                        # If the row existed and got updated, rowcount may be 1 as well.
+                        # We'll classify based on whether product_id was new by probing once:
+                        chk = conn.execute(text("SELECT 1 FROM items WHERE product_id = :pid"), {"pid": pid}).fetchone()
+                        if chk:
+                            # differentiate inserted vs updated by a simple heuristic:
+                            # Try to insert again with DO NOTHING—if rowcount==0, it existed → updated
+                            probe = conn.execute(
+                                text("INSERT INTO items(product_id) VALUES (:pid) ON CONFLICT (product_id) DO NOTHING"),
+                                {"pid": pid},
+                            )
+                            if (probe.rowcount or 0) > 0:
+                                inserted += 1
+                            else:
+                                updated += 1
                         else:
                             inserted += 1
+
                 st.success(f"Items import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}")
             except Exception as e:
                 st.error("Import failed.")
@@ -1677,9 +1784,12 @@ def page_admin_import():
             else:
                 try:
                     with engine.begin() as conn:
-                        conn.exec_driver_sql("INSERT OR IGNORE INTO objectives(name) VALUES(?)", (obj_name.strip(),))
-                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
-                    if ch > 0:
+                        # objectives.name UNIQUE
+                        res = conn.execute(
+                            text("INSERT INTO objectives(name, is_active) VALUES(:n, TRUE) ON CONFLICT (name) DO NOTHING"),
+                            {"n": obj_name.strip()},
+                        )
+                    if (res.rowcount or 0) > 0:
                         st.success("Objective added ✅")
                     else:
                         st.info("That objective already exists — nothing added.")
@@ -1702,9 +1812,11 @@ def page_admin_import():
                         if not nm:
                             skipped += 1
                             continue
-                        conn.exec_driver_sql("INSERT OR IGNORE INTO objectives(name) VALUES(?)", (nm,))
-                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
-                        if ch > 0:
+                        res = conn.execute(
+                            text("INSERT INTO objectives(name, is_active) VALUES(:n, TRUE) ON CONFLICT (name) DO NOTHING"),
+                            {"n": nm},
+                        )
+                        if (res.rowcount or 0) > 0:
                             inserted += 1
                         else:
                             skipped += 1
@@ -1734,15 +1846,15 @@ def page_admin_import():
 
             colA, colB, colC = st.columns(3)
             with colA:
-                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE customer_id=?", (cid,))
-                a_cnt = _refcount("SELECT COUNT(*) FROM target_audiences WHERE customer_id=?", (cid,))
+                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE customer_id=:cid", {"cid": cid})
+                a_cnt = _refcount("SELECT COUNT(*) FROM target_audiences WHERE customer_id=:cid", {"cid": cid})
                 st.caption(f"Refs → Visits: **{v_cnt}** · Audiences: **{a_cnt}**")
 
             with colB:
-                new_active = 0 if row["is_active"] else 1
-                label = "Deactivate" if row["is_active"] else "Activate"
+                new_active = not bool(row["is_active"])
+                label = "Deactivate" if bool(row["is_active"]) else "Activate"
                 if st.button(label, key="mg_cust_toggle"):
-                    exec_sql("UPDATE customers SET is_active=? WHERE customer_id=?", (new_active, cid))
+                    exec_sql("UPDATE customers SET is_active=:b WHERE customer_id=:id", {"b": new_active, "id": cid})
                     st.success("Updated ✅")
 
             with colC:
@@ -1759,13 +1871,17 @@ def page_admin_import():
                         if not acc_clean:
                             st.error("Account Name is required.")
                         else:
-                            dup = query_df("SELECT 1 FROM customers WHERE lower(account_name)=lower(:n) AND customer_id<>:id",
-                                           {"n": acc_clean, "id": cid})
+                            dup = query_df(
+                                "SELECT 1 FROM customers WHERE lower(account_name)=lower(:n) AND customer_id<>:id",
+                                {"n": acc_clean, "id": cid},
+                            )
                             if not dup.empty:
                                 st.error("Account Name already exists.")
                             else:
-                                exec_sql("UPDATE customers SET account_name=?, sector=?, region=?, city=? WHERE customer_id=?",
-                                         (acc_clean, sector.strip() or None, region.strip() or None, city.strip() or None, cid))
+                                exec_sql(
+                                    "UPDATE customers SET account_name=:acc, sector=:s, region=:r, city=:c WHERE customer_id=:id",
+                                    {"acc": acc_clean, "s": sector.strip() or None, "r": region.strip() or None, "c": city.strip() or None, "id": cid},
+                                )
                                 st.success("Saved ✅")
 
             dz_keybase = "mg_cust_conf"
@@ -1780,7 +1896,7 @@ def page_admin_import():
                         st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits and/or target audiences. Deactivate instead.")
                         st.rerun()
                     try:
-                        exec_sql("DELETE FROM customers WHERE customer_id=?", (cid,))
+                        exec_sql("DELETE FROM customers WHERE customer_id=:id", {"id": cid})
                         st.session_state["flash_admin"] = ("success", "Customer deleted ✅")
                     except Exception as e:
                         st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
@@ -1816,14 +1932,14 @@ def page_admin_import():
 
             colA, colB, colC = st.columns(3)
             with colA:
-                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE audience_id=?", (aid,))
+                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE audience_id=:aid", {"aid": aid})
                 st.caption(f"Refs → Visits: **{v_cnt}**")
 
             with colB:
-                new_active = 0 if row["is_active"] else 1
-                label = "Deactivate" if row["is_active"] else "Activate"
+                new_active = not bool(row["is_active"])
+                label = "Deactivate" if bool(row["is_active"]) else "Activate"
                 if st.button(label, key="mg_aud_toggle"):
-                    exec_sql("UPDATE target_audiences SET is_active=? WHERE audience_id=?", (new_active, aid))
+                    exec_sql("UPDATE target_audiences SET is_active=:b WHERE audience_id=:id", {"b": new_active, "id": aid})
                     st.success("Updated ✅")
 
             with colC:
@@ -1869,17 +1985,18 @@ def page_admin_import():
                                 exec_sql(
                                     """
                                     UPDATE target_audiences
-                                    SET customer_id=?, title=?, name=?, department=?, position=?, potentiality=?, loyalty=?,
-                                        mobile=?, landline=?, external_number=?, email=?
-                                    WHERE audience_id=?
+                                    SET customer_id=:cid, title=:title, name=:name, department=:dept, position=:pos,
+                                        potentiality=:pot, loyalty=:loy, mobile=:mob, landline=:land, external_number=:extn, email=:email
+                                    WHERE audience_id=:aid
                                     """,
-                                    (
-                                        new_cust_id, title.strip() or None, nm,
-                                        dept.strip() or None, pos.strip() or None,
-                                        pot.strip() or None, loy.strip() or None,
-                                        mob.strip() or None, land.strip() or None, extn.strip() or None, email.strip() or None,
-                                        aid,
-                                    ),
+                                    {
+                                        "cid": new_cust_id, "title": title.strip() or None, "name": nm,
+                                        "dept": dept.strip() or None, "pos": pos.strip() or None,
+                                        "pot": pot.strip() or None, "loy": loy.strip() or None,
+                                        "mob": mob.strip() or None, "land": land.strip() or None,
+                                        "extn": extn.strip() or None, "email": email.strip() or None,
+                                        "aid": aid,
+                                    },
                                 )
                                 st.success("Saved ✅")
 
@@ -1895,7 +2012,7 @@ def page_admin_import():
                         st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits. Deactivate instead.")
                         st.rerun()
                     try:
-                        exec_sql("DELETE FROM target_audiences WHERE audience_id=?", (aid,))
+                        exec_sql("DELETE FROM target_audiences WHERE audience_id=:id", {"id": aid})
                         st.session_state["flash_admin"] = ("success", "Audience deleted ✅")
                     except Exception as e:
                         st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
@@ -1914,15 +2031,15 @@ def page_admin_import():
 
             colA, colB, colC = st.columns(3)
             with colA:
-                u_cnt = _refcount("SELECT COUNT(*) FROM users WHERE business_unit_id=?", (buid,))
-                bl_cnt = _refcount("SELECT COUNT(*) FROM business_lines WHERE business_unit_id=?", (buid,))
+                u_cnt = _refcount("SELECT COUNT(*) FROM users WHERE business_unit_id=:id", {"id": buid})
+                bl_cnt = _refcount("SELECT COUNT(*) FROM business_lines WHERE business_unit_id=:id", {"id": buid})
                 st.caption(f"Refs → Users: **{u_cnt}** · Business Lines: **{bl_cnt}**")
 
             with colB:
-                new_active = 0 if row["is_active"] else 1
-                label = "Deactivate" if row["is_active"] else "Activate"
+                new_active = not bool(row["is_active"])
+                label = "Deactivate" if bool(row["is_active"]) else "Activate"
                 if st.button(label, key="mg_bu_toggle"):
-                    exec_sql("UPDATE business_units SET is_active=? WHERE business_unit_id=?", (new_active, buid))
+                    exec_sql("UPDATE business_units SET is_active=:b WHERE business_unit_id=:id", {"b": new_active, "id": buid})
                     st.success("Updated ✅")
 
             with colC:
@@ -1943,7 +2060,7 @@ def page_admin_import():
                             if not dup.empty:
                                 st.error("A business unit with that name already exists.")
                             else:
-                                exec_sql("UPDATE business_units SET name=? WHERE business_unit_id=?", (nm_clean, buid))
+                                exec_sql("UPDATE business_units SET name=:n WHERE business_unit_id=:id", {"n": nm_clean, "id": buid})
                                 st.success("Saved ✅")
 
             dz_keybase = "mg_bu_conf"
@@ -1958,7 +2075,7 @@ def page_admin_import():
                         st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by users and/or business lines. Deactivate instead.")
                         st.rerun()
                     try:
-                        exec_sql("DELETE FROM business_units WHERE business_unit_id=?", (buid,))
+                        exec_sql("DELETE FROM business_units WHERE business_unit_id=:id", {"id": buid})
                         st.session_state["flash_admin"] = ("success", "Business Unit deleted ✅")
                     except Exception as e:
                         st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
@@ -1985,19 +2102,19 @@ def page_admin_import():
 
             colA, colB, colC = st.columns(3)
             with colA:
-                i_cnt = _refcount("SELECT COUNT(*) FROM items WHERE business_line_id=?", (blid,))
-                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE business_line_id=?", (blid,))
+                i_cnt = _refcount("SELECT COUNT(*) FROM items WHERE business_line_id=:id", {"id": blid})
+                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE business_line_id=:id", {"id": blid})
                 st.caption(f"Refs → Items: **{i_cnt}** · Visits: **{v_cnt}**")
 
             with colB:
-                new_active = 0 if row["is_active"] else 1
-                label = "Deactivate" if row["is_active"] else "Activate"
+                new_active = not bool(row["is_active"])
+                label = "Deactivate" if bool(row["is_active"]) else "Activate"
                 if st.button(label, key="mg_bl_toggle"):
-                    exec_sql("UPDATE business_lines SET is_active=? WHERE business_line_id=?", (new_active, blid))
+                    exec_sql("UPDATE business_lines SET is_active=:b WHERE business_line_id=:id", {"b": new_active, "id": blid})
                     st.success("Updated ✅")
 
             with colC:
-                bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+                bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
                 bu_labels = bu_df["name"].tolist()
                 bu_idx = 0
                 if pd.notna(row["business_unit_id"]):
@@ -2035,11 +2152,13 @@ def page_admin_import():
                                 exec_sql(
                                     """
                                     UPDATE business_lines
-                                    SET business_unit_id=?, name=?, supplier=?, category=?, product_group=?
-                                    WHERE business_line_id=?
+                                    SET business_unit_id=:bid, name=:name, supplier=:supplier, category=:cat, product_group=:pg
+                                    WHERE business_line_id=:id
                                     """,
-                                    (new_bu_id, nm_clean, (supplier.strip() or None), cat_clean,
-                                     (prod_group.strip() or None), blid),
+                                    {
+                                        "bid": new_bu_id, "name": nm_clean, "supplier": (supplier.strip() or None),
+                                        "cat": cat_clean, "pg": (prod_group.strip() or None), "id": blid
+                                    },
                                 )
                                 st.success("Saved ✅")
 
@@ -2055,7 +2174,7 @@ def page_admin_import():
                         st.session_state["flash_admin"] = ("error", "Cannot delete: referenced by items and/or visits. Deactivate instead.")
                         st.rerun()
                     try:
-                        exec_sql("DELETE FROM business_lines WHERE business_line_id=?", (blid,))
+                        exec_sql("DELETE FROM business_lines WHERE business_line_id=:id", {"id": blid})
                         st.session_state["flash_admin"] = ("success", "Business Line deleted ✅")
                     except Exception as e:
                         st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
@@ -2093,21 +2212,20 @@ def page_admin_import():
 
             colA, colB, colC = st.columns(3)
             with colA:
-                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE product_id=?", (pid,))
+                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE product_id=:pid", {"pid": pid})
                 st.caption(f"Refs → Visits: **{v_cnt}**")
 
             with colB:
-                new_active = 0 if row["is_active"] else 1
-                label = "Deactivate" if row["is_active"] else "Activate"
+                new_active = not bool(row["is_active"])
+                label = "Deactivate" if bool(row["is_active"]) else "Activate"
                 if st.button(label, key="mg_item_toggle"):
-                    exec_sql("UPDATE items SET is_active=? WHERE product_id=?", (new_active, pid))
+                    exec_sql("UPDATE items SET is_active=:b WHERE product_id=:pid", {"b": new_active, "pid": pid})
                     st.success("Updated ✅")
 
-            # ✅ EDIT FORM NOW INSIDE A POPOVER/EXPANDER (was always visible before)
             with colC:
                 edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
                 with edit_box:
-                    bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+                    bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
                     bu_labels = bu_df["name"].tolist()
                     bu_idx = 0
                     for i, r in enumerate(bu_df.itertuples(index=False)):
@@ -2119,7 +2237,7 @@ def page_admin_import():
                         bu_label = st.selectbox("Business Unit *", bu_labels, index=bu_idx if bu_labels else 0)
                         sel_bu_id = int(bu_df.loc[bu_df["name"] == bu_label, "business_unit_id"].iloc[0]) if not bu_df.empty else None
                         bl_df = query_df(
-                            "SELECT business_line_id, name FROM business_lines WHERE is_active=1 AND business_unit_id=:bid ORDER BY name",
+                            "SELECT business_line_id, name FROM business_lines WHERE is_active IS TRUE AND business_unit_id=:bid ORDER BY name",
                             {"bid": sel_bu_id}
                         ) if sel_bu_id else pd.DataFrame()
                         bl_labels = bl_df["name"].tolist() if not bl_df.empty else []
@@ -2135,37 +2253,35 @@ def page_admin_import():
                         save = st.form_submit_button("Save changes")
 
                     if save:
-                        if bl_labels:
-                            new_bl_id = int(bl_df.loc[bl_df["name"] == bl_label, "business_line_id"].iloc[0])
-                        else:
-                            new_bl_id = None
-
+                        new_bl_id = int(bl_df.loc[bl_df["name"] == bl_label, "business_line_id"].iloc[0]) if bl_labels else None
                         if not new_bl_id:
                             st.error("Business Line is required.")
                         else:
                             if art.strip():
-                                dup = query_df("SELECT 1 FROM items WHERE lower(article_number)=lower(:a) AND product_id<>:pid",
-                                               {"a": art.strip(), "pid": pid})
+                                dup = query_df(
+                                    "SELECT 1 FROM items WHERE lower(article_number)=lower(:a) AND product_id<>:pid",
+                                    {"a": art.strip(), "pid": pid},
+                                )
                                 if not dup.empty:
                                     st.error("Article Number already exists.")
                                 else:
                                     exec_sql(
                                         """
                                         UPDATE items
-                                        SET article_number=?, description=?, business_line_id=?
-                                        WHERE product_id=?
+                                        SET article_number=:a, description=:d, business_line_id=:bl
+                                        WHERE product_id=:pid
                                         """,
-                                        (art.strip(), (desc.strip() or None), new_bl_id, pid),
+                                        {"a": art.strip(), "d": (desc.strip() or None), "bl": new_bl_id, "pid": pid},
                                     )
                                     st.success("Saved ✅")
                             else:
                                 exec_sql(
                                     """
                                     UPDATE items
-                                    SET article_number=NULL, description=?, business_line_id=?
-                                    WHERE product_id=?
+                                    SET article_number=NULL, description=:d, business_line_id=:bl
+                                    WHERE product_id=:pid
                                     """,
-                                    ((desc.strip() or None), new_bl_id, pid),
+                                    {"d": (desc.strip() or None), "bl": new_bl_id, "pid": pid},
                                 )
                                 st.success("Saved ✅")
 
@@ -2181,7 +2297,7 @@ def page_admin_import():
                         st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits. Deactivate instead.")
                         st.rerun()
                     try:
-                        exec_sql("DELETE FROM items WHERE product_id=?", (pid,))
+                        exec_sql("DELETE FROM items WHERE product_id=:pid", {"pid": pid})
                         st.session_state["flash_admin"] = ("success", "Item deleted ✅")
                     except Exception as e:
                         st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
@@ -2189,28 +2305,28 @@ def page_admin_import():
 
     # ---- Objectives (with Activate / Deactivate)
     with tabs[5]:
-        odf = query_df("SELECT objective_id, name, COALESCE(is_active,1) AS is_active FROM objectives ORDER BY name")
+        odf = query_df("SELECT objective_id, name, COALESCE(is_active, TRUE) AS is_active FROM objectives ORDER BY name")
         if odf.empty:
             st.info("No objectives yet.")
         else:
-            display = [f"{r.name}  ({'active' if int(r.is_active or 0)==1 else 'inactive'})" for r in odf.itertuples(index=False)]
+            display = [f"{r.name}  ({'active' if bool(r.is_active) else 'inactive'})" for r in odf.itertuples(index=False)]
             choice = st.selectbox("Select objective", display, index=0, key="mg_obj_sel")
             row = odf.iloc[display.index(choice)]
             oid = int(row["objective_id"])
-            active_now = int(row["is_active"] or 0)
+            active_now = bool(row["is_active"])
 
             colA, colB, colC = st.columns([1,1,2])
             with colA:
-                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE objective_id=?", (oid,))
+                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE objective_id=:id", {"id": oid})
                 st.caption(f"Refs → Visits: **{v_cnt}**")
 
             # 🔁 Activate/Deactivate button
             with colB:
-                new_active = 0 if active_now else 1
+                new_active = not active_now
                 label = "Deactivate" if active_now else "Activate"
                 if st.button(label, key=f"mg_obj_toggle_{oid}"):
                     try:
-                        exec_sql("UPDATE objectives SET is_active=? WHERE objective_id=?", (new_active, oid))
+                        exec_sql("UPDATE objectives SET is_active=:b WHERE objective_id=:id", {"b": new_active, "id": oid})
                         st.success("Updated ✅")
                     except Exception as e:
                         st.error("Could not update objective status.")
@@ -2233,7 +2349,7 @@ def page_admin_import():
                             if not dup.empty:
                                 st.error("Objective already exists.")
                             else:
-                                exec_sql("UPDATE objectives SET name=? WHERE objective_id=?", (nm_clean, oid))
+                                exec_sql("UPDATE objectives SET name=:n WHERE objective_id=:id", {"n": nm_clean, "id": oid})
                                 st.success("Saved ✅")
 
             # Danger Zone
@@ -2249,7 +2365,7 @@ def page_admin_import():
                         st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits.")
                         st.rerun()
                     try:
-                        exec_sql("DELETE FROM objectives WHERE objective_id=?", (oid,))
+                        exec_sql("DELETE FROM objectives WHERE objective_id=:id", {"id": oid})
                         st.session_state["flash_admin"] = ("success", "Objective deleted ✅")
                     except Exception as e:
                         st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
@@ -2258,6 +2374,8 @@ def page_admin_import():
 # =============================
 # Page — Admin: Data Browser
 # =============================
+from sqlalchemy import text  # local import for clarity with query_df/exec_sql
+
 def page_admin_data():
     st.title("📊 Admin — Data Browser")
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
@@ -2642,6 +2760,8 @@ def _gen_tmp_pw(length: int = 12) -> str:
 # =============================
 # Page — Admin: Users (add/manage + reset password)
 # =============================
+from sqlalchemy import text  # ensure available in this scope
+
 def page_admin_users():
     st.title("👤 Admin — Users")
     st.subheader("Add a user")
@@ -2682,16 +2802,21 @@ def page_admin_users():
                 bu_id = None
                 if bu_sel:
                     bu_id = int(bu_df.loc[bu_df["name"] == bu_sel, "business_unit_id"].iloc[0])
+
+                # Insert (PostgreSQL named parameters)
                 exec_sql(
-                    "INSERT INTO users(email, password_hash, name, region, business_unit_id, role) VALUES (?,?,?,?,?,?)",
-                    (
-                        email.strip().lower(),
-                        pbkdf2_sha256.hash(pw),
-                        name.strip(),
-                        (region.strip() if region else None),
-                        bu_id,
-                        role,
-                    ),
+                    """
+                    INSERT INTO users(email, password_hash, name, region, business_unit_id, role, is_active)
+                    VALUES (:email, :pwd, :name, :region, :buid, :role, TRUE)
+                    """,
+                    {
+                        "email": email.strip().lower(),
+                        "pwd": pbkdf2_sha256.hash(pw),
+                        "name": name.strip(),
+                        "region": (region.strip() if region else None),
+                        "buid": bu_id,
+                        "role": role,
+                    },
                 )
                 st.success("✅ User added successfully")
                 st.session_state["create_user_tmp_pw"] = ""
@@ -2775,7 +2900,10 @@ def page_admin_users():
                 st.error("You can't deactivate your own account while logged in.")
             else:
                 try:
-                    exec_sql("UPDATE users SET is_active=? WHERE user_id=?", (0 if is_active else 1, uid))
+                    exec_sql(
+                        "UPDATE users SET is_active = :active WHERE user_id = :uid",
+                        {"active": (0 if is_active else 1), "uid": uid},
+                    )
                     st.success("Updated ✅")
                 except Exception as e:
                     st.error("Could not update user status.")
@@ -2812,13 +2940,13 @@ def page_admin_users():
                     if new_bu_label:
                         new_bu_id = int(bu_df2.loc[bu_df2["name"] == new_bu_label, "business_unit_id"].iloc[0])
                     exec_sql(
-                        "UPDATE users SET region=?, business_unit_id=?, role=? WHERE user_id=?",
-                        (
-                            (new_region.strip() if new_region else None),
-                            new_bu_id,
-                            new_role,
-                            uid,
-                        ),
+                        "UPDATE users SET region = :region, business_unit_id = :buid, role = :role WHERE user_id = :uid",
+                        {
+                            "region": (new_region.strip() if new_region else None),
+                            "buid": new_bu_id,
+                            "role": new_role,
+                            "uid": uid,
+                        },
                     )
                     st.success("Saved ✅")
                 except Exception as e:
@@ -2840,17 +2968,15 @@ def page_admin_users():
     buf_key = f"tmp_pw_buf_{uid}"
     st.session_state.setdefault(buf_key, "")
 
-    # IMPORTANT: Handle 'Generate' BEFORE rendering the text_input,
-    # so we can prefill the widget state in the same run.
+    # Handle 'Generate' BEFORE rendering the text_input,
     gen_col, _ = st.columns([1, 6])
     gen_clicked = gen_col.button("Generate", key=f"gen_tmp_pw_{uid}")
     if gen_clicked:
         gen_pw = _gen_tmp_pw()
         st.session_state[buf_key] = gen_pw
-        # Pre-set the widget's state BEFORE it is created below
         st.session_state[tmp_input_key] = gen_pw
 
-    # Now render the input (no 'value=' — it will use session_state if present)
+    # Now render the input (uses session_state if present)
     tmp_pw = st.text_input(
         "Temporary Password *",
         key=tmp_input_key,
@@ -2867,9 +2993,13 @@ def page_admin_users():
         else:
             try:
                 new_hash = pbkdf2_sha256.hash(final_tmp_pw)
-                exec_sql("UPDATE users SET password_hash=? WHERE user_id=?", (new_hash, uid))
-                # Persist a flash that appears right under this section
-                st.session_state[flash_key] = f"Temporary password set ✅ (user not forced to change). Temp password: `{final_tmp_pw}`"
+                exec_sql(
+                    "UPDATE users SET password_hash = :pwd WHERE user_id = :uid",
+                    {"pwd": new_hash, "uid": uid},
+                )
+                st.session_state[flash_key] = (
+                    f"Temporary password set ✅ (user not forced to change). Temp password: `{final_tmp_pw}`"
+                )
                 st.success(st.session_state[flash_key])
             except Exception as e:
                 st.error("Could not reset the password.")
