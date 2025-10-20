@@ -2180,128 +2180,170 @@ def page_admin_import():
                         st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
                     st.rerun()
 
-    # ---- Items ----
-    with tabs[4]:
-        idf = query_df("""
-            SELECT i.product_id,
-                   i.article_number,
-                   i.description,
-                   i.is_active,
-                   bl.business_line_id,
-                   bl.name AS business_line,
-                   bu.name AS business_unit
-            FROM items i
-            JOIN business_lines bl   ON bl.business_line_id = i.business_line_id
-            JOIN business_units bu   ON bu.business_unit_id = bl.business_unit_id
-            ORDER BY COALESCE(i.article_number, i.product_id)
-        """)
-        if idf.empty:
-            st.info("No items yet.")
+    # 5) Items (Products)
+    st.subheader("5) Items (Products)")
+    st.write("Columns: **product_id**, article_number, description, **business_unit**, **business_line**")
+
+    # --- Live Business Units (always current) ---
+    bu_df_live = query_df("""
+        SELECT business_unit_id, name
+        FROM business_units
+        WHERE is_active IS TRUE
+        ORDER BY name
+    """)
+    bu_labels = [""] + bu_df_live["name"].tolist()
+
+    with popout("➕ Add Item"):
+        with st.form("add_item_form", clear_on_submit=True):
+            product_id = st.text_input("Product ID * (must be unique)")
+            article = st.text_input("Article Number")
+            desc = st.text_input("Description")
+
+            sel_bu_label = st.selectbox("Business Unit *", bu_labels, index=0)
+
+            # Resolve BU id from label (if any)
+            sel_bu_id = None
+            if sel_bu_label:
+                sel_bu_id = int(bu_df_live.loc[bu_df_live["name"] == sel_bu_label, "business_unit_id"].iloc[0])
+
+            # Load Business Lines for that BU LIVE
+            if sel_bu_id:
+                bl_df_live = query_df(
+                    """
+                    SELECT business_line_id, name
+                    FROM business_lines
+                    WHERE is_active IS TRUE AND business_unit_id = :bid
+                    ORDER BY name
+                    """,
+                    {"bid": sel_bu_id}
+                )
+            else:
+                bl_df_live = pd.DataFrame(columns=["business_line_id", "name"])
+
+            bl_labels = [""] + bl_df_live["name"].tolist()
+            sel_bl_label = st.selectbox("Business Line *", bl_labels, index=0)
+
+            submit_item = st.form_submit_button("Save Item", type="primary")
+
+        if submit_item:
+            if not (product_id.strip() and sel_bu_label and sel_bl_label):
+                st.error("Product ID, Business Unit, and Business Line are required.")
+            else:
+                try:
+                    bl_id = int(bl_df_live.loc[bl_df_live["name"] == sel_bl_label, "business_line_id"].iloc[0])
+                    with engine.begin() as conn:
+                        # Proper upsert; no probe insert
+                        conn.execute(
+                            text("""
+                                INSERT INTO items(
+                                  product_id, article_number, description, business_line_id, is_active
+                                ) VALUES (:pid, :article, :desc, :blid, TRUE)
+                                ON CONFLICT (product_id) DO UPDATE
+                                  SET article_number   = EXCLUDED.article_number,
+                                      description      = EXCLUDED.description,
+                                      business_line_id = EXCLUDED.business_line_id,
+                                      is_active        = TRUE
+                            """),
+                            {"pid": product_id.strip(),
+                             "article": (article.strip() or None),
+                             "desc": (desc.strip() or None),
+                             "blid": bl_id},
+                        )
+                    st.success("Item saved ✅")
+                except Exception as e:
+                    st.error("Could not add item.")
+                    st.caption(str(e))
+
+    # --- CSV/XLSX Import (upsert, with clean inserted/updated counts and reasons for skips) ---
+    f3 = st.file_uploader("Upload Items", type=["xlsx", "csv"], key="items")
+    if f3 is not None:
+        df = pd.read_excel(f3) if f3.name.endswith(".xlsx") else pd.read_csv(f3)
+        needed = {"product_id", "business_unit", "business_line"}
+        if not needed.issubset(df.columns):
+            st.error("Missing required columns: product_id, business_unit, business_line")
         else:
-            def _fmt_item(r):
-                art = (str(r.article_number).strip() if pd.notna(r.article_number) and str(r.article_number).strip() else "")
-                bl = (str(r.business_line).strip() if pd.notna(r.business_line) and str(r.business_line).strip() else "")
-                bu = (str(r.business_unit).strip() if pd.notna(r.business_unit) and str(r.business_unit).strip() else "")
-                desc = (str(r.description).strip() if pd.notna(r.description) and str(r.description).strip() else "")
-                return " - ".join([p for p in [art, bu, bl, desc] if p]) or str(r.product_id)
+            inserted = 0
+            updated = 0
+            skipped = 0
+            skip_reasons = []
 
-            display = [f"{_fmt_item(r)}  ({'active' if r.is_active else 'inactive'})" for r in idf.itertuples(index=False)]
-            choice = st.selectbox("Select item", display, index=0, key="mg_item_sel")
-            row = idf.iloc[display.index(choice)]
-            pid = str(row["product_id"])
+            # Build live maps once
+            bu_map = {r.name.strip().lower(): int(r.business_unit_id) for r in bu_df_live.itertuples(index=False)}
+            bl_map = {}  # (bu_id, bl_name_lower) -> bl_id
+            if bu_map:
+                bl_rows = query_df("""
+                    SELECT bl.business_unit_id, bl.business_line_id, bl.name
+                    FROM business_lines bl
+                    WHERE bl.is_active IS TRUE
+                """)
+                for r in bl_rows.itertuples(index=False):
+                    bl_map[(int(r.business_unit_id), str(r.name).strip().lower())] = int(r.business_line_id)
 
-            colA, colB, colC = st.columns(3)
-            with colA:
-                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE product_id=:pid", {"pid": pid})
-                st.caption(f"Refs → Visits: **{v_cnt}**")
+            try:
+                with engine.begin() as conn:
+                    for idx, r in df.iterrows():
+                        pid_raw = r.get("product_id")
+                        pid = (str(pid_raw).strip() if pd.notna(pid_raw) else "")
+                        bu_name_raw = str(r.get("business_unit", "")).strip()
+                        bl_name_raw = str(r.get("business_line", "")).strip()
 
-            with colB:
-                new_active = not bool(row["is_active"])
-                label = "Deactivate" if bool(row["is_active"]) else "Activate"
-                if st.button(label, key="mg_item_toggle"):
-                    exec_sql("UPDATE items SET is_active=:b WHERE product_id=:pid", {"b": new_active, "pid": pid})
-                    st.success("Updated ✅")
+                        if not pid:
+                            skipped += 1
+                            skip_reasons.append(f"Row {idx+2}: missing product_id")
+                            continue
+                        if not bu_name_raw or not bl_name_raw:
+                            skipped += 1
+                            skip_reasons.append(f"Row {idx+2}: missing business_unit or business_line")
+                            continue
 
-            with colC:
-                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
-                with edit_box:
-                    bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
-                    bu_labels = bu_df["name"].tolist()
-                    bu_idx = 0
-                    for i, r in enumerate(bu_df.itertuples(index=False)):
-                        if str(r.name) == str(row["business_unit"]):
-                            bu_idx = i
-                            break
+                        bu_id = bu_map.get(bu_name_raw.lower())
+                        if not bu_id:
+                            skipped += 1
+                            skip_reasons.append(f"Row {idx+2}: business_unit '{bu_name_raw}' not found/active")
+                            continue
 
-                    with st.form("mg_item_edit"):
-                        bu_label = st.selectbox("Business Unit *", bu_labels, index=bu_idx if bu_labels else 0)
-                        sel_bu_id = int(bu_df.loc[bu_df["name"] == bu_label, "business_unit_id"].iloc[0]) if not bu_df.empty else None
-                        bl_df = query_df(
-                            "SELECT business_line_id, name FROM business_lines WHERE is_active IS TRUE AND business_unit_id=:bid ORDER BY name",
-                            {"bid": sel_bu_id}
-                        ) if sel_bu_id else pd.DataFrame()
-                        bl_labels = bl_df["name"].tolist() if not bl_df.empty else []
-                        bl_idx = 0
-                        for i, r in enumerate(bl_df.itertuples(index=False)):
-                            if int(r.business_line_id) == int(row["business_line_id"]):
-                                bl_idx = i
-                                break
+                        bl_id = bl_map.get((bu_id, bl_name_raw.lower()))
+                        if not bl_id:
+                            skipped += 1
+                            skip_reasons.append(f"Row {idx+2}: business_line '{bl_name_raw}' not found/active under BU '{bu_name_raw}'")
+                            continue
 
-                        art = st.text_input("Article Number (unique)", value=row["article_number"] or "")
-                        desc = st.text_input("Description", value=row["description"] or "")
-                        bl_label = st.selectbox("Business Line *", bl_labels, index=bl_idx if bl_labels else 0)
-                        save = st.form_submit_button("Save changes")
+                        article_v = (str(r.get("article_number")).strip() if pd.notna(r.get("article_number")) else None)
+                        desc_v = (str(r.get("description")).strip() if pd.notna(r.get("description")) else None)
 
-                    if save:
-                        new_bl_id = int(bl_df.loc[bl_df["name"] == bl_label, "business_line_id"].iloc[0]) if bl_labels else None
-                        if not new_bl_id:
-                            st.error("Business Line is required.")
+                        # Pre-check existence (no probe insert)
+                        existed = conn.execute(
+                            text("SELECT 1 FROM items WHERE product_id = :pid"),
+                            {"pid": pid}
+                        ).fetchone() is not None
+
+                        conn.execute(
+                            text("""
+                                INSERT INTO items(product_id, article_number, description, business_line_id, is_active)
+                                VALUES (:pid, :article, :desc, :blid, TRUE)
+                                ON CONFLICT (product_id) DO UPDATE
+                                SET article_number   = EXCLUDED.article_number,
+                                    description      = EXCLUDED.description,
+                                    business_line_id = EXCLUDED.business_line_id,
+                                    is_active        = TRUE
+                            """),
+                            {"pid": pid, "article": article_v, "desc": desc_v, "blid": int(bl_id)},
+                        )
+
+                        if existed:
+                            updated += 1
                         else:
-                            if art.strip():
-                                dup = query_df(
-                                    "SELECT 1 FROM items WHERE lower(article_number)=lower(:a) AND product_id<>:pid",
-                                    {"a": art.strip(), "pid": pid},
-                                )
-                                if not dup.empty:
-                                    st.error("Article Number already exists.")
-                                else:
-                                    exec_sql(
-                                        """
-                                        UPDATE items
-                                        SET article_number=:a, description=:d, business_line_id=:bl
-                                        WHERE product_id=:pid
-                                        """,
-                                        {"a": art.strip(), "d": (desc.strip() or None), "bl": new_bl_id, "pid": pid},
-                                    )
-                                    st.success("Saved ✅")
-                            else:
-                                exec_sql(
-                                    """
-                                    UPDATE items
-                                    SET article_number=NULL, description=:d, business_line_id=:bl
-                                    WHERE product_id=:pid
-                                    """,
-                                    {"d": (desc.strip() or None), "bl": new_bl_id, "pid": pid},
-                                )
-                                st.success("Saved ✅")
+                            inserted += 1
 
-            dz_keybase = "mg_item_conf"
-            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
-            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
-            with danger:
-                st.write("Delete permanently (only if not referenced).")
-                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
-                if st.button("Delete Item", type="primary", disabled=not confirm, key="mg_item_del"):
-                    st.session_state["danger_nonce"] += 1
-                    if v_cnt > 0:
-                        st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits. Deactivate instead.")
-                        st.rerun()
-                    try:
-                        exec_sql("DELETE FROM items WHERE product_id=:pid", {"pid": pid})
-                        st.session_state["flash_admin"] = ("success", "Item deleted ✅")
-                    except Exception as e:
-                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
-                    st.rerun()
+                st.success(f"Items import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}")
+                if skipped and skip_reasons:
+                    preview = "\n".join(skip_reasons[:20])
+                    more = f"\n…and {len(skip_reasons)-20} more." if len(skip_reasons) > 20 else ""
+                    st.warning(f"Some rows were skipped:\n\n{preview}{more}")
+            except Exception as e:
+                st.error("Import failed.")
+                st.caption(str(e))
+
 
     # ---- Objectives (with Activate / Deactivate)
     with tabs[5]:
@@ -2761,6 +2803,7 @@ def _gen_tmp_pw(length: int = 12) -> str:
 # Page — Admin: Users (add/manage + reset password)
 # =============================
 from sqlalchemy import text  # ensure available in this scope
+from passlib.hash import pbkdf2_sha256
 
 def page_admin_users():
     st.title("👤 Admin — Users")
@@ -2785,7 +2828,7 @@ def page_admin_users():
             region = st.selectbox("Region", ["", "C/R", "W/R", "E/R"], index=0)
 
         with col2:
-            bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+            bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
             bu_names = bu_df["name"].tolist()
             bu_sel = st.selectbox("Business Unit (optional)", [""] + bu_names, index=0)
             role = st.selectbox("Role", ["rep", "admin"], index=0)
@@ -2803,7 +2846,7 @@ def page_admin_users():
                 if bu_sel:
                     bu_id = int(bu_df.loc[bu_df["name"] == bu_sel, "business_unit_id"].iloc[0])
 
-                # Insert (PostgreSQL named parameters)
+                # Insert (PostgreSQL named parameters). Use proper booleans.
                 exec_sql(
                     """
                     INSERT INTO users(email, password_hash, name, region, business_unit_id, role, is_active)
@@ -2871,7 +2914,7 @@ def page_admin_users():
         return
 
     def _fmt_user(r):
-        status = "active" if int(r.is_active or 0) == 1 else "inactive"
+        status = "active" if bool(r.is_active) else "inactive"
         bu = f" · BU: {r.business_unit}" if pd.notna(r.business_unit) and str(r.business_unit).strip() else ""
         return f"{r.name or r.email} <{r.email}> ({r.role}) — {status}{bu}"
 
@@ -2884,7 +2927,7 @@ def page_admin_users():
 
     row = mdf.iloc[labels.index(sel)]
     uid = int(row["user_id"])
-    is_active = int(row["is_active"] or 0)
+    is_active = bool(row["is_active"])
     status_badge = "🟢 Active" if is_active else "🔴 Inactive"
     st.caption(f"Selected: **{row['name'] or row['email']}** · {status_badge}")
 
@@ -2902,7 +2945,7 @@ def page_admin_users():
                 try:
                     exec_sql(
                         "UPDATE users SET is_active = :active WHERE user_id = :uid",
-                        {"active": (0 if is_active else 1), "uid": uid},
+                        {"active": (not is_active), "uid": uid},  # send True/False
                     )
                     st.success("Updated ✅")
                 except Exception as e:
@@ -2918,7 +2961,7 @@ def page_admin_users():
     with colC:
         edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
         with edit_box:
-            bu_df2 = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+            bu_df2 = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
             bu_labels = [""] + bu_df2["name"].tolist()
 
             current_bu_name = row["business_unit"] or ""
