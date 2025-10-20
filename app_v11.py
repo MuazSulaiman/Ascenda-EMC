@@ -45,8 +45,10 @@ DUP_MINUTES = 15            # duplicate detection lookback (minutes)
 # Power BI push URL:
 #   - Prefer environment variable (Render → Environment)
 #   - Fallback to Streamlit secrets if present (for local dev)
-PBI_PUSH_URL = os.environ.get("PBI_PUSH_URL") or st.secrets.get("PBI_PUSH_URL", "")
-
+try:
+    PBI_PUSH_URL = os.environ.get("PBI_PUSH_URL") or st.secrets["PBI_PUSH_URL"]
+except Exception:
+    PBI_PUSH_URL = os.environ.get("PBI_PUSH_URL", "")  # env only if no secrets.toml
 st.set_page_config(page_title=APP_TITLE, layout="centered")
 
 # =============================
