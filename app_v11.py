@@ -1821,17 +1821,97 @@ def page_admin_import():
         selected_bl_id = bl_ids[selected_bl] if bl_labels else None
         st.session_state["add_item_bl_id"] = selected_bl_id
 
-    # --- Add Item form (only the text fields + submit) ---
+    # small helpers/state
+    st.session_state.setdefault("ai_bu_id", None)
+    st.session_state.setdefault("ai_bl_id", None)
+
+    def _on_bu_change():
+        st.session_state["ai_bl_id"] = None  # force re-pick BL when BU changes
+
     with popout("➕ Add Item"):
+        # --------- Business Unit (inside popover) ----------
+        bu_df = query_df("""
+            SELECT business_unit_id, name
+            FROM business_units
+            WHERE COALESCE(is_active, TRUE) IS TRUE
+            ORDER BY name
+        """)
+
+        if bu_df.empty:
+            st.warning("No active Business Units found. Add one first.")
+            selected_bu_id = None
+        else:
+            bu_labels = bu_df["name"].tolist()
+            bu_ids    = bu_df["business_unit_id"].astype(int).tolist()
+
+            # map to index for selectbox
+            if st.session_state["ai_bu_id"] in bu_ids:
+                bu_index = bu_ids.index(st.session_state["ai_bu_id"])
+            else:
+                bu_index = 0
+
+            bu_idx = st.selectbox(
+                "Business Unit *",
+                options=list(range(len(bu_labels))),
+                index=bu_index if bu_labels else 0,
+                format_func=lambda i: bu_labels[i] if bu_labels else "",
+                key="ai_bu_idx",
+                on_change=_on_bu_change,  # reruns & clears BL
+            )
+            selected_bu_id = bu_ids[bu_idx] if bu_labels else None
+            st.session_state["ai_bu_id"] = selected_bu_id
+
+        # --------- Business Line filtered by BU (inside popover) ----------
+        if selected_bu_id:
+            bl_df = query_df(
+                """
+                SELECT business_line_id, name
+                FROM business_lines
+                WHERE COALESCE(is_active, TRUE) IS TRUE
+                  AND business_unit_id = :bid
+                ORDER BY name
+                    """,
+                {"bid": int(selected_bu_id)}
+            )
+        else:
+            bl_df = pd.DataFrame(columns=["business_line_id", "name"])
+
+        if selected_bu_id and bl_df.empty:
+            st.warning("This Business Unit has no active Business Lines.")
+            selected_bl_id = None
+        else:
+            bl_labels = bl_df["name"].tolist()
+            bl_ids    = bl_df["business_line_id"].astype(int).tolist()
+
+            # key depends on BU so Streamlit fully re-renders the BL widget when BU changes
+            bl_widget_key = f"ai_bl_idx__bu_{selected_bu_id or 'none'}"
+
+            if st.session_state["ai_bl_id"] in bl_ids:
+                bl_index = bl_ids.index(st.session_state["ai_bl_id"])
+            else:
+                bl_index = 0 if bl_labels else 0
+
+            bl_idx = st.selectbox(
+                "Business Line *",
+                options=list(range(len(bl_labels))),
+                index=bl_index if bl_labels else 0,
+                format_func=lambda i: bl_labels[i] if bl_labels else "",
+                key=bl_widget_key,
+                help="Choose a Business Unit first to load its lines."
+            )
+            selected_bl_id = bl_ids[bl_idx] if bl_labels else None
+            st.session_state["ai_bl_id"] = selected_bl_id
+
+        # --------- The actual submit form (also inside popover) ----------
         with st.form("add_item_form_items", clear_on_submit=True):
             product_id = st.text_input("Product ID * (must be unique)")
             article    = st.text_input("Article Number")
             desc       = st.text_input("Description")
-            submit_item = st.form_submit_button("Save Item", type="primary")
+            submitted  = st.form_submit_button("Save Item", type="primary")
 
-        if submit_item:
+        if submitted:
             if not product_id.strip():
-                st.error("Product ID is required.")
+                    st.error("Product ID is required.")
             elif not selected_bu_id or not selected_bl_id:
                 st.error("Business Unit and Business Line are required.")
             else:
@@ -1853,14 +1933,14 @@ def page_admin_import():
                         )
                     if (res.rowcount or 0) > 0:
                         st.success("Item added ✅")
-                        # keep BU, but clear BL so the user notices it's done
-                        st.session_state["add_item_bl_id"] = None
+                        # keep BU selection; clear BL to avoid accidental re-use
+                        st.session_state["ai_bl_id"] = None
                     else:
                         st.error("That Product ID already exists.")
                 except Exception as e:
                     st.error("Could not add item.")
                     st.caption(str(e))
-    
+        
     # ---------------------
     # Bulk upload (unchanged)
     # ---------------------
