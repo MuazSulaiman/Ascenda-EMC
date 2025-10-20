@@ -1742,119 +1742,125 @@ def page_admin_import():
     st.subheader("5) Items (Products)")
     st.write("Columns: **product_id**, article_number, description, **business_unit**, **business_line**")
 
-    # Build a clean BU -> BL mapping once
-    bl_df_lookup = query_df("""
-        SELECT bl.business_line_id AS bl_id,
-               bl.name            AS business_line,
-               bu.name            AS business_unit
-        FROM business_lines bl
-        JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
-        WHERE bu.is_active IS TRUE AND bl.is_active IS TRUE
-        ORDER BY bu.name, bl.name
+    # Ensure session keys exist
+    st.session_state.setdefault("add_item_bu_id", None)
+    st.session_state.setdefault("add_item_bl_id", None)
+
+    # Helper: reset BL when BU changes
+    def _on_bu_change():
+        st.session_state["add_item_bl_id"] = None
+
+    # --- Load active Business Units (be tolerant of NULLs) ---
+    bu_df = query_df("""
+        SELECT business_unit_id, name
+        FROM business_units
+        WHERE COALESCE(is_active, TRUE) IS TRUE
+        ORDER BY name
     """)
 
-    # Safeguard if empty
-    if bl_df_lookup.empty:
-        st.info("No active business lines found. Add a Business Line first.")
+    # Render BU select (outside the form so it updates immediately)
+    if bu_df.empty:
+        st.warning("No active Business Units found. Add one first.")
+        selected_bu_id = None
     else:
-        # Map BU -> [(BL name, id), ...]
-        bu_to_bls = {}
-        for r in bl_df_lookup.itertuples(index=False):
-            bu_to_bls.setdefault(r.business_unit, []).append((r.business_line, int(r.bl_id)))
+        bu_labels = bu_df["name"].tolist()
+        bu_ids    = bu_df["business_unit_id"].astype(int).tolist()
+        # Determine index from session_state if possible
+        if st.session_state["add_item_bu_id"] in bu_ids:
+            bu_index = bu_ids.index(st.session_state["add_item_bu_id"])
+        else:
+            bu_index = 0  # default to first BU
 
-        bu_opts = [""] + sorted(bu_to_bls.keys())
-
-        # --- Reactivity helpers for dependent dropdowns ---
-        def _on_bu_change():
-            # reset BL whenever BU changes
-            st.session_state.setdefault("add_item_bl", "")
-            st.session_state["add_item_bl"] = ""
-
-        # Keep stable defaults in session state
-        st.session_state.setdefault("add_item_bu", "")
-        st.session_state.setdefault("add_item_bl", "")
-
-        # --- Dependent selects (OUTSIDE the form so they rerun immediately) ---
-        sel_bu = st.selectbox(
+        selected_bu = st.selectbox(
             "Business Unit *",
-            options=bu_opts,
-            index=bu_opts.index(st.session_state["add_item_bu"]) if st.session_state["add_item_bu"] in bu_opts else 0,
-            key="add_item_bu",
+            options=list(range(len(bu_labels))),
+            index=bu_index if bu_labels else 0,
+            format_func=lambda i: bu_labels[i] if bu_labels else "",
+            key="add_item_bu_idx",
             on_change=_on_bu_change,
         )
+        selected_bu_id = bu_ids[selected_bu] if bu_labels else None
+        st.session_state["add_item_bu_id"] = selected_bu_id
 
-        bl_opts = [""]
-        bl_label_to_id = {}
-        if sel_bu:
-            # Only show BLs that belong to selected BU
-            bl_opts += [name for (name, _id) in bu_to_bls.get(sel_bu, [])]
-            bl_label_to_id = {name: _id for (name, _id) in bu_to_bls.get(sel_bu, [])}
-
-        sel_bl = st.selectbox(
-            "Business Line *",
-            options=bl_opts,
-            index=bl_opts.index(st.session_state["add_item_bl"]) if st.session_state["add_item_bl"] in bl_opts else 0,
-            key="add_item_bl",
-            help="Choose a business unit first to load its lines."
+    # --- Load BLs for the selected BU (live query) ---
+    if selected_bu_id:
+        bl_df = query_df(
+            """
+            SELECT business_line_id, name
+            FROM business_lines
+            WHERE COALESCE(is_active, TRUE) IS TRUE
+              AND business_unit_id = :bid
+            ORDER BY name
+            """,
+            {"bid": int(selected_bu_id)}
         )
+    else:
+        bl_df = pd.DataFrame(columns=["business_line_id", "name"])
 
-        if sel_bu and not (len(bl_opts) > 1):
-            st.warning("Selected Business Unit has no active Business Lines.")
+    # Render BL select (also outside the form)
+    if selected_bu_id and bl_df.empty:
+        st.warning("This Business Unit has no active Business Lines.")
+        selected_bl_id = None
+    else:
+        bl_labels = bl_df["name"].tolist()
+        bl_ids    = bl_df["business_line_id"].astype(int).tolist()
 
-        # --- Form for the rest of the fields + submit ---
-        with popout("➕ Add Item"):
-            with st.form("add_item_form", clear_on_submit=True):
-                product_id = st.text_input("Product ID * (must be unique)")
-                article    = st.text_input("Article Number")
-                desc       = st.text_input("Description")
-                submit_item = st.form_submit_button("Save Item", type="primary")
+        if st.session_state["add_item_bl_id"] in bl_ids:
+            bl_index = bl_ids.index(st.session_state["add_item_bl_id"])
+        else:
+            bl_index = 0 if bl_labels else 0
 
-            if submit_item:
-                # Pull final BU/BL from session state
-                final_bu = st.session_state.get("add_item_bu", "").strip()
-                final_bl = st.session_state.get("add_item_bl", "").strip()
+        selected_bl = st.selectbox(
+            "Business Line *",
+            options=list(range(len(bl_labels))),
+            index=bl_index if bl_labels else 0,
+            format_func=lambda i: bl_labels[i] if bl_labels else "",
+            key="add_item_bl_idx",
+            help="Choose a Business Unit first to load its lines."
+        )
+        selected_bl_id = bl_ids[selected_bl] if bl_labels else None
+        st.session_state["add_item_bl_id"] = selected_bl_id
 
-                if not (product_id.strip() and final_bu and final_bl):
-                    st.error("Product ID, Business Unit, and Business Line are required.")
-                else:
-                    try:
-                        bl_id = bl_label_to_id.get(final_bl) if final_bu == sel_bu else None
-                        # If BU changed right before submit, rebuild a safe lookup:
-                        if bl_id is None:
-                            # Fallback: re-resolve from global map
-                            for (name, _id) in bu_to_bls.get(final_bu, []):
-                                if name == final_bl:
-                                    bl_id = _id
-                                    break
+    # --- Add Item form (only the text fields + submit) ---
+    with popout("➕ Add Item"):
+        with st.form("add_item_form_items", clear_on_submit=True):
+            product_id = st.text_input("Product ID * (must be unique)")
+            article    = st.text_input("Article Number")
+            desc       = st.text_input("Description")
+            submit_item = st.form_submit_button("Save Item", type="primary")
 
-                        if not bl_id:
-                            st.error("Business Line not found under the selected Business Unit.")
-                        else:
-                            with engine.begin() as conn:
-                                res = conn.execute(
-                                    text("""
-                                        INSERT INTO items(
-                                          product_id, article_number, description, business_line_id, is_active
-                                        ) VALUES (:pid, :article, :desc, :blid, TRUE)
-                                        ON CONFLICT (product_id) DO NOTHING
-                                    """),
-                                    {
-                                        "pid": product_id.strip(),
-                                        "article": (article.strip() or None),
-                                        "desc": (desc.strip() or None),
-                                        "blid": int(bl_id),
-                                    },
-                                )
-                            if (res.rowcount or 0) > 0:
-                                st.success("Item added ✅")
-                                # optional: clear selections
-                                st.session_state["add_item_bl"] = ""
-                            else:
-                                st.error("That Product ID already exists.")
-                    except Exception as e:
-                        st.error("Could not add item.")
-                        st.caption(str(e))
-
+        if submit_item:
+            if not product_id.strip():
+                st.error("Product ID is required.")
+            elif not selected_bu_id or not selected_bl_id:
+                st.error("Business Unit and Business Line are required.")
+            else:
+                try:
+                    with engine.begin() as conn:
+                        res = conn.execute(
+                            text("""
+                                INSERT INTO items(
+                                  product_id, article_number, description, business_line_id, is_active
+                                ) VALUES (:pid, :article, :desc, :blid, TRUE)
+                                ON CONFLICT (product_id) DO NOTHING
+                            """),
+                            {
+                                "pid": product_id.strip(),
+                                "article": (article.strip() or None),
+                                "desc": (desc.strip() or None),
+                                "blid": int(selected_bl_id),
+                            },
+                        )
+                    if (res.rowcount or 0) > 0:
+                        st.success("Item added ✅")
+                        # keep BU, but clear BL so the user notices it's done
+                        st.session_state["add_item_bl_id"] = None
+                    else:
+                        st.error("That Product ID already exists.")
+                except Exception as e:
+                    st.error("Could not add item.")
+                    st.caption(str(e))
+    
     # ---------------------
     # Bulk upload (unchanged)
     # ---------------------
