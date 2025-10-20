@@ -1,0 +1,2914 @@
+# app_v11.py — Sales Daily Feedback — v11 (+Business Lines, Shelf Movement)
+# - Home Visit fields right after Audience (label startswith "Home Visit")
+# - Business Unit → Business Line → (optional) Item
+# - Shelf Movement objective shows items of the chosen Business Line with Qty Checked
+# - Atomic insert: visit + optional home_visit + optional shelf_movement(header+lines)
+# - Power BI push BEFORE rerun; includes shelf aggregates when present
+# - Secrets fallback: env["PBI_PUSH_URL"] or st.secrets["PBI_PUSH_URL"]
+# - Duplicate check uses submitted_at_utc
+# - Render + PostgreSQL (psycopg v3) — no SQLite, no settings.get
+
+import io
+import os
+import uuid
+import zipfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Optional, Dict, Any, List, Tuple
+
+import pandas as pd
+import sqlalchemy as sa
+from sqlalchemy import text
+import streamlit as st
+from passlib.hash import pbkdf2_sha256
+from streamlit_geolocation import streamlit_geolocation
+from dateutil import tz
+from streamlit_folium import st_folium
+import folium
+import streamlit.components.v1 as components
+import json, requests
+import re
+import secrets, string
+
+# USE our centralized Postgres engine (Render): provided by db.py
+# db.py must define `engine = create_engine(get_database_url(), ...)`
+from db import engine
+
+# =============================
+# Config
+# =============================
+APP_TITLE = "Sales Daily Feedback — v11"
+TIMEZONE = "Asia/Riyadh"
+SESSION_TTL_MIN = 60        # 60 mins (1 hour)
+DUP_MINUTES = 15            # duplicate detection lookback (minutes)
+
+# Power BI push URL:
+#   - Prefer environment variable (Render → Environment)
+#   - Fallback to Streamlit secrets if present (for local dev)
+PBI_PUSH_URL = os.environ.get("PBI_PUSH_URL") or st.secrets.get("PBI_PUSH_URL", "")
+
+st.set_page_config(page_title=APP_TITLE, layout="centered")
+
+# =============================
+# DB Utilities (PostgreSQL)
+# =============================
+
+def query_df(sql: str, params: Optional[dict] = None) -> pd.DataFrame:
+    """Run a read query and return a DataFrame (PostgreSQL)."""
+    with engine.begin() as conn:
+        return pd.read_sql_query(text(sql), conn, params=params or {})
+
+def exec_sql(sql: str, params: Optional[dict] = None):
+    """Execute a write DDL/DML statement (PostgreSQL)."""
+    with engine.begin() as conn:
+        conn.execute(text(sql), params or {})
+
+def insert_visit_returning_id(row: dict) -> int:
+    """
+    Insert a visit row into PostgreSQL and return the new visit_id via RETURNING.
+    `row` is a dict of column -> value.
+    """
+    cols = list(row.keys())
+    named = [f":{c}" for c in cols]
+    sql = f"INSERT INTO visits ({', '.join(cols)}) VALUES ({', '.join(named)}) RETURNING visit_id"
+    with engine.begin() as conn:
+        vid = conn.execute(text(sql), row).scalar_one()
+    return int(vid)
+
+# --- Atomic insert for visit (+ optional home_visit + optional shelf movement)
+def insert_visit_atomic(
+    visit_row: dict,
+    home_visit: Optional[dict] = None,            # {"patient_name":..., "patient_phone":..., "serial_no":...}
+    shelf_lines: Optional[List[dict]] = None      # [{"product_id": "...", "qty_checked": number}, ...]
+) -> int:
+    """
+    Insert a visit and the optional related entities atomically (PostgreSQL).
+    Returns the new visit_id. Rolls back everything on any failure.
+    """
+    visit_cols = list(visit_row.keys())
+    visit_vals_named = [f":{c}" for c in visit_cols]
+    sql_visit = f"""
+        INSERT INTO visits ({', '.join(visit_cols)})
+        VALUES ({', '.join(visit_vals_named)})
+        RETURNING visit_id
+    """
+
+    with engine.begin() as conn:
+        # 1) visit
+        vid = conn.execute(text(sql_visit), visit_row).scalar_one()
+
+        # 2) optional home visit
+        if home_visit:
+            conn.execute(
+                text("""
+                INSERT INTO home_visits(visit_id, patient_name, patient_phone, serial_no)
+                VALUES (:visit_id, :patient_name, :patient_phone, :serial_no)
+                """),
+                {
+                    "visit_id": vid,
+                    "patient_name": home_visit["patient_name"].strip(),
+                    "patient_phone": home_visit["patient_phone"].strip(),
+                    "serial_no": home_visit["serial_no"].strip().upper(),
+                },
+            )
+
+        # 3) optional shelf movement (header + lines)
+        if shelf_lines:
+            movement_id = conn.execute(
+                text("""
+                    INSERT INTO shelf_movement_headers(visit_id)
+                    VALUES (:visit_id)
+                    RETURNING movement_id
+                """),
+                {"visit_id": vid},
+            ).scalar_one()
+
+            # lines (only >=0 qty)
+            for ln in shelf_lines:
+                pid = str(ln["product_id"])
+                qty = float(ln["qty_checked"])
+                if qty < 0:
+                    continue
+                conn.execute(
+                    text("""
+                        INSERT INTO shelf_movement_lines(movement_id, product_id, qty_checked)
+                        VALUES (:movement_id, :product_id, :qty_checked)
+                    """),
+                    {"movement_id": movement_id, "product_id": pid, "qty_checked": qty},
+                )
+
+    return int(vid)
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+def _local_now() -> datetime:
+    return datetime.now(tz.gettz(TIMEZONE))
+
+def _local_now_str() -> str:
+    return _local_now().strftime("%Y-%m-%d %H:%M:%S")
+
+def push_visit_to_pbi(row: dict) -> Tuple[bool, Optional[str]]:
+    """
+    Push a single visit to your Power BI streaming/push dataset.
+    Returns (ok, err_msg).
+    """
+    push_url = PBI_PUSH_URL
+    if not push_url:
+        return False, "Missing PBI_PUSH_URL (env var or st.secrets)."
+
+    payload = {"rows": [row]}
+    try:
+        r = requests.post(push_url, json=payload, timeout=8)
+        if r.status_code in (200, 202):
+            return True, None
+        return False, f"{r.status_code} {r.text}"
+    except Exception as e:
+        return False, str(e)
+
+# =============================
+# Auth helpers (PostgreSQL)
+# =============================
+
+def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT * FROM users WHERE email = :email"),
+            {"email": email},
+        ).mappings().first()
+        return dict(row) if row else None
+
+def get_user_by_id(uid: int) -> Optional[Dict[str, Any]]:
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT * FROM users WHERE user_id = :uid"),
+            {"uid": uid},
+        ).mappings().first()
+        return dict(row) if row else None
+
+def create_session(user_id: int) -> str:
+    sid = uuid.uuid4().hex
+    now = _utcnow()
+    exp = now + timedelta(minutes=SESSION_TTL_MIN)
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO app_sessions(session_id, user_id, created_at_utc, expires_at_utc)
+                VALUES (:sid, :uid, :created, :expires)
+            """),
+            {
+                "sid": sid,
+                "uid": user_id,
+                "created": now,   # SQLAlchemy/psycopg converts to TIMESTAMPTZ
+                "expires": exp,
+            },
+        )
+    return sid
+
+def purge_expired_sessions() -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM app_sessions WHERE expires_at_utc < :now"),
+            {"now": _utcnow()},
+        )
+
+def delete_session(sid: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM app_sessions WHERE session_id = :sid"), {"sid": sid})
+
+# =============================
+# URL helpers (STABLE sid in URL)
+# =============================
+
+def set_url_param(name: str, value: str | None):
+    if value is None:
+        st.query_params.pop(name, None)
+    else:
+        st.query_params[name] = value
+
+def get_url_param(name: str, default: str | None = None) -> str | None:
+    return st.query_params.get(name, default)
+
+def set_url_session_param(sid: Optional[str]):
+    if sid:
+        st.query_params["sid"] = sid
+    else:
+        st.query_params.pop("sid", None)
+
+# =============================
+# App state — restore session
+# =============================
+
+def resolve_session_user() -> Optional[Dict[str, Any]]:
+    # Support both sid and legacy _sid param
+    sid = st.query_params.get("sid") or st.query_params.get("_sid")
+    if st.query_params.get("_sid"):
+        st.query_params["sid"] = st.query_params["_sid"]
+        st.query_params.pop("_sid", None)
+        sid = st.query_params.get("sid")
+
+    if not sid:
+        return None
+
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("""
+                SELECT session_id, user_id, expires_at_utc
+                FROM app_sessions
+                WHERE session_id = :sid
+            """),
+            {"sid": sid},
+        ).mappings().first()
+
+    if not row:
+        st.query_params.pop("sid", None)
+        return None
+
+    try:
+        # psycopg returns aware datetimes already; but guard anyway
+        exp = row["expires_at_utc"]
+        if isinstance(exp, str):
+            exp = datetime.fromisoformat(exp)
+    except Exception:
+        delete_session(sid)
+        st.query_params.pop("sid", None)
+        return None
+
+    exp_cmp = exp if getattr(exp, "tzinfo", None) else exp.replace(tzinfo=timezone.utc)
+    if _utcnow() >= exp_cmp:
+        delete_session(sid)
+        st.query_params.pop("sid", None)
+        return None
+
+    u = get_user_by_id(int(row["user_id"]))
+    # In Postgres schema, is_active is BOOLEAN; treat None/False as inactive
+    if not u or not bool(u.get("is_active", True)):
+        delete_session(sid)
+        st.query_params.pop("sid", None)
+        return None
+
+    # Extend session
+    new_exp = _utcnow() + timedelta(minutes=SESSION_TTL_MIN)
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE app_sessions SET expires_at_utc = :exp WHERE session_id = :sid"),
+            {"exp": new_exp, "sid": sid},
+        )
+
+    return u
+
+if "user" not in st.session_state:
+    purge_expired_sessions()
+    st.session_state.user = resolve_session_user()
+
+# =============================
+# Data helpers
+# =============================
+
+def recent_visit_minutes(uid: int, customer_id: int) -> Optional[int]:
+    """
+    Return minutes since the most recent visit by user for given customer, or None.
+    """
+    with engine.begin() as conn:
+        r = conn.execute(
+            text("""
+                SELECT submitted_at_utc
+                FROM visits
+                WHERE user_id = :uid AND customer_id = :cid
+                ORDER BY visit_id DESC
+                LIMIT 1
+            """),
+            {"uid": uid, "cid": customer_id},
+        ).fetchone()
+    if not r:
+        return None
+
+    last = r[0]
+    if isinstance(last, str):
+        try:
+            last = datetime.fromisoformat(last)
+        except Exception:
+            return None
+    last = last if getattr(last, "tzinfo", None) else last.replace(tzinfo=timezone.utc)
+    delta = _utcnow() - last
+    return int(delta.total_seconds() // 60)
+
+def _gen_tmp_pw(length: int = 12) -> str:
+    # mixed case + digits + a symbol
+    alphabet = string.ascii_letters + string.digits
+    core = "".join(secrets.choice(alphabet) for _ in range(length - 1))
+    return core + secrets.choice("!@#$%^&*")
+
+# ====== dependency reset callbacks ======
+def _on_customer_change():
+    st.session_state.pop("aud_sel", None)
+
+def _on_bu_change():
+    st.session_state.pop("bl_sel", None)
+    st.session_state.pop("prod_sel", None)
+
+def _on_line_change():
+    st.session_state.pop("prod_sel", None)
+
+# =============================
+# UI — Login / Logout (blocks inactive accounts)
+# =============================
+def login_block():
+    st.title(f"{APP_TITLE} — Login")
+    with st.form("login"):
+        email = st.text_input("Email", placeholder="you@company.com")
+        pw = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login")
+
+    if submitted:
+        em = (email or "").strip().lower()
+        if not em or not pw:
+            st.error("Please enter both email and password.")
+            return
+
+        u = get_user_by_email(em)
+        if not u:
+            st.error("User not found.")
+            return
+
+        if int(u.get("is_active", 0)) != 1:
+            st.error("Your account is inactive. Please contact the administrator.")
+            return
+
+        if not pbkdf2_sha256.verify(pw, u["password_hash"]):
+            st.error("Invalid password.")
+            return
+
+        st.session_state.user = u
+        sid = create_session(int(u["user_id"]))
+        set_url_session_param(sid)
+
+        st.session_state["_current_page"] = "Submit Visit"
+        set_url_param("page", "Submit Visit")
+
+        st.success(f"Welcome, {u.get('name') or u.get('email')}!")
+        st.rerun()
+
+def logout_button():
+    if st.sidebar.button("Logout"):
+        sid = st.query_params.get("sid")
+        if sid:
+            delete_session(sid)
+        set_url_session_param(None)
+        st.session_state.user = None
+        st.session_state.pop("_current_page", None)
+        set_url_param("page", None)
+        st.rerun()
+
+## =============================
+# UI — Sidebar (page memory via URL + session)
+# =============================
+def sidebar_nav():
+    st.sidebar.title("Navigation")
+
+    # Show to all authenticated users
+    pages = ["Submit Visit", "My Submissions", "User Settings"]
+
+    # Admin-only pages
+    if st.session_state.user and st.session_state.user.get("role") == "admin":
+        pages += ["Admin: Import Lookups", "Admin: Data Browser", "Admin: Users"]
+
+    url_page = get_url_param("page")
+    sess_page = st.session_state.get("_current_page")
+    if url_page in pages:
+        current = url_page
+    elif sess_page in pages:
+        current = sess_page
+    else:
+        current = pages[0]
+
+    idx = pages.index(current)
+
+    def _on_change():
+        chosen = st.session_state["_nav_choice"]
+        st.session_state["_current_page"] = chosen
+        set_url_param("page", chosen)
+
+    choice = st.sidebar.radio(
+        "Go to",
+        pages,
+        index=idx,
+        key="_nav_choice",
+        on_change=_on_change
+    )
+
+    if st.session_state.get("_current_page") != choice:
+        st.session_state["_current_page"] = choice
+    if get_url_param("page") != choice:
+        set_url_param("page", choice)
+
+    return choice
+
+# =============================
+# Location block (auto-flow, minimal UI) – required
+# =============================
+def get_location_block(k) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    with st.expander("📍 Location (auto) — required for check-in", expanded=True):
+        st.markdown("<style>.leaflet-control-locate{display:none!important}</style>", unsafe_allow_html=True)
+
+        tried_key = k("geo_try")
+        tried = st.session_state.get(tried_key, False)
+
+        if not tried:
+            c1, _ = st.columns([1, 3])
+            with c1:
+                if st.button("📍 Get location", key=k("btn_get_loc"), type="primary"):
+                    st.session_state[tried_key] = True
+                    st.rerun()
+            return (None, None, None)
+
+        loc = streamlit_geolocation()  # requires HTTPS on mobile
+        lat = loc.get("latitude") if loc else None
+        lon = loc.get("longitude") if loc else None
+        acc = loc.get("accuracy") if loc else None
+
+        c1, _ = st.columns([1, 3])
+        with c1:
+            if st.button("🔁 Retry location", key=k("btn_retry_loc")):
+                st.session_state.pop(tried_key, None)
+                st.rerun()
+
+        if not (lat and lon):
+            st.warning(
+                "We couldn't read your location.\n\n"
+                "• On mobile, GPS only works reliably over **HTTPS** (ngrok/Cloudflare/Streamlit Cloud).\n"
+                "• Ensure site permissions allow **Location** & **Precise Location**."
+            )
+            return (None, None, None)
+
+        acc_txt = f" (~{acc:.0f} m accuracy)" if acc is not None else ""
+        st.success(f"Captured location: {float(lat):.6f}, {float(lon):.6f}{acc_txt}")
+
+        m = folium.Map(location=[float(lat), float(lon)], zoom_start=16, control_scale=True)
+        folium.Marker([float(lat), float(lon)], tooltip="Your location").add_to(m)
+        st_folium(m, height=300, key=k("geo_map"))
+
+        return (
+            float(lat) if lat is not None else None,
+            float(lon) if lon is not None else None,
+            float(acc) if acc is not None else None,
+        )
+
+# =============================
+# Page — Submit Visit (sticky submit + dedupe guard)
+# =============================
+def page_submit_visit():
+    st.title("📝 Submit Visit (v11)")
+
+    # ---- tiny CSS for floating submit ----
+    st.markdown("""
+    <style>
+      .sticky-submit-wrap{position:fixed; right:16px; bottom:16px; z-index:1000;}
+      @media (max-width:640px){
+        .sticky-submit-wrap{left:16px; right:16px;}
+        .sticky-submit-wrap button{width:100%;}
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ---- Red asterisk legend ----
+    st.markdown(
+        '<div style="margin:.25rem 0 1rem 0;">'
+        'Fields marked with <span style="color:#d00000;font-weight:700">*</span> are required.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    PAGE_NS = "submit_visit"
+    nonce_key        = f"_{PAGE_NS}_form_nonce"
+    saved_ok_key     = f"_{PAGE_NS}_saved_ok"
+    geo_nonce_key    = f"_{PAGE_NS}_geo_nonce"
+    geo_captured_key = f"_{PAGE_NS}_geo_captured"
+    busy_key         = f"_{PAGE_NS}_busy"           # NEW: lock while saving
+    intent_key       = f"_{PAGE_NS}_submit_intent"  # NEW: set True when any submit is pressed
+
+    st.session_state.setdefault(nonce_key, 0)
+    st.session_state.setdefault(geo_nonce_key, 0)
+    st.session_state.setdefault(busy_key, False)
+    st.session_state.setdefault(intent_key, False)
+
+    def k(name: str) -> str:
+        return f"{PAGE_NS}/{name}_{st.session_state[nonce_key]}"
+
+    u = st.session_state.user
+    uid = int(u["user_id"] if "user_id" in u else u["id"])
+    st.caption(f"Logged in as **{u['name']}** · Region: **{u.get('region') or '—'}** · Role: **{u.get('role')}**")
+
+    if st.session_state.pop(saved_ok_key, False):
+        st.success("Saved ✅ — fields cleared, you can enter a new visit.")
+
+    # Focus first text box
+    components.html(
+        """<script>
+        const wait=()=>{const el=window.parent.document.querySelector('input[type="search"], input[type="text"]');
+        if(!el){setTimeout(wait,250);return;} el.focus();}; wait();
+        </script>""",
+        height=0,
+    )
+
+    # ---------------- Location (REQUIRED) ----------------
+    lat, lon, acc = get_location_block(k)
+    if not (lat and lon):
+        st.info("📍 Location is required before you can submit.")
+        return
+
+    # ---------------- Customer (REQUIRED) ----------------
+    cust_df = query_df("SELECT customer_id, account_name FROM customers WHERE is_active=1 ORDER BY account_name")
+    cust_names = [""] + cust_df["account_name"].tolist()
+    cust_choice = st.selectbox("Customer *", cust_names, index=0, key=k("cust_sel"))
+    customer_id = None
+    if cust_choice:
+        match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
+        customer_id = int(match.iloc[0]) if not match.empty else None
+
+    # ---------------- Target Audience (REQUIRED) ----------------
+    audience_id = None
+    aud_choice_label = ""     # label shown to user
+    aud_choice_name = None    # raw 'name' from DB
+
+    aud_labels = [""]
+    aud_rows = []  # (label, audience_id, raw_name)
+
+    if customer_id:
+        aud_df = query_df(
+            """
+            SELECT audience_id, title, name, department, position
+            FROM target_audiences
+            WHERE is_active=1 AND customer_id=:cid
+            ORDER BY name
+            """,
+            {"cid": customer_id},
+        )
+
+        def _fmt_audience(row) -> str:
+            parts = []
+            title = (str(row.title).strip() + " ") if pd.notna(row.title) and str(row.title).strip() else ""
+            name = str(row.name).strip() if pd.notna(row.name) else ""
+            parts.append((title + name).strip())
+            if pd.notna(row.department) and str(row.department).strip():
+                parts.append(str(row.department).strip())
+            if pd.notna(row.position) and str(row.position).strip():
+                parts.append(str(row.position).strip())
+            parts = [p for p in parts if p]
+            return " — ".join(parts) if parts else name
+
+        for r in aud_df.itertuples(index=False):
+            label = _fmt_audience(r)
+            aud_rows.append((label, int(r.audience_id), str(r.name).strip() if pd.notna(r.name) else ""))
+
+        aud_labels = [""] + [x[0] for x in aud_rows]
+        if len(aud_labels) == 1:
+            st.warning("This customer has no Target Audiences. Add one in **Admin → Import Lookups → Target Audiences** or pick a different customer.")
+
+    aud_choice_label = st.selectbox(
+        "Target Audience *",
+        aud_labels,
+        index=0,
+        key=k("aud_sel"),
+        disabled=(customer_id is None),
+        help=None if customer_id else "Select a Customer first",
+    )
+
+    if customer_id and aud_choice_label:
+        for lbl, aid, raw_name in aud_rows:
+            if lbl == aud_choice_label:
+                audience_id = aid
+                aud_choice_name = raw_name
+                break
+
+    # -------- Home Visit block (REQUIRED only if triggered) --------
+    is_home_visit = False
+    if aud_choice_label and aud_choice_label.strip().lower().startswith("home visit"):
+        is_home_visit = True
+
+    patient_name = patient_phone = serial_no = None
+    if is_home_visit:
+        with st.container():
+            patient_name = st.text_input("Patient Name *", key=k("pat_name"))
+            patient_phone = st.text_input("Patient Phone # *", key=k("pat_phone"))
+            serial_no = st.text_input("Serial # *", key=k("serial_no"))
+
+    # ---------------- Business Unit (REQUIRED) ----------------
+    bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+    bu_names = [""] + bu_df["name"].tolist()
+    bu_choice = st.selectbox("Business Unit *", bu_names, index=0, key=k("bu_sel"), on_change=_on_bu_change)
+    bu_id = None
+    if bu_choice:
+        match = bu_df.loc[bu_df["name"] == bu_choice, "business_unit_id"]
+        bu_id = int(match.iloc[0]) if not match.empty else None
+
+    # ---------------- Category (REQUIRED; depends on BU) ----------------
+    cat_df = pd.DataFrame()
+    cat_names = [""]; cat_choice = ""
+    if bu_id:
+        cat_df = query_df(
+            """
+            SELECT DISTINCT category
+            FROM business_lines
+            WHERE is_active=1 AND business_unit_id=:bid AND category IS NOT NULL AND trim(category) <> ''
+            ORDER BY category
+            """,
+            {"bid": bu_id},
+        )
+        cat_names = [""] + cat_df["category"].tolist()
+
+    cat_choice = st.selectbox(
+        "Category *",
+        cat_names,
+        index=0,
+        key=k("cat_sel"),
+        disabled=(bu_id is None),
+        help=None if bu_id else "Select a Business Unit first",
+    )
+
+    # ---------------- Business Line (REQUIRED; depends on BU + Category) ----------------
+    bl_df = pd.DataFrame()
+    bl_names = [""]; bl_choice = ""
+    business_line_id = None
+
+    if bu_id and cat_choice:
+        bl_df = query_df(
+            """
+            SELECT business_line_id, name
+            FROM business_lines
+            WHERE is_active=1 AND business_unit_id=:bid AND category=:cat
+            ORDER BY name
+            """,
+            {"bid": bu_id, "cat": cat_choice},
+        )
+        bl_names = [""] + bl_df["name"].tolist()
+
+    bl_choice = st.selectbox(
+        "Business Line *",
+        bl_names,
+        index=0,
+        key=k("bl_sel"),
+        disabled=(bu_id is None or not cat_choice),
+        on_change=_on_line_change,
+        help=None if (bu_id and cat_choice) else "Select a Category first",
+    )
+
+    if bu_id and cat_choice and bl_choice:
+        match = bl_df.loc[bl_df["name"] == bl_choice, "business_line_id"]
+        business_line_id = int(match.iloc[0]) if not match.empty else None
+
+    # ---------------- Article Number / Product (OPTIONAL) ----------------
+    prod_labels, prod_df = [""], pd.DataFrame()
+    product_id = None; prod_choice = ""
+
+    if business_line_id:
+        prod_df = query_df(
+            """
+            SELECT product_id, article_number, description
+            FROM items
+            WHERE is_active=1 AND business_line_id=:blid
+            ORDER BY COALESCE(article_number, product_id)
+            """,
+            {"blid": business_line_id},
+        )
+        prod_labels = [""] + [
+            (f"{(r.article_number or r.product_id)} — {r.description}" if pd.notna(r.description) and str(r.description).strip()
+             else f"{(r.article_number or r.product_id)}")
+            for r in prod_df.itertuples(index=False)
+        ]
+
+    prod_choice = st.selectbox(
+        "Article Number (Product) — optional",
+        prod_labels,
+        index=0,
+        key=k("prod_sel"),
+        disabled=(business_line_id is None),
+        help=None if business_line_id else "Select Business Line first",
+    )
+    if business_line_id and prod_choice:
+        label_to_pid = {}
+        for r in prod_df.itertuples(index=False):
+            label = (f"{(r.article_number or r.product_id)} — {r.description}" if pd.notna(r.description) and str(r.description).strip()
+                     else f"{(r.article_number or r.product_id)}")
+            label_to_pid[label] = r.product_id
+        product_id = label_to_pid.get(prod_choice)
+
+    # ---------------- Objective (REQUIRED) + Evaluation (REQUIRED) + Notes (OPTIONAL) ----------------
+    obj_df = query_df("SELECT objective_id, name FROM objectives WHERE COALESCE(is_active,1)=1 ORDER BY name")
+    obj_names = [""] + obj_df["name"].tolist()
+    obj_choice = st.selectbox("Business Objective *", obj_names, index=0, key=k("obj_sel"))
+    objective_id = None
+    if obj_choice:
+        match = obj_df.loc[obj_df["name"] == obj_choice, "objective_id"]
+        objective_id = int(match.iloc[0]) if not match.empty else None
+
+    is_shelf_movement = bool(obj_choice) and ("shelf movement" in obj_choice.strip().lower())
+
+    notes = st.text_area("Notes (optional)", key=k("notes"))
+
+    allowed_evals = {"Positive", "Negative", "Neutral", "IDK"}
+    evaluation_choice = st.selectbox(
+        "Evaluation *",
+        [""] + sorted(list(allowed_evals)),
+        index=0,
+        key=k("eval_sel"),
+    )
+    evaluation_val = evaluation_choice if evaluation_choice in allowed_evals else None
+
+    # ---------------- Shelf Movement grid (when objective is Shelf Movement) ----------------
+    shelf_df = pd.DataFrame(); shelf_editor = None
+    if is_shelf_movement:
+        st.subheader("🧾 Shelf Movement — Quantities Checked")
+        if not bu_id:
+            st.info("Select a Business Unit to load items.")
+        elif not cat_choice:
+            st.info("Select a Category to load items.")
+        else:
+            shelf_df = query_df(
+                """
+                SELECT i.product_id,
+                       COALESCE(i.article_number, i.product_id) AS article_number,
+                       COALESCE(i.description, '') AS description
+                FROM items i
+                JOIN business_lines bl ON bl.business_line_id = i.business_line_id
+                WHERE i.is_active = 1 AND bl.is_active = 1
+                  AND bl.business_unit_id = :bid AND bl.category = :cat
+                ORDER BY COALESCE(i.article_number, i.product_id)
+                """,
+                {"bid": bu_id, "cat": cat_choice},
+            )
+            if shelf_df.empty:
+                st.warning("No active items found for this Category.")
+            else:
+                shelf_df = shelf_df.assign(qty_checked=pd.Series([None] * len(shelf_df)))
+                shelf_editor = st.data_editor(
+                    shelf_df,
+                    key=k("sm_editor"),
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="fixed",
+                    column_config={
+                        "product_id": st.column_config.TextColumn("Product ID", disabled=True),
+                        "article_number": st.column_config.TextColumn("Article #", disabled=True),
+                        "description": st.column_config.TextColumn("Description", disabled=True),
+                        "qty_checked": st.column_config.NumberColumn(
+                            "Qty Checked",
+                            help="Leave blank if not checked. Enter 0 if none on shelf.",
+                            min_value=0,
+                            step=1
+                        ),
+                    },
+                )
+
+    # ---------------- Potential duplicate banner ----------------
+    if customer_id:
+        mins = recent_visit_minutes(uid, customer_id)
+        if mins is not None and mins < DUP_MINUTES:
+            st.info(f"You submitted for **{cust_choice}** {mins} minutes ago — potential duplicate.")
+
+    # ---------------- Dual Submit buttons (inline + sticky) ----------------
+    inline_click = st.button(
+        "Submit",
+        type="primary",
+        key=k("submit_btn_inline"),
+        disabled=st.session_state[busy_key],
+        help="Saves immediately. You’ll see a spinner while saving."
+    )
+
+    #st.markdown('<div class="sticky-submit-wrap">', unsafe_allow_html=True)
+    #sticky_click = st.button(
+    #    "Submit",
+    #    type="primary",
+    #    key=k("submit_btn_sticky"),
+    #    disabled=st.session_state[busy_key]
+    #)
+    #st.markdown('</div>', unsafe_allow_html=True)
+
+    # Any submit → set intent & lock, then rerun to process exactly once
+    #if (inline_click or sticky_click) and not st.session_state[busy_key]:
+    if (inline_click) and not st.session_state[busy_key]:
+        st.session_state[intent_key] = True
+        st.session_state[busy_key]   = True
+        st.rerun()
+
+    # If not submitting, stop here
+    if not st.session_state[intent_key]:
+        return
+
+    # ---------------- Process submission with a global spinner ----------------
+    with st.spinner("Saving your visit…"):
+        errors = []
+
+        # In page order:
+        if not customer_id:
+            errors.append("Please choose a **Customer**.")
+        if not audience_id:
+            errors.append("Please choose a **Target Audience** for the selected customer.")
+
+        if is_home_visit:
+            if not patient_name:
+                errors.append("For **Home Visit**, please enter **Patient Name**.")
+            if not patient_phone:
+                errors.append("For **Home Visit**, please enter **Patient Phone #**.")
+            elif not re.fullmatch(r"(?:\+966|00966|0)?5\d{8}", patient_phone.strip()):
+                errors.append("**Patient Phone #** looks invalid (expected KSA mobile like 05XXXXXXXX).")
+            if not serial_no:
+                errors.append("For **Home Visit**, please enter **Serial #**.")
+
+        if not bu_id:
+            errors.append("Please choose a **Business Unit**.")
+        if not cat_choice:
+            errors.append("Please choose a **Category**.")
+        if not business_line_id:
+            errors.append("Please choose a **Business Line**.")
+
+        if objective_id is None:
+            errors.append("Please choose a **Business Objective**.")
+        if evaluation_val is None:
+            errors.append("Please choose an **Evaluation** (Positive/Negative/Neutral/IDK).")
+
+        # Shelf Movement validations
+        shelf_lines_payload = None
+        filled_rows = None
+        if is_shelf_movement:
+            if shelf_editor is None or shelf_editor.empty:
+                errors.append("**Shelf Movement** grid is empty. Load items by selecting Business Unit and Category.")
+            else:
+                edited = shelf_editor.copy()
+                edited["qty_checked"] = pd.to_numeric(edited["qty_checked"], errors="coerce")
+                if (edited["qty_checked"].dropna() < 0).any():
+                    errors.append("Quantities in **Shelf Movement** cannot be negative.")
+                filled_rows = edited[edited["qty_checked"].notna()]
+                if filled_rows is not None and filled_rows.empty:
+                    errors.append("Enter at least **one** quantity in the **Shelf Movement** grid (blank = not checked; 0 is allowed).")
+                if filled_rows is not None and not filled_rows.empty:
+                    shelf_lines_payload = [
+                        {"product_id": r["product_id"], "qty_checked": float(r["qty_checked"])}
+                        for _, r in filled_rows.iterrows()
+                    ]
+
+        # If there are any errors, render them all (in order) and unlock for retry.
+        if errors:
+            for msg in errors:
+                st.error(msg)
+            st.session_state[busy_key] = False
+            st.session_state[intent_key] = False
+            return
+
+        # ----- All validations passed → persist -----
+        visit_row = {
+            "user_id": uid,
+            "submitted_at_utc": _utcnow_iso(),
+            "submitted_at_local": _local_now_str(),
+            "latitude": lat,
+            "longitude": lon,
+            "accuracy_m": acc,
+            "customer_id": int(customer_id),
+            "audience_id": int(audience_id) if audience_id else None,
+            "business_line_id": int(business_line_id),
+            "product_id": (None if is_shelf_movement else product_id),  # OPTIONAL
+            "objective_id": int(objective_id),
+            "notes": (notes.strip() if notes else None),                # OPTIONAL
+            "evaluation": evaluation_val,
+        }
+
+        home_payload = None
+        if is_home_visit:
+            home_payload = {
+                "patient_name": patient_name,
+                "patient_phone": patient_phone,
+                "serial_no": serial_no,
+            }
+
+        try:
+            # 1) Atomic insert (+ home_visits [+ shelf movement if any])
+            visit_id = insert_visit_atomic(visit_row, home_payload, shelf_lines_payload)
+
+            # 2) Build Power BI row
+            def _article_from_label(lbl: str | None) -> str:
+                if not lbl: return ""
+                return str(lbl).split(" — ", 1)[0].strip()
+
+            shelf_lines_count = int(len(filled_rows)) if (is_shelf_movement and filled_rows is not None) else 0
+            shelf_total_qty = int(filled_rows["qty_checked"].sum()) if (is_shelf_movement and filled_rows is not None) else 0
+
+            pbi_row = {
+                "submitted_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "submitted_at_local": datetime.now().isoformat(),
+                "user_name": str(u.get("name") or ""),
+                "user_region": str(u.get("region") or ""),
+                "customer_name": str(cust_choice or ""),
+                "audience_name": ("Home Visit" if is_home_visit else str(aud_choice_label or "")),
+                "business_unit": str(bu_choice or ""),
+                "category": str(cat_choice or ""),
+                "business_line": str(bl_choice or ""),
+                "article_number": ("" if is_shelf_movement else _article_from_label(prod_choice if (business_line_id and prod_choice) else None)),
+                "objective": str(obj_choice or ""),
+                "evaluation": str(evaluation_val or ""),
+                "latitude": float(lat) if lat is not None else 0.0,
+                "longitude": float(lon) if lon is not None else 0.0,
+                "accuracy_m": (f"{acc:.1f}" if isinstance(acc, (int, float)) else (str(acc) if acc is not None else "")),
+                "notes": (notes.strip() if notes else ""),
+                "shelf_lines_count": shelf_lines_count,
+                "shelf_total_qty": shelf_total_qty,
+            }
+
+            if is_home_visit:
+                pbi_row.update({
+                    "patient_name": patient_name.strip(),
+                    "patient_phone": patient_phone.strip(),
+                    "serial_no": serial_no.strip().upper(),
+                })
+
+            ok, err = push_visit_to_pbi(pbi_row)
+            if not ok:
+                st.warning(f"Saved locally, but Power BI push failed → {err}")
+            else:
+                st.toast("Pushed to Power BI ✅", icon="✅")
+
+            # 3) Reset & rerun
+            st.session_state[nonce_key] += 1
+            st.session_state[geo_nonce_key] += 1
+            st.session_state.pop(geo_captured_key, None)
+            st.session_state[saved_ok_key] = True
+            st.session_state[intent_key] = False
+            st.session_state[busy_key] = False
+            st.rerun()
+
+        except Exception as e:
+            msg = str(e)
+            if isinstance(e, sqlite3.IntegrityError) or "UNIQUE constraint failed: home_visits.serial_no" in msg:
+                st.error("Serial # already exists. Please verify and try again.")
+            else:
+                st.error("Could not save your submission.")
+                st.caption(msg)
+            st.session_state[intent_key] = False
+            st.session_state[busy_key] = False
+
+# =============================
+# Page — My Submissions
+# =============================
+def page_my_submissions():
+    st.title("📄 My Submissions")
+    u = st.session_state.user
+    uid = int(u.get("user_id")) if u.get("user_id") is not None else int(u["id"])
+
+    sql = """
+        SELECT v.visit_id,
+               v.submitted_at_local,
+               c.account_name AS customer,
+               ta.name AS audience,
+               v.latitude, v.longitude, v.accuracy_m,
+               i.article_number, i.description,
+               bu.name AS business_unit,
+               bl.name AS business_line,
+               bl.category AS category,            -- ← show category
+               o.name AS objective,
+               v.evaluation,
+               v.notes,
+               hv.patient_name, hv.patient_phone, hv.serial_no,
+               -- Shelf movement aggregates
+               COALESCE((
+                 SELECT COUNT(*)
+                 FROM shelf_movement_lines l
+                 JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
+                 WHERE h.visit_id = v.visit_id
+               ),0) AS shelf_lines_count,
+               COALESCE((
+                 SELECT SUM(l.qty_checked)
+                 FROM shelf_movement_lines l
+                 JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
+                 WHERE h.visit_id = v.visit_id
+               ),0) AS shelf_total_qty
+        FROM visits v
+        JOIN customers c            ON v.customer_id = c.customer_id
+        LEFT JOIN target_audiences ta ON v.audience_id = ta.audience_id
+        LEFT JOIN items i           ON v.product_id = i.product_id
+        JOIN business_lines bl      ON bl.business_line_id = v.business_line_id
+        JOIN business_units bu      ON bu.business_unit_id = bl.business_unit_id
+        JOIN objectives o           ON v.objective_id = o.objective_id
+        LEFT JOIN home_visits hv    ON hv.visit_id = v.visit_id
+        WHERE v.user_id = :uid
+        ORDER BY v.visit_id DESC
+    """
+    df = query_df(sql, {"uid": uid})
+
+    if df.empty:
+        st.info("No submissions yet.")
+    else:
+        st.markdown(f"**Total: {len(df):,}**")
+        st.dataframe(df, width="stretch", hide_index=True)
+        st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"), "my_submissions.csv", "text/csv")
+
+# =============================
+# Page — User Settings
+# =============================
+def page_user_settings():
+    from passlib.hash import pbkdf2_sha256
+    import re
+
+    st.title("👤 User Settings")
+
+    u = st.session_state.user
+    uid = int(u["user_id"] if "user_id" in u else u["id"])
+
+    # Load fresh user row (and BU name for display)
+    me = query_df("""
+        SELECT u.user_id, u.email, u.name, u.region, u.role, u.is_active,
+               bu.name AS business_unit, u.password_hash
+        FROM users u
+        LEFT JOIN business_units bu ON bu.business_unit_id = u.business_unit_id
+        WHERE u.user_id = :uid
+    """, {"uid": uid})
+    if me.empty:
+        st.error("Could not load your profile.")
+        return
+
+    row = me.iloc[0]
+
+    # Read-only profile block
+    st.subheader("My Profile (read-only)")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.text_input("Name", value=row.get("name") or "", disabled=True)
+        st.text_input("Email", value=row.get("email") or "", disabled=True)
+        st.text_input("Region", value=row.get("region") or "", disabled=True)
+    with c2:
+        st.text_input("Role", value=row.get("role") or "", disabled=True)
+        st.text_input("Business Unit", value=row.get("business_unit") or "", disabled=True)
+        st.text_input("Status", value=("Active" if int(row.get("is_active") or 0) == 1 else "Inactive"), disabled=True)
+
+    st.divider()
+
+    # Change password form
+    st.subheader("Change Password")
+    with st.form("change_pw_form", clear_on_submit=True):
+        old_pw = st.text_input("Current Password *", type="password")
+        new_pw = st.text_input("New Password *", type="password", help="Min 8 chars, include a letter and a number.")
+        new_pw2 = st.text_input("Confirm New Password *", type="password")
+        submit = st.form_submit_button("Update Password", type="primary")
+
+    # Validation + update (in field order)
+    if submit:
+        # 1) Old password present?
+        if not old_pw:
+            st.error("Please enter your current password.")
+            st.stop()
+
+        # 2) Verify old password
+        if not pbkdf2_sha256.verify(old_pw, row["password_hash"]):
+            st.error("Current password is incorrect.")
+            st.stop()
+
+        # 3) New password present?
+        if not new_pw:
+            st.error("Please enter a new password.")
+            st.stop()
+
+        # 4) Confirm present?
+        if not new_pw2:
+            st.error("Please confirm your new password.")
+            st.stop()
+
+        # 5) Match?
+        if new_pw != new_pw2:
+            st.error("New password and confirmation do not match.")
+            st.stop()
+
+        # 6) Strength checks
+        if len(new_pw) < 8:
+            st.error("New password must be at least 8 characters long.")
+            st.stop()
+        if not re.search(r"[A-Za-z]", new_pw) or not re.search(r"\d", new_pw):
+            st.error("New password must include at least one letter and one number.")
+            st.stop()
+
+        # 7) Prevent reusing the same password
+        if pbkdf2_sha256.verify(new_pw, row["password_hash"]):
+            st.error("New password must be different from the current password.")
+            st.stop()
+
+        # 8) Save
+        try:
+            new_hash = pbkdf2_sha256.hash(new_pw)
+            exec_sql("UPDATE users SET password_hash=? WHERE user_id=?", (new_hash, uid))
+            st.success("Password updated ✅")
+        except Exception as e:
+            st.error("Could not update password.")
+            st.caption(str(e))
+
+# =============================
+# Page — Admin: Import Lookups
+# =============================
+def page_admin_import():
+    st.title("🛠️ Admin — Import Lookups (Excel/CSV)")
+    st.caption("Files should have exact column names shown below. Existing rows are kept; duplicates are skipped.")
+
+    if "flash_admin" in st.session_state:
+        level, msg = st.session_state.pop("flash_admin")
+        getattr(st, level)(msg)
+
+    def popout(label: str):
+        if hasattr(st, "popover"):
+            return st.popover(label)
+        st.markdown(f"**{label}**")
+        return st.container()
+
+    if "danger_nonce" not in st.session_state:
+        st.session_state["danger_nonce"] = 0
+
+    def _refcount(sql: str, params: tuple) -> int:
+        with engine.begin() as conn:
+            r = conn.exec_driver_sql(sql, params).fetchone()
+            return int(r[0]) if r and r[0] is not None else 0
+
+    def _parts_join(*parts):
+        return " - ".join([p for p in [str(x).strip() for x in parts] if p and p != "None"])
+
+    # 1) Customers
+    st.subheader("1) Customers")
+    st.write("Columns: **account_name**, sector, region, city")
+
+    with popout("➕ Add Customer"):
+        with st.form("add_customer_form", clear_on_submit=True):
+            acc = st.text_input("Account Name *")
+            sector = st.text_input("Sector")
+            region = st.text_input("Region")
+            city = st.text_input("City")
+            submit_cust = st.form_submit_button("Save Customer", type="primary")
+        if submit_cust:
+            if not acc.strip():
+                st.error("Account Name is required.")
+            else:
+                try:
+                    with engine.begin() as conn:
+                        conn.exec_driver_sql(
+                            """
+                            INSERT INTO customers(account_name, sector, region, city)
+                            SELECT ?,?,?,?
+                            WHERE NOT EXISTS (
+                              SELECT 1 FROM customers WHERE lower(account_name) = lower(?)
+                            )
+                            """,
+                            (acc.strip(), (sector.strip() or None), (region.strip() or None), (city.strip() or None), acc.strip()),
+                        )
+                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
+                    if ch > 0:
+                        st.success("Customer added ✅")
+                    else:
+                        st.info("A customer with that name already exists — nothing added.")
+                except Exception as e:
+                    st.error("Could not add customer.")
+                    st.caption(str(e))
+
+    f1 = st.file_uploader("Upload Customers", type=["xlsx", "csv"], key="cust")
+    if f1 is not None:
+        df = pd.read_excel(f1) if f1.name.endswith(".xlsx") else pd.read_csv(f1)
+        if "account_name" not in df.columns:
+            st.error("Missing required column: account_name")
+        else:
+            inserted = 0
+            skipped = 0
+            try:
+                with engine.begin() as conn:
+                    for _, r in df.iterrows():
+                        acc = str(r.get("account_name", "")).strip()
+                        if not acc:
+                            skipped += 1
+                            continue
+                        conn.exec_driver_sql(
+                            """
+                            INSERT INTO customers(account_name, sector, region, city)
+                            SELECT ?,?,?,?
+                            WHERE NOT EXISTS (
+                              SELECT 1 FROM customers WHERE lower(account_name) = lower(?)
+                            )
+                            """,
+                            (
+                                acc,
+                                (str(r.get("sector")).strip() if pd.notna(r.get("sector")) else None),
+                                (str(r.get("region")).strip() if pd.notna(r.get("region")) else None),
+                                (str(r.get("city")).strip() if pd.notna(r.get("city")) else None),
+                                acc,
+                            ),
+                        )
+                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
+                        if ch > 0:
+                            inserted += 1
+                        else:
+                            skipped += 1
+                st.success(f"Customers import ✅ Inserted: {inserted} | Updated: 0 | Skipped: {skipped}")
+            except Exception as e:
+                st.error("Import failed.")
+                st.caption(str(e))
+
+    st.divider()
+
+    # 2) Target Audiences
+    st.subheader("2) Target Audiences")
+    st.write("Columns: **customer_name**, title, name, department, position, potentiality, loyalty, mobile, landline, external_number, email")
+
+    cust_df_for_aud = query_df("SELECT customer_id, account_name FROM customers ORDER BY account_name")
+    cust_name_opts = [""] + cust_df_for_aud["account_name"].tolist()
+    cust_name_to_id = {r.account_name: int(r.customer_id) for r in cust_df_for_aud.itertuples(index=False)}
+
+    with popout("➕ Add Target Audience"):
+        with st.form("add_audience_form", clear_on_submit=True):
+            sel_cust_name = st.selectbox("Customer *", cust_name_opts, index=0)
+            title = st.text_input("Title")
+            aud_name = st.text_input("Name *")
+            dept = st.text_input("Department")
+            pos = st.text_input("Position")
+            pot = st.text_input("Potentiality")
+            loy = st.text_input("Loyalty")
+            mobile = st.text_input("Mobile")
+            land = st.text_input("Landline")
+            extn = st.text_input("External Number")
+            email = st.text_input("Email")
+            submit_aud = st.form_submit_button("Save Target Audience", type="primary")
+
+        if submit_aud:
+            if not (sel_cust_name and aud_name.strip()):
+                st.error("Customer and Name are required.")
+            else:
+                try:
+                    cid = cust_name_to_id.get(sel_cust_name)
+                    if not cid:
+                        st.error("Selected customer was not found.")
+                    else:
+                        with engine.begin() as conn:
+                            conn.exec_driver_sql(
+                                """
+                                INSERT OR IGNORE INTO target_audiences(
+                                  customer_id, title, name, department, position, potentiality, loyalty,
+                                  mobile, landline, external_number, email
+                                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                                """,
+                                (
+                                    cid,
+                                    (title.strip() or None),
+                                    aud_name.strip(),
+                                    (dept.strip() or None),
+                                    (pos.strip() or None),
+                                    (pot.strip() or None),
+                                    (loy.strip() or None),
+                                    (mobile.strip() or None),
+                                    (land.strip() or None),
+                                    (extn.strip() or None),
+                                    (email.strip() or None),
+                                ),
+                            )
+                            ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
+                        if ch > 0:
+                            st.success("Target audience added ✅")
+                        else:
+                            st.info("This customer + name already exists — nothing added.")
+                except Exception as e:
+                    st.error("Could not add target audience.")
+                    st.caption(str(e))
+
+    f2 = st.file_uploader("Upload Target Audiences", type=["xlsx", "csv"], key="aud")
+    if f2 is not None:
+        df = pd.read_excel(f2) if f2.name.endswith(".xlsx") else pd.read_csv(f2)
+        needed = {"customer_name", "name"}
+        if not needed.issubset(df.columns):
+            st.error("Missing required columns: customer_name, name")
+        else:
+            inserted = 0
+            skipped = 0
+            try:
+                with engine.begin() as conn:
+                    cdf = pd.read_sql_query(sa.text("SELECT customer_id, account_name FROM customers"), conn)
+                    cmap = {str(r.account_name).strip().lower(): int(r.customer_id) for r in cdf.itertuples(index=False)}
+                    for _, r in df.iterrows():
+                        cname = str(r.get("customer_name", "")).strip()
+                        aname = str(r.get("name", "")).strip()
+                        if not (cname and aname):
+                            skipped += 1
+                            continue
+                        cid = cmap.get(cname.lower())
+                        if not cid:
+                            skipped += 1
+                            continue
+                        conn.exec_driver_sql(
+                            """
+                            INSERT OR REPLACE INTO target_audiences(
+                              customer_id, title, name, department, position, potentiality, loyalty,
+                              mobile, landline, external_number, email
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                            """,
+                            (
+                                cid,
+                                (str(r.get("title")).strip() if pd.notna(r.get("title")) else None),
+                                aname,
+                                (str(r.get("department")).strip() if pd.notna(r.get("department")) else None),
+                                (str(r.get("position")).strip() if pd.notna(r.get("position")) else None),
+                                (str(r.get("potentiality")).strip() if pd.notna(r.get("potentiality")) else None),
+                                (str(r.get("loyalty")).strip() if pd.notna(r.get("loyalty")) else None),
+                                (str(r.get("mobile")).strip() if pd.notna(r.get("mobile")) else None),
+                                (str(r.get("landline")).strip() if pd.notna(r.get("landline")) else None),
+                                (str(r.get("external_number")).strip() if pd.notna(r.get("external_number")) else None),
+                                (str(r.get("email")).strip() if pd.notna(r.get("email")) else None),
+                            ),
+                        )
+                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
+                        if ch > 0:
+                            inserted += 1
+                        else:
+                            skipped += 1
+                st.success(f"Target audiences import ✅ Inserted: {inserted} | Updated: 0 | Skipped: {skipped}")
+            except Exception as e:
+                st.error("Import failed.")
+                st.caption(str(e))
+
+    st.divider()
+
+    # 3) Business Units
+    st.subheader("3) Business Units")
+    st.write("Columns: **name**")
+
+    with popout("➕ Add Business Unit"):
+        with st.form("add_bu_form", clear_on_submit=True):
+            bu_name = st.text_input("Business Unit Name *")
+            submit_bu = st.form_submit_button("Save Business Unit", type="primary")
+        if submit_bu:
+            if not bu_name.strip():
+                st.error("Business Unit name is required.")
+            else:
+                try:
+                    with engine.begin() as conn:
+                        conn.exec_driver_sql(
+                            """
+                            INSERT INTO business_units(name, is_active)
+                            SELECT ?, 1
+                            WHERE NOT EXISTS (
+                              SELECT 1 FROM business_units WHERE lower(name) = lower(?)
+                            )
+                            """,
+                            (bu_name.strip(), bu_name.strip()),
+                        )
+                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
+                    if ch > 0:
+                        st.success("Business Unit added ✅")
+                    else:
+                        st.info("That Business Unit already exists — nothing added.")
+                except Exception as e:
+                    st.error("Could not add Business Unit.")
+                    st.caption(str(e))
+
+    fbu = st.file_uploader("Upload Business Units", type=["xlsx", "csv"], key="bus")
+    if fbu is not None:
+        df = pd.read_excel(fbu) if fbu.name.endswith(".xlsx") else pd.read_csv(fbu)
+        if "name" not in df.columns:
+            st.error("Missing required column: name")
+        else:
+            inserted = 0
+            skipped = 0
+            try:
+                with engine.begin() as conn:
+                    for _, r in df.iterrows():
+                        nm = str(r.get("name", "")).strip()
+                        if not nm:
+                            skipped += 1
+                            continue
+                        conn.exec_driver_sql(
+                            """
+                            INSERT INTO business_units(name, is_active)
+                            SELECT ?, 1
+                            WHERE NOT EXISTS (
+                              SELECT 1 FROM business_units WHERE lower(name) = lower(?)
+                            )
+                            """,
+                            (nm, nm),
+                        )
+                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
+                        if ch > 0:
+                            inserted += 1
+                        else:
+                            skipped += 1
+            except Exception as e:
+                st.error("Import failed.")
+                st.caption(str(e))
+            else:
+                st.success(f"Business Units import ✅ Inserted: {inserted} | Skipped: {skipped}")
+
+    st.divider()
+
+    # 4) Business Lines (NEW)
+    st.subheader("4) Business Lines")
+    st.write("Columns: **business_unit**, **name**, **category**  (optional: supplier, product_group)")
+
+    bu_df_for_bl = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+    bu_name_opts = [""] + bu_df_for_bl["name"].tolist()
+    bu_name_to_id = {r.name: int(r.business_unit_id) for r in bu_df_for_bl.itertuples(index=False)}
+
+    # --- Helpers to normalize column names and read files safely ---
+    import re, unicodedata
+
+    def _norm_col(s: str) -> str:
+        if s is None:
+            return ""
+        s = unicodedata.normalize("NFKC", str(s))
+        s = s.replace("\u00A0", " ")
+        s = s.strip().lower()
+        s = re.sub(r"\s+", " ", s)
+        s = s.replace(" ", "_")
+        return s
+
+    def _read_df_upload(file):
+        if file.name.endswith(".xlsx"):
+            df = pd.read_excel(file, dtype=str)
+        else:
+            df = pd.read_csv(file, dtype=str)
+        df.columns = [_norm_col(c) for c in df.columns]
+        return df
+
+    with popout("➕ Add Business Line"):
+        with st.form("add_bl_form", clear_on_submit=True):
+            bu_sel = st.selectbox("Business Unit *", bu_name_opts, index=0)
+            bl_name = st.text_input("Business Line Name *")
+            supplier = st.text_input("Supplier")
+            category = st.text_input("Category *")  # required
+            prod_group = st.text_input("Product Group")
+            submit_bl = st.form_submit_button("Save Business Line", type="primary")
+        if submit_bl:
+            if not (bu_sel and bl_name.strip() and category.strip()):
+                st.error("Business Unit, Business Line Name, and Category are required.")
+            else:
+                try:
+                    bu_id = bu_name_to_id.get(bu_sel)
+                    if not bu_id:
+                        st.error("Selected Business Unit not found.")
+                    else:
+                        with engine.begin() as conn:
+                            conn.exec_driver_sql(
+                                """
+                                INSERT INTO business_lines(business_unit_id, name, supplier, category, product_group, is_active)
+                                SELECT ?,?,?,?,?,1
+                                WHERE NOT EXISTS (
+                                  SELECT 1 FROM business_lines WHERE business_unit_id=? AND lower(name)=lower(?)
+                                )
+                                """,
+                                (bu_id, bl_name.strip(), (supplier.strip() or None), category.strip(),
+                                 (prod_group.strip() or None), bu_id, bl_name.strip()),
+                            )
+                            ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
+                        if ch > 0:
+                            st.success("Business Line added ✅")
+                        else:
+                            st.info("That Business Unit + Line already exists — nothing added.")
+                except Exception as e:
+                    st.error("Could not add Business Line.")
+                    st.caption(str(e))
+
+    fbl = st.file_uploader("Upload Business Lines", type=["xlsx", "csv"], key="blines")
+    if fbl is not None:
+        try:
+            df = _read_df_upload(fbl)
+            st.caption(f"Detected columns: {list(df.columns)}")
+            needed = {"business_unit", "name", "category"}
+            if not needed.issubset(set(df.columns)):
+                missing = sorted(list(needed - set(df.columns)))
+                st.error(f"Missing required columns: {', '.join(missing)}")
+            else:
+                inserted, skipped = 0, 0
+                with engine.begin() as conn:
+                    budf = pd.read_sql_query(sa.text("SELECT business_unit_id, name FROM business_units"), conn)
+                    bumap = {str(r.name).strip().lower(): int(r.business_unit_id) for r in budf.itertuples(index=False)}
+
+                    for _, r in df.iterrows():
+                        bu_name_raw = (str(r.get("business_unit")) if pd.notna(r.get("business_unit")) else "").strip()
+                        bl_name_raw = (str(r.get("name")) if pd.notna(r.get("name")) else "").strip()
+                        cat_raw = (str(r.get("category")) if pd.notna(r.get("category")) else "").strip()
+
+                        if not (bu_name_raw and bl_name_raw and cat_raw):
+                            skipped += 1
+                            continue
+
+                        bu_id_tmp = bumap.get(bu_name_raw.lower())
+                        if not bu_id_tmp:
+                            skipped += 1
+                            continue
+
+                        supplier = (str(r.get("supplier")).strip() if pd.notna(r.get("supplier")) else None)
+                        prod_group = (str(r.get("product_group")).strip() if pd.notna(r.get("product_group")) else None)
+
+                        conn.exec_driver_sql(
+                            """
+                            INSERT OR IGNORE INTO business_lines(business_unit_id, name, supplier, category, product_group, is_active)
+                            VALUES (?,?,?,?,?,1)
+                            """,
+                            (bu_id_tmp, bl_name_raw, supplier, cat_raw, prod_group),
+                        )
+                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
+                        if ch > 0:
+                            inserted += 1
+                        else:
+                            skipped += 1
+
+                st.success(f"Business Lines import ✅ Inserted: {inserted} | Skipped: {skipped}")
+        except Exception as e:
+            st.error("Import failed.")
+            st.caption(str(e))
+
+    st.divider()
+
+    # 5) Items (Products)
+    st.subheader("5) Items (Products)")
+    st.write("Columns: **product_id**, article_number, description, **business_unit**, **business_line**")
+
+    bl_df_lookup = query_df("""
+        SELECT bl.business_line_id, bl.name AS business_line, bu.name AS business_unit
+        FROM business_lines bl
+        JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+        WHERE bu.is_active=1 AND bl.is_active=1
+        ORDER BY bu.name, bl.name
+    """)
+    bu_bl_to_id = {(r.business_unit.strip().lower(), r.business_line.strip().lower()): int(r.business_line_id)
+                   for r in bl_df_lookup.itertuples(index=False)}
+
+    with popout("➕ Add Item"):
+        with st.form("add_item_form", clear_on_submit=True):
+            product_id = st.text_input("Product ID * (must be unique)")
+            article = st.text_input("Article Number")
+            desc = st.text_input("Description")
+            bu_opts = [""] + sorted(list({r.business_unit for r in bl_df_lookup.itertuples(index=False)}))
+            sel_bu = st.selectbox("Business Unit *", bu_opts, index=0)
+            bl_opts = [""]
+            if sel_bu:
+                bl_opts = [""] + [r.business_line for r in bl_df_lookup.itertuples(index=False) if r.business_unit == sel_bu]
+            sel_bl = st.selectbox("Business Line *", bl_opts, index=0)
+            submit_item = st.form_submit_button("Save Item", type="primary")
+
+        if submit_item:
+            if not (product_id.strip() and sel_bu and sel_bl):
+                st.error("Product ID, Business Unit, and Business Line are required.")
+            else:
+                try:
+                    bl_id = bu_bl_to_id.get((sel_bu.strip().lower(), sel_bl.strip().lower()))
+                    if not bl_id:
+                        st.error("Business Line not found under the selected Business Unit.")
+                    else:
+                        with engine.begin() as conn:
+                            exists = conn.exec_driver_sql("SELECT 1 FROM items WHERE product_id = ?", (product_id.strip(),)).fetchone()
+                            if exists:
+                                st.error("That Product ID already exists.")
+                            else:
+                                conn.exec_driver_sql(
+                                    """
+                                    INSERT INTO items(
+                                      product_id, article_number, description, business_line_id, is_active
+                                    ) VALUES (?,?,?,?,1)
+                                    """,
+                                    (
+                                        product_id.strip(),
+                                        (article.strip() or None),
+                                        (desc.strip() or None),
+                                        int(bl_id),
+                                    ),
+                                )
+                        st.success("Item added ✅")
+                except Exception as e:
+                    st.error("Could not add item.")
+                    st.caption(str(e))
+
+    f3 = st.file_uploader("Upload Items", type=["xlsx", "csv"], key="items")
+    if f3 is not None:
+        df = pd.read_excel(f3) if f3.name.endswith(".xlsx") else pd.read_csv(f3)
+        needed = {"product_id", "business_unit", "business_line"}
+        if not needed.issubset(df.columns):
+            st.error("Missing required columns: product_id, business_unit, business_line")
+        else:
+            inserted = 0
+            updated = 0
+            skipped = 0
+            try:
+                with engine.begin() as conn:
+                    existing = set(pd.read_sql_query(sa.text("SELECT product_id FROM items"), conn)["product_id"].astype(str).tolist())
+                    for _, r in df.iterrows():
+                        pid_raw = r.get("product_id")
+                        pid = str(pid_raw).strip() if pd.notna(pid_raw) else ""
+                        bu_name_raw = str(r.get("business_unit", "")).strip()
+                        bl_name_raw = str(r.get("business_line", "")).strip()
+                        if not (pid and bu_name_raw and bl_name_raw):
+                            skipped += 1
+                            continue
+                        bl_id = bu_bl_to_id.get((bu_name_raw.lower(), bl_name_raw.lower()))
+                        if not bl_id:
+                            skipped += 1
+                            continue
+                        article = str(r.get("article_number")).strip() if pd.notna(r.get("article_number")) else None
+                        desc = str(r.get("description")).strip() if pd.notna(r.get("description")) else None
+                        conn.exec_driver_sql(
+                            """
+                            INSERT OR REPLACE INTO items(
+                              product_id, article_number, description, business_line_id, is_active
+                            ) VALUES(?,?,?,?,1)
+                            """,
+                            (pid, article, desc, int(bl_id)),
+                        )
+                        if pid in existing:
+                            updated += 1
+                        else:
+                            inserted += 1
+                st.success(f"Items import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}")
+            except Exception as e:
+                st.error("Import failed.")
+                st.caption(str(e))
+
+    st.divider()
+
+    # 6) Objectives
+    st.subheader("6) Objectives")
+    st.write("Columns: **name**")
+
+    with popout("➕ Add Objective"):
+        with st.form("add_objective_form", clear_on_submit=True):
+            obj_name = st.text_input("Objective Name *")
+            submit_obj = st.form_submit_button("Save Objective", type="primary")
+        if submit_obj:
+            if not obj_name.strip():
+                st.error("Objective name is required.")
+            else:
+                try:
+                    with engine.begin() as conn:
+                        conn.exec_driver_sql("INSERT OR IGNORE INTO objectives(name) VALUES(?)", (obj_name.strip(),))
+                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
+                    if ch > 0:
+                        st.success("Objective added ✅")
+                    else:
+                        st.info("That objective already exists — nothing added.")
+                except Exception as e:
+                    st.error("Could not add objective.")
+                    st.caption(str(e))
+
+    fobj = st.file_uploader("Upload Objectives", type=["xlsx", "csv"], key="objs")
+    if fobj is not None:
+        df = pd.read_excel(fobj) if fobj.name.endswith(".xlsx") else pd.read_csv(fobj)
+        if "name" not in df.columns:
+            st.error("Missing required column: name")
+        else:
+            inserted = 0
+            skipped = 0
+            try:
+                with engine.begin() as conn:
+                    for _, r in df.iterrows():
+                        nm = str(r.get("name", "")).strip()
+                        if not nm:
+                            skipped += 1
+                            continue
+                        conn.exec_driver_sql("INSERT OR IGNORE INTO objectives(name) VALUES(?)", (nm,))
+                        ch = conn.exec_driver_sql("SELECT changes()").fetchone()[0]
+                        if ch > 0:
+                            inserted += 1
+                        else:
+                            skipped += 1
+                st.success(f"Objectives import ✅ Inserted: {inserted} | Skipped: {skipped}")
+            except Exception as e:
+                st.error("Import failed.")
+                st.caption(str(e))
+
+    # ============================
+    # Manage (Edit / Activate / Delete)
+    # ============================
+    st.divider()
+    st.subheader("📝 Manage (Edit / Activate / Delete)")
+
+    tabs = st.tabs(["Customers", "Target Audiences", "Business Units", "Business Lines", "Items", "Objectives"])
+
+    # ---- Customers ----
+    with tabs[0]:
+        cdf = query_df("SELECT customer_id, account_name, sector, region, city, is_active FROM customers ORDER BY account_name")
+        if cdf.empty:
+            st.info("No customers yet.")
+        else:
+            display = [_parts_join(r.account_name, r.region, r.city) for r in cdf.itertuples(index=False)]
+            choice = st.selectbox("Select customer", display, index=0, key="mg_cust_sel")
+            row = cdf.iloc[display.index(choice)]
+            cid = int(row["customer_id"])
+
+            colA, colB, colC = st.columns(3)
+            with colA:
+                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE customer_id=?", (cid,))
+                a_cnt = _refcount("SELECT COUNT(*) FROM target_audiences WHERE customer_id=?", (cid,))
+                st.caption(f"Refs → Visits: **{v_cnt}** · Audiences: **{a_cnt}**")
+
+            with colB:
+                new_active = 0 if row["is_active"] else 1
+                label = "Deactivate" if row["is_active"] else "Activate"
+                if st.button(label, key="mg_cust_toggle"):
+                    exec_sql("UPDATE customers SET is_active=? WHERE customer_id=?", (new_active, cid))
+                    st.success("Updated ✅")
+
+            with colC:
+                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                with edit_box:
+                    with st.form("mg_cust_edit"):
+                        acc = st.text_input("Account Name *", value=row["account_name"] or "")
+                        sector = st.text_input("Sector", value=row["sector"] or "")
+                        region = st.text_input("Region", value=row["region"] or "")
+                        city = st.text_input("City", value=row["city"] or "")
+                        save = st.form_submit_button("Save changes")
+                    if save:
+                        acc_clean = acc.strip()
+                        if not acc_clean:
+                            st.error("Account Name is required.")
+                        else:
+                            dup = query_df("SELECT 1 FROM customers WHERE lower(account_name)=lower(:n) AND customer_id<>:id",
+                                           {"n": acc_clean, "id": cid})
+                            if not dup.empty:
+                                st.error("Account Name already exists.")
+                            else:
+                                exec_sql("UPDATE customers SET account_name=?, sector=?, region=?, city=? WHERE customer_id=?",
+                                         (acc_clean, sector.strip() or None, region.strip() or None, city.strip() or None, cid))
+                                st.success("Saved ✅")
+
+            dz_keybase = "mg_cust_conf"
+            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+            with danger:
+                st.write("Delete permanently (only if not referenced).")
+                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                if st.button("Delete Customer", type="primary", disabled=not confirm, key="mg_cust_del"):
+                    st.session_state["danger_nonce"] += 1
+                    if v_cnt > 0 or a_cnt > 0:
+                        st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits and/or target audiences. Deactivate instead.")
+                        st.rerun()
+                    try:
+                        exec_sql("DELETE FROM customers WHERE customer_id=?", (cid,))
+                        st.session_state["flash_admin"] = ("success", "Customer deleted ✅")
+                    except Exception as e:
+                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
+                    st.rerun()
+
+    # ---- Target Audiences ----
+    with tabs[1]:
+        adf = query_df("""
+            SELECT ta.audience_id, ta.customer_id, c.account_name AS customer,
+                   ta.title, ta.name, ta.department, ta.position,
+                   ta.potentiality, ta.loyalty, ta.mobile, ta.landline, ta.external_number, ta.email,
+                   ta.is_active
+            FROM target_audiences ta
+            JOIN customers c ON c.customer_id = ta.customer_id
+            ORDER BY c.account_name, ta.name
+        """)
+        if adf.empty:
+            st.info("No target audiences yet.")
+        else:
+            def _fmt_ta(r):
+                title_name = f"{(str(r.title).strip() + ' ') if pd.notna(r.title) and str(r.title).strip() else ''}{str(r.name).strip() if pd.notna(r.name) else ''}".strip()
+                parts = [str(r.customer).strip() if pd.notna(r.customer) else "", title_name]
+                if pd.notna(r.department) and str(r.department).strip():
+                    parts.append(str(r.department).strip())
+                if pd.notna(r.position) and str(r.position).strip():
+                    parts.append(str(r.position).strip())
+                return " - ".join([p for p in parts if p])
+
+            display = [f"{_fmt_ta(r)}  ({'active' if r.is_active else 'inactive'})" for r in adf.itertuples(index=False)]
+            choice = st.selectbox("Select audience", display, index=0, key="mg_aud_sel")
+            row = adf.iloc[display.index(choice)]
+            aid = int(row["audience_id"])
+
+            colA, colB, colC = st.columns(3)
+            with colA:
+                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE audience_id=?", (aid,))
+                st.caption(f"Refs → Visits: **{v_cnt}**")
+
+            with colB:
+                new_active = 0 if row["is_active"] else 1
+                label = "Deactivate" if row["is_active"] else "Activate"
+                if st.button(label, key="mg_aud_toggle"):
+                    exec_sql("UPDATE target_audiences SET is_active=? WHERE audience_id=?", (new_active, aid))
+                    st.success("Updated ✅")
+
+            with colC:
+                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                with edit_box:
+                    cust_choices = query_df("SELECT customer_id, account_name FROM customers ORDER BY account_name")
+                    cust_labels = [f"{r.account_name}" for r in cust_choices.itertuples(index=False)]
+                    cust_idx = 0
+                    for i, r in enumerate(cust_choices.itertuples(index=False)):
+                        if int(r.customer_id) == int(row["customer_id"]):
+                            cust_idx = i
+                            break
+
+                    with st.form("mg_aud_edit"):
+                        cust_label_sel = st.selectbox("Customer *", cust_labels, index=cust_idx, key="mg_aud_cust_sel")
+                        new_cust_id = int(cust_choices.iloc[cust_labels.index(cust_label_sel)]["customer_id"])
+                        title = st.text_input("Title", value=row["title"] or "")
+                        name = st.text_input("Name *", value=row["name"] or "")
+                        dept = st.text_input("Department", value=row["department"] or "")
+                        pos = st.text_input("Position", value=row["position"] or "")
+                        pot = st.text_input("Potentiality", value=row["potentiality"] or "")
+                        loy = st.text_input("Loyalty", value=row["loyalty"] or "")
+                        mob = st.text_input("Mobile", value=row["mobile"] or "")
+                        land = st.text_input("Landline", value=row["landline"] or "")
+                        extn = st.text_input("External Number", value=row["external_number"] or "")
+                        email = st.text_input("Email", value=row["email"] or "")
+                        save = st.form_submit_button("Save changes")
+                    if save:
+                        nm = name.strip()
+                        if not nm:
+                            st.error("Name is required.")
+                        else:
+                            dup = query_df(
+                                """
+                                SELECT 1 FROM target_audiences
+                                WHERE customer_id=:cid AND lower(name)=lower(:nm) AND audience_id<>:aid
+                                """,
+                                {"cid": new_cust_id, "nm": nm, "aid": aid},
+                            )
+                            if not dup.empty:
+                                st.error("An audience with the same name already exists for that customer.")
+                            else:
+                                exec_sql(
+                                    """
+                                    UPDATE target_audiences
+                                    SET customer_id=?, title=?, name=?, department=?, position=?, potentiality=?, loyalty=?,
+                                        mobile=?, landline=?, external_number=?, email=?
+                                    WHERE audience_id=?
+                                    """,
+                                    (
+                                        new_cust_id, title.strip() or None, nm,
+                                        dept.strip() or None, pos.strip() or None,
+                                        pot.strip() or None, loy.strip() or None,
+                                        mob.strip() or None, land.strip() or None, extn.strip() or None, email.strip() or None,
+                                        aid,
+                                    ),
+                                )
+                                st.success("Saved ✅")
+
+            dz_keybase = "mg_aud_conf"
+            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+            with danger:
+                st.write("Delete permanently (only if not referenced).")
+                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                if st.button("Delete Audience", type="primary", disabled=not confirm, key="mg_aud_del"):
+                    st.session_state["danger_nonce"] += 1
+                    if v_cnt > 0:
+                        st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits. Deactivate instead.")
+                        st.rerun()
+                    try:
+                        exec_sql("DELETE FROM target_audiences WHERE audience_id=?", (aid,))
+                        st.session_state["flash_admin"] = ("success", "Audience deleted ✅")
+                    except Exception as e:
+                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
+                    st.rerun()
+
+    # ---- Business Units (Manage)
+    with tabs[2]:
+        bdf = query_df("SELECT business_unit_id, name, is_active FROM business_units ORDER BY name")
+        if bdf.empty:
+            st.info("No business units yet.")
+        else:
+            display = [f"{r.name}  ({'active' if r.is_active else 'inactive'})" for r in bdf.itertuples(index=False)]
+            choice = st.selectbox("Select business unit", display, index=0, key="mg_bu_sel")
+            row = bdf.iloc[display.index(choice)]
+            buid = int(row["business_unit_id"])
+
+            colA, colB, colC = st.columns(3)
+            with colA:
+                u_cnt = _refcount("SELECT COUNT(*) FROM users WHERE business_unit_id=?", (buid,))
+                bl_cnt = _refcount("SELECT COUNT(*) FROM business_lines WHERE business_unit_id=?", (buid,))
+                st.caption(f"Refs → Users: **{u_cnt}** · Business Lines: **{bl_cnt}**")
+
+            with colB:
+                new_active = 0 if row["is_active"] else 1
+                label = "Deactivate" if row["is_active"] else "Activate"
+                if st.button(label, key="mg_bu_toggle"):
+                    exec_sql("UPDATE business_units SET is_active=? WHERE business_unit_id=?", (new_active, buid))
+                    st.success("Updated ✅")
+
+            with colC:
+                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                with edit_box:
+                    with st.form("mg_bu_edit"):
+                        nm = st.text_input("Business Unit Name *", value=row["name"] or "")
+                        save = st.form_submit_button("Save changes")
+                    if save:
+                        nm_clean = nm.strip()
+                        if not nm_clean:
+                            st.error("Name is required.")
+                        else:
+                            dup = query_df(
+                                "SELECT 1 FROM business_units WHERE lower(name)=lower(:n) AND business_unit_id<>:id",
+                                {"n": nm_clean, "id": buid},
+                            )
+                            if not dup.empty:
+                                st.error("A business unit with that name already exists.")
+                            else:
+                                exec_sql("UPDATE business_units SET name=? WHERE business_unit_id=?", (nm_clean, buid))
+                                st.success("Saved ✅")
+
+            dz_keybase = "mg_bu_conf"
+            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+            with danger:
+                st.write("Delete permanently (only if not referenced by users/lines).")
+                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                if st.button("Delete Business Unit", type="primary", disabled=not confirm, key="mg_bu_del"):
+                    st.session_state["danger_nonce"] += 1
+                    if u_cnt > 0 or bl_cnt > 0:
+                        st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by users and/or business lines. Deactivate instead.")
+                        st.rerun()
+                    try:
+                        exec_sql("DELETE FROM business_units WHERE business_unit_id=?", (buid,))
+                        st.session_state["flash_admin"] = ("success", "Business Unit deleted ✅")
+                    except Exception as e:
+                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
+                    st.rerun()
+
+    # ---- Business Lines (Manage)
+    with tabs[3]:
+        bll = query_df("""
+            SELECT bl.business_line_id, bl.name, bl.supplier, bl.category, bl.product_group, bl.is_active,
+                   bl.business_unit_id, bu.name AS business_unit
+            FROM business_lines bl
+            JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+            ORDER BY bu.name, bl.name
+        """)
+        if bll.empty:
+            st.info("No business lines yet.")
+        else:
+            def _fmt_bl(r):
+                return " - ".join([p for p in [str(r.business_unit), str(r.name), str(r.category or ""), str(r.product_group or "")] if p and p != "None"])
+            display = [f"{_fmt_bl(r)}  ({'active' if r.is_active else 'inactive'})" for r in bll.itertuples(index=False)]
+            choice = st.selectbox("Select business line", display, index=0, key="mg_bl_sel")
+            row = bll.iloc[display.index(choice)]
+            blid = int(row["business_line_id"])
+
+            colA, colB, colC = st.columns(3)
+            with colA:
+                i_cnt = _refcount("SELECT COUNT(*) FROM items WHERE business_line_id=?", (blid,))
+                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE business_line_id=?", (blid,))
+                st.caption(f"Refs → Items: **{i_cnt}** · Visits: **{v_cnt}**")
+
+            with colB:
+                new_active = 0 if row["is_active"] else 1
+                label = "Deactivate" if row["is_active"] else "Activate"
+                if st.button(label, key="mg_bl_toggle"):
+                    exec_sql("UPDATE business_lines SET is_active=? WHERE business_line_id=?", (new_active, blid))
+                    st.success("Updated ✅")
+
+            with colC:
+                bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+                bu_labels = bu_df["name"].tolist()
+                bu_idx = 0
+                if pd.notna(row["business_unit_id"]):
+                    for i, r in enumerate(bu_df.itertuples(index=False)):
+                        if int(r.business_unit_id) == int(row["business_unit_id"]):
+                            bu_idx = i
+                            break
+
+                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                with edit_box:
+                    with st.form("mg_bl_edit"):
+                        bu_label = st.selectbox("Business Unit *", bu_labels, index=bu_idx if bu_labels else 0)
+                        nm = st.text_input("Business Line Name *", value=row["name"] or "")
+                        supplier = st.text_input("Supplier", value=row["supplier"] or "")
+                        category = st.text_input("Category *", value=row["category"] or "")
+                        prod_group = st.text_input("Product Group", value=row["product_group"] or "")
+                        save = st.form_submit_button("Save changes")
+                    if save:
+                        nm_clean = nm.strip()
+                        cat_clean = category.strip()
+                        if not nm_clean or not cat_clean:
+                            st.error("Business Line Name and Category are required.")
+                        else:
+                            new_bu_id = int(bu_df.loc[bu_df["name"] == bu_label, "business_unit_id"].iloc[0]) if not bu_df.empty else None
+                            dup = query_df(
+                                """
+                                SELECT 1 FROM business_lines
+                                WHERE business_unit_id=:bid AND lower(name)=lower(:nm) AND business_line_id<>:id
+                                """,
+                                {"bid": new_bu_id, "nm": nm_clean, "id": blid},
+                            )
+                            if not dup.empty:
+                                st.error("A business line with that name already exists in the selected Business Unit.")
+                            else:
+                                exec_sql(
+                                    """
+                                    UPDATE business_lines
+                                    SET business_unit_id=?, name=?, supplier=?, category=?, product_group=?
+                                    WHERE business_line_id=?
+                                    """,
+                                    (new_bu_id, nm_clean, (supplier.strip() or None), cat_clean,
+                                     (prod_group.strip() or None), blid),
+                                )
+                                st.success("Saved ✅")
+
+            dz_keybase = "mg_bl_conf"
+            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+            with danger:
+                st.write("Delete permanently (only if not referenced by items/visits).")
+                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                if st.button("Delete Business Line", type="primary", disabled=not confirm, key="mg_bl_del"):
+                    st.session_state["danger_nonce"] += 1
+                    if i_cnt > 0 or v_cnt > 0:
+                        st.session_state["flash_admin"] = ("error", "Cannot delete: referenced by items and/or visits. Deactivate instead.")
+                        st.rerun()
+                    try:
+                        exec_sql("DELETE FROM business_lines WHERE business_line_id=?", (blid,))
+                        st.session_state["flash_admin"] = ("success", "Business Line deleted ✅")
+                    except Exception as e:
+                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
+                    st.rerun()
+
+    # ---- Items ----
+    with tabs[4]:
+        idf = query_df("""
+            SELECT i.product_id,
+                   i.article_number,
+                   i.description,
+                   i.is_active,
+                   bl.business_line_id,
+                   bl.name AS business_line,
+                   bu.name AS business_unit
+            FROM items i
+            JOIN business_lines bl   ON bl.business_line_id = i.business_line_id
+            JOIN business_units bu   ON bu.business_unit_id = bl.business_unit_id
+            ORDER BY COALESCE(i.article_number, i.product_id)
+        """)
+        if idf.empty:
+            st.info("No items yet.")
+        else:
+            def _fmt_item(r):
+                art = (str(r.article_number).strip() if pd.notna(r.article_number) and str(r.article_number).strip() else "")
+                bl = (str(r.business_line).strip() if pd.notna(r.business_line) and str(r.business_line).strip() else "")
+                bu = (str(r.business_unit).strip() if pd.notna(r.business_unit) and str(r.business_unit).strip() else "")
+                desc = (str(r.description).strip() if pd.notna(r.description) and str(r.description).strip() else "")
+                return " - ".join([p for p in [art, bu, bl, desc] if p]) or str(r.product_id)
+
+            display = [f"{_fmt_item(r)}  ({'active' if r.is_active else 'inactive'})" for r in idf.itertuples(index=False)]
+            choice = st.selectbox("Select item", display, index=0, key="mg_item_sel")
+            row = idf.iloc[display.index(choice)]
+            pid = str(row["product_id"])
+
+            colA, colB, colC = st.columns(3)
+            with colA:
+                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE product_id=?", (pid,))
+                st.caption(f"Refs → Visits: **{v_cnt}**")
+
+            with colB:
+                new_active = 0 if row["is_active"] else 1
+                label = "Deactivate" if row["is_active"] else "Activate"
+                if st.button(label, key="mg_item_toggle"):
+                    exec_sql("UPDATE items SET is_active=? WHERE product_id=?", (new_active, pid))
+                    st.success("Updated ✅")
+
+            # ✅ EDIT FORM NOW INSIDE A POPOVER/EXPANDER (was always visible before)
+            with colC:
+                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                with edit_box:
+                    bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+                    bu_labels = bu_df["name"].tolist()
+                    bu_idx = 0
+                    for i, r in enumerate(bu_df.itertuples(index=False)):
+                        if str(r.name) == str(row["business_unit"]):
+                            bu_idx = i
+                            break
+
+                    with st.form("mg_item_edit"):
+                        bu_label = st.selectbox("Business Unit *", bu_labels, index=bu_idx if bu_labels else 0)
+                        sel_bu_id = int(bu_df.loc[bu_df["name"] == bu_label, "business_unit_id"].iloc[0]) if not bu_df.empty else None
+                        bl_df = query_df(
+                            "SELECT business_line_id, name FROM business_lines WHERE is_active=1 AND business_unit_id=:bid ORDER BY name",
+                            {"bid": sel_bu_id}
+                        ) if sel_bu_id else pd.DataFrame()
+                        bl_labels = bl_df["name"].tolist() if not bl_df.empty else []
+                        bl_idx = 0
+                        for i, r in enumerate(bl_df.itertuples(index=False)):
+                            if int(r.business_line_id) == int(row["business_line_id"]):
+                                bl_idx = i
+                                break
+
+                        art = st.text_input("Article Number (unique)", value=row["article_number"] or "")
+                        desc = st.text_input("Description", value=row["description"] or "")
+                        bl_label = st.selectbox("Business Line *", bl_labels, index=bl_idx if bl_labels else 0)
+                        save = st.form_submit_button("Save changes")
+
+                    if save:
+                        if bl_labels:
+                            new_bl_id = int(bl_df.loc[bl_df["name"] == bl_label, "business_line_id"].iloc[0])
+                        else:
+                            new_bl_id = None
+
+                        if not new_bl_id:
+                            st.error("Business Line is required.")
+                        else:
+                            if art.strip():
+                                dup = query_df("SELECT 1 FROM items WHERE lower(article_number)=lower(:a) AND product_id<>:pid",
+                                               {"a": art.strip(), "pid": pid})
+                                if not dup.empty:
+                                    st.error("Article Number already exists.")
+                                else:
+                                    exec_sql(
+                                        """
+                                        UPDATE items
+                                        SET article_number=?, description=?, business_line_id=?
+                                        WHERE product_id=?
+                                        """,
+                                        (art.strip(), (desc.strip() or None), new_bl_id, pid),
+                                    )
+                                    st.success("Saved ✅")
+                            else:
+                                exec_sql(
+                                    """
+                                    UPDATE items
+                                    SET article_number=NULL, description=?, business_line_id=?
+                                    WHERE product_id=?
+                                    """,
+                                    ((desc.strip() or None), new_bl_id, pid),
+                                )
+                                st.success("Saved ✅")
+
+            dz_keybase = "mg_item_conf"
+            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+            with danger:
+                st.write("Delete permanently (only if not referenced).")
+                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                if st.button("Delete Item", type="primary", disabled=not confirm, key="mg_item_del"):
+                    st.session_state["danger_nonce"] += 1
+                    if v_cnt > 0:
+                        st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits. Deactivate instead.")
+                        st.rerun()
+                    try:
+                        exec_sql("DELETE FROM items WHERE product_id=?", (pid,))
+                        st.session_state["flash_admin"] = ("success", "Item deleted ✅")
+                    except Exception as e:
+                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
+                    st.rerun()
+
+    # ---- Objectives (with Activate / Deactivate)
+    with tabs[5]:
+        odf = query_df("SELECT objective_id, name, COALESCE(is_active,1) AS is_active FROM objectives ORDER BY name")
+        if odf.empty:
+            st.info("No objectives yet.")
+        else:
+            display = [f"{r.name}  ({'active' if int(r.is_active or 0)==1 else 'inactive'})" for r in odf.itertuples(index=False)]
+            choice = st.selectbox("Select objective", display, index=0, key="mg_obj_sel")
+            row = odf.iloc[display.index(choice)]
+            oid = int(row["objective_id"])
+            active_now = int(row["is_active"] or 0)
+
+            colA, colB, colC = st.columns([1,1,2])
+            with colA:
+                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE objective_id=?", (oid,))
+                st.caption(f"Refs → Visits: **{v_cnt}**")
+
+            # 🔁 Activate/Deactivate button
+            with colB:
+                new_active = 0 if active_now else 1
+                label = "Deactivate" if active_now else "Activate"
+                if st.button(label, key=f"mg_obj_toggle_{oid}"):
+                    try:
+                        exec_sql("UPDATE objectives SET is_active=? WHERE objective_id=?", (new_active, oid))
+                        st.success("Updated ✅")
+                    except Exception as e:
+                        st.error("Could not update objective status.")
+                        st.caption(str(e))
+
+            # ✏️ Edit name (hidden until opened)
+            with colC:
+                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                with edit_box:
+                    with st.form("mg_obj_edit"):
+                        nm = st.text_input("Objective name *", value=row["name"] or "")
+                        save = st.form_submit_button("Save changes")
+                    if save:
+                        nm_clean = nm.strip()
+                        if not nm_clean:
+                            st.error("Name is required.")
+                        else:
+                            dup = query_df("SELECT 1 FROM objectives WHERE lower(name)=lower(:n) AND objective_id<>:id",
+                                           {"n": nm_clean, "id": oid})
+                            if not dup.empty:
+                                st.error("Objective already exists.")
+                            else:
+                                exec_sql("UPDATE objectives SET name=? WHERE objective_id=?", (nm_clean, oid))
+                                st.success("Saved ✅")
+
+            # Danger Zone
+            dz_keybase = "mg_obj_conf"
+            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+            with danger:
+                st.write("Delete permanently (only if not referenced).")
+                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                if st.button("Delete Objective", type="primary", disabled=not confirm, key="mg_obj_del"):
+                    st.session_state["danger_nonce"] += 1
+                    if v_cnt > 0:
+                        st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits.")
+                        st.rerun()
+                    try:
+                        exec_sql("DELETE FROM objectives WHERE objective_id=?", (oid,))
+                        st.session_state["flash_admin"] = ("success", "Objective deleted ✅")
+                    except Exception as e:
+                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
+                    st.rerun()
+
+# =============================
+# Page — Admin: Data Browser
+# =============================
+def page_admin_data():
+    st.title("📊 Admin — Data Browser")
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+        "Visits", "Users", "Customers", "Target Audiences",
+        "Business Units", "Business Lines",  # ← added Business Lines right after Business Units
+        "Items", "Objectives", "Home Visits", "Shelf Movement",
+    ])
+
+    # ---------- Visits ----------
+    with tab1:
+        df = query_df(
+            """
+            SELECT
+                v.visit_id,
+                v.submitted_at_local,
+                u.name AS rep,
+                c.account_name AS customer,
+                ta.name AS audience,
+                -- product fields (may be NULL if Shelf Movement)
+                i.article_number,
+                i.description,
+                -- BU/BL resolved from the visit's business_line_id
+                bu.name AS business_unit,
+                bl.name AS business_line,
+                o.name AS objective,
+                v.evaluation,
+                v.latitude,
+                v.longitude,
+                v.accuracy_m,
+                v.notes,
+                hv.patient_name,
+                hv.patient_phone,
+                hv.serial_no,
+                COALESCE((
+                  SELECT COUNT(*)
+                  FROM shelf_movement_lines l
+                  JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
+                  WHERE h.visit_id = v.visit_id
+                ),0) AS shelf_lines_count,
+                COALESCE((
+                  SELECT SUM(l.qty_checked)
+                  FROM shelf_movement_lines l
+                  JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
+                  WHERE h.visit_id = v.visit_id
+                ),0) AS shelf_total_qty
+            FROM visits v
+            JOIN users u            ON v.user_id = u.user_id
+            JOIN customers c        ON v.customer_id = c.customer_id
+            LEFT JOIN target_audiences ta ON v.audience_id = ta.audience_id
+            LEFT JOIN items i       ON v.product_id = i.product_id
+            JOIN business_lines bl  ON bl.business_line_id = v.business_line_id
+            JOIN business_units bu  ON bu.business_unit_id = bl.business_unit_id
+            JOIN objectives o       ON v.objective_id = o.objective_id
+            LEFT JOIN home_visits hv ON hv.visit_id = v.visit_id
+            ORDER BY v.visit_id DESC
+            """
+        )
+        st.markdown(f"**Total: {len(df):,}**")
+        st.dataframe(df, width="stretch", hide_index=True)
+        if not df.empty:
+            st.download_button(
+                "Download CSV",
+                df.to_csv(index=False).encode("utf-8-sig"),
+                "visits.csv",
+                "text/csv",
+                key="dl_visits",
+            )
+
+    # ---------- Users ----------
+    with tab2:
+        df = query_df("SELECT user_id, email, name, region, role, is_active FROM users ORDER BY user_id DESC")
+        st.markdown(f"**Total: {len(df):,}**")
+        st.dataframe(df, width="stretch", hide_index=True)
+        if not df.empty:
+            st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                               "users.csv", "text/csv", key="dl_users")
+
+    # ---------- Customers ----------
+    with tab3:
+        df = query_df("SELECT * FROM customers ORDER BY account_name")
+        st.markdown(f"**Total: {len(df):,}**")
+        st.dataframe(df, width="stretch", hide_index=True)
+        if not df.empty:
+            st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                               "customers.csv", "text/csv", key="dl_customers")
+
+    # ---------- Target Audiences ----------
+    with tab4:
+        df = query_df("SELECT * FROM target_audiences ORDER BY audience_id DESC")
+        st.markdown(f"**Total: {len(df):,}**")
+        st.dataframe(df, width="stretch", hide_index=True)
+        if not df.empty:
+            st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                               "target_audiences.csv", "text/csv", key="dl_audiences")
+
+    # ---------- Business Units ----------
+    with tab5:
+        df = query_df("SELECT business_unit_id, name, is_active FROM business_units ORDER BY name")
+        st.markdown(f"**Total: {len(df):,}**")
+        st.dataframe(df, width="stretch", hide_index=True)
+        if not df.empty:
+            st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                               "business_units.csv", "text/csv", key="dl_business_units")
+
+    # ---------- Business Lines (NEW) ----------
+    with tab6:
+        df = query_df(
+            """
+            SELECT
+                bl.business_line_id,
+                bu.name AS business_unit,
+                bl.name AS business_line,
+                bl.category,
+                bl.supplier,
+                bl.product_group,
+                bl.is_active
+            FROM business_lines bl
+            JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+            ORDER BY bu.name, bl.name
+            """
+        )
+        st.markdown(f"**Total: {len(df):,}**")
+        st.dataframe(df, width="stretch", hide_index=True)
+        if not df.empty:
+            st.download_button(
+                "Download CSV",
+                df.to_csv(index=False).encode("utf-8-sig"),
+                "business_lines.csv",
+                "text/csv",
+                key="dl_business_lines"
+            )
+
+    # ---------- Items ----------
+    with tab7:
+        df = query_df(
+            """
+            SELECT
+                i.product_id,
+                i.article_number,
+                i.description,
+                i.is_active,
+                bl.name AS business_line,
+                bu.name AS business_unit
+            FROM items i
+            JOIN business_lines bl ON bl.business_line_id = i.business_line_id
+            JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+            ORDER BY COALESCE(i.article_number, i.product_id)
+           """
+        )
+        st.markdown(f"**Total: {len(df):,}**")
+        st.dataframe(df, width="stretch", hide_index=True)
+        if not df.empty:
+            st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                               "items.csv", "text/csv", key="dl_items")
+
+    # ---------- Objectives ----------
+    with tab8:
+        df = query_df("SELECT * FROM objectives ORDER BY objective_id")
+        st.markdown(f"**Total: {len(df):,}**")
+        st.dataframe(df, width="stretch", hide_index=True)
+        if not df.empty:
+            st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                               "objectives.csv", "text/csv", key="dl_objectives")
+
+    # ---------- Home Visits ----------
+    with tab9:
+        df = query_df(
+            """
+            SELECT hv.home_visit_id,
+                   v.visit_id,
+                   v.submitted_at_local,
+                   u.name AS rep,
+                   c.account_name AS customer,
+                   hv.patient_name,
+                   hv.patient_phone,
+                   hv.serial_no,
+                   v.latitude, v.longitude, v.accuracy_m,
+                   o.name AS objective
+            FROM home_visits hv
+            JOIN visits v           ON v.visit_id = hv.visit_id
+            JOIN users  u           ON u.user_id  = v.user_id
+            JOIN customers c        ON c.customer_id = v.customer_id
+            JOIN objectives o       ON o.objective_id = v.objective_id
+            ORDER BY hv.home_visit_id DESC
+            """
+        )
+        st.markdown(f"**Total Home Visits: {len(df):,}**")
+        st.dataframe(df, width="stretch", hide_index=True)
+        if not df.empty:
+            st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                               "home_visits.csv", "text/csv", key="dl_home_visits")
+
+    # ---------- Shelf Movement ----------
+    with tab10:
+        sub1, sub2 = st.tabs(["Headers (per visit)", "Lines (per product)"])
+
+        # Headers with aggregates
+        with sub1:
+            df = query_df(
+                """
+                SELECT
+                    h.movement_id,
+                    v.visit_id,
+                    v.submitted_at_local,
+                    u.name AS rep,
+                    c.account_name AS customer,
+                    bu.name AS business_unit,
+                    bl.name AS business_line,
+                    o.name AS objective,
+                    COALESCE((
+                      SELECT COUNT(*)
+                      FROM shelf_movement_lines l WHERE l.movement_id = h.movement_id
+                    ),0) AS lines_count,
+                    COALESCE((
+                      SELECT SUM(l.qty_checked)
+                      FROM shelf_movement_lines l WHERE l.movement_id = h.movement_id
+                    ),0) AS total_qty
+                FROM shelf_movement_headers h
+                JOIN visits v       ON v.visit_id = h.visit_id
+                JOIN users u        ON u.user_id  = v.user_id
+                JOIN customers c    ON c.customer_id = v.customer_id
+                JOIN business_lines bl ON bl.business_line_id = v.business_line_id
+                JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+                JOIN objectives o   ON o.objective_id = v.objective_id
+                ORDER BY h.movement_id DESC
+                """
+            )
+            st.markdown(f"**Total Movements: {len(df):,}**")
+            st.dataframe(df, width="stretch", hide_index=True)
+            if not df.empty:
+                st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                                   "shelf_movement_headers.csv", "text/csv", key="dl_sm_headers")
+
+        # Lines detail
+        with sub2:
+            df = query_df(
+                """
+                SELECT
+                    h.movement_id,
+                    v.visit_id,
+                    v.submitted_at_local,
+                    u.name AS rep,
+                    c.account_name AS customer,
+                    i.product_id,
+                    COALESCE(i.article_number, i.product_id) AS article_number,
+                    i.description,
+                    bu.name AS business_unit,
+                    bl.name AS business_line,
+                    l.qty_checked
+                FROM shelf_movement_lines l
+                JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
+                JOIN visits v                 ON v.visit_id = h.visit_id
+                JOIN users u                  ON u.user_id  = v.user_id
+                JOIN customers c              ON c.customer_id = v.customer_id
+                LEFT JOIN items i             ON i.product_id = l.product_id
+                LEFT JOIN business_lines bl   ON bl.business_line_id = i.business_line_id
+                LEFT JOIN business_units bu   ON bu.business_unit_id = bl.business_unit_id
+                ORDER BY h.movement_id DESC, article_number
+                """
+            )
+            st.markdown(f"**Total Lines: {len(df):,}**")
+            st.dataframe(df, width="stretch", hide_index=True)
+            if not df.empty:
+                st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                                   "shelf_movement_lines.csv", "text/csv", key="dl_sm_lines")
+
+    # ---------- Export all ----------
+    st.divider()
+    if st.button("Export all tables (zip)", type="secondary", key="export_zip"):
+        tables = {
+            "visits": query_df(
+                """
+                SELECT
+                    v.*,
+                    c.account_name AS customer_name,
+                    -- product fields (optional)
+                    i.article_number,
+                    i.description,
+                    bl.name AS business_line,
+                    bu.name AS business_unit,
+                    o.name AS objective_name,
+                    hv.patient_name,
+                    hv.patient_phone,
+                    hv.serial_no,
+                    COALESCE((
+                      SELECT COUNT(*)
+                      FROM shelf_movement_lines l
+                      JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
+                      WHERE h.visit_id = v.visit_id
+                    ),0) AS shelf_lines_count,
+                    COALESCE((
+                      SELECT SUM(l.qty_checked)
+                      FROM shelf_movement_lines l
+                      JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
+                      WHERE h.visit_id = v.visit_id
+                    ),0) AS shelf_total_qty
+                FROM visits v
+                JOIN customers c      ON v.customer_id = c.customer_id
+                LEFT JOIN items i     ON v.product_id = i.product_id
+                JOIN business_lines bl ON bl.business_line_id = v.business_line_id
+                JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+                JOIN objectives o     ON v.objective_id = o.objective_id
+                LEFT JOIN home_visits hv ON hv.visit_id = v.visit_id
+                ORDER BY v.visit_id DESC
+                """
+            ),
+            "users": query_df("SELECT * FROM users ORDER BY user_id DESC"),
+            "customers": query_df("SELECT * FROM customers ORDER BY account_name"),
+            "target_audiences": query_df("SELECT * FROM target_audiences ORDER BY audience_id DESC"),
+            "business_units": query_df("SELECT * FROM business_units ORDER BY business_unit_id"),
+            "business_lines": query_df(   # ← include business lines in export
+                """
+                SELECT
+                    bl.*,
+                    bu.name AS business_unit
+                FROM business_lines bl
+                JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+                ORDER BY bu.name, bl.name
+                """
+            ),
+            "items": query_df(
+                """
+                SELECT
+                    i.product_id,
+                    i.article_number,
+                    i.description,
+                    i.is_active,
+                    bl.name AS business_line,
+                    bu.name AS business_unit
+                FROM items i
+                JOIN business_lines bl ON bl.business_line_id = i.business_line_id
+                JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+                ORDER BY COALESCE(i.article_number, i.product_id)
+                """
+            ),
+            "objectives": query_df("SELECT * FROM objectives ORDER BY objective_id"),
+            "home_visits": query_df(
+                """
+                SELECT hv.*, v.submitted_at_local, u.name AS rep, c.account_name AS customer
+                FROM home_visits hv
+                JOIN visits v ON v.visit_id = hv.visit_id
+                JOIN users u  ON u.user_id  = v.user_id
+                JOIN customers c ON c.customer_id = v.customer_id
+                ORDER BY hv.home_visit_id DESC
+                """
+            ),
+            "shelf_movement_headers": query_df("SELECT * FROM shelf_movement_headers ORDER BY movement_id DESC"),
+            "shelf_movement_lines": query_df("SELECT * FROM shelf_movement_lines ORDER BY line_id DESC"),
+        }
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            ts = datetime.now().strftime("%Y-%m-%d_%H:%M")
+            for name, df in tables.items():
+                zf.writestr(f"{name}_{ts}.csv", df.to_csv(index=False).encode("utf-8-sig"))
+        st.download_button(
+            "Download export.zip",
+            data=buf.getvalue(),
+            file_name="export_pack.zip",
+            mime="application/zip",
+            key="dl_zip_all",
+        )
+
+# =============================
+# Helpers (place near your imports)
+# =============================
+
+
+# =============================
+# Helper — generate a strong temporary password
+# =============================
+import secrets, string
+
+def _gen_tmp_pw(length: int = 12) -> str:
+    # at least one of each class
+    alphabet = string.ascii_lowercase + string.ascii_uppercase + string.digits + "!@#$%^&*"
+    while True:
+        pw = ''.join(secrets.choice(alphabet) for _ in range(length))
+        if (any(c.islower() for c in pw) and any(c.isupper() for c in pw)
+            and any(c.isdigit() for c in pw) and any(c in "!@#$%^&*" for c in pw)):
+            return pw
+
+# =============================
+# Page — Admin: Users (add/manage + reset password)
+# =============================
+def page_admin_users():
+    st.title("👤 Admin — Users")
+    st.subheader("Add a user")
+
+    # --- Temp Password Generator (outside the form) ---
+    st.session_state.setdefault("create_user_tmp_pw", "")
+
+    gcol1, gcol2 = st.columns([1, 4])
+    if gcol1.button("🔄 Generate Temporary Password"):
+        st.session_state["create_user_tmp_pw"] = _gen_tmp_pw()
+    if st.session_state["create_user_tmp_pw"]:
+        st.caption(f"Generated: `{st.session_state['create_user_tmp_pw']}` (you can edit before saving)")
+
+    # --- User Creation Form ---
+    with st.form("add_user", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            email = st.text_input("Email *")
+            name = st.text_input("Name *")
+            region = st.selectbox("Region", ["", "C/R", "W/R", "E/R"], index=0)
+
+        with col2:
+            bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+            bu_names = bu_df["name"].tolist()
+            bu_sel = st.selectbox("Business Unit (optional)", [""] + bu_names, index=0)
+            role = st.selectbox("Role", ["rep", "admin"], index=0)
+            pw = st.text_input("Temporary Password *", type="password",
+                               value=st.session_state["create_user_tmp_pw"])
+
+        add_btn = st.form_submit_button("Create User", type="primary")
+
+    if add_btn:
+        if not (email and name and pw):
+            st.error("Email, Name, and Password are required.")
+        else:
+            try:
+                bu_id = None
+                if bu_sel:
+                    bu_id = int(bu_df.loc[bu_df["name"] == bu_sel, "business_unit_id"].iloc[0])
+                exec_sql(
+                    "INSERT INTO users(email, password_hash, name, region, business_unit_id, role) VALUES (?,?,?,?,?,?)",
+                    (
+                        email.strip().lower(),
+                        pbkdf2_sha256.hash(pw),
+                        name.strip(),
+                        (region.strip() if region else None),
+                        bu_id,
+                        role,
+                    ),
+                )
+                st.success("✅ User added successfully")
+                st.session_state["create_user_tmp_pw"] = ""
+            except Exception as e:
+                st.error("Could not add user (email might already exist).")
+                st.caption(str(e))
+
+    # ---- All users (with BU) ----
+    st.subheader("All users")
+    df = query_df("""
+        SELECT u.user_id,
+               u.email,
+               u.name,
+               u.region,
+               u.role,
+               u.is_active,
+               bu.name AS business_unit
+        FROM users u
+        LEFT JOIN business_units bu ON bu.business_unit_id = u.business_unit_id
+        ORDER BY u.user_id DESC
+    """)
+    st.markdown(f"**Total: {len(df):,}**")
+    st.dataframe(df, width="stretch", hide_index=True)
+    if not df.empty:
+        st.download_button(
+            "Download CSV",
+            df.to_csv(index=False).encode("utf-8-sig"),
+            "users.csv",
+            "text/csv",
+            key="dl_users2"
+        )
+
+    st.divider()
+    st.subheader("📝 Manage Users (Activate / Deactivate / Edit / Reset Password)")
+
+    mdf = query_df("""
+        SELECT u.user_id,
+               u.email,
+               u.name,
+               u.region,
+               u.role,
+               u.is_active,
+               u.business_unit_id,
+               bu.name AS business_unit
+        FROM users u
+        LEFT JOIN business_units bu ON bu.business_unit_id = u.business_unit_id
+        ORDER BY u.name, u.user_id
+    """)
+
+    if mdf.empty:
+        st.info("No users to manage yet.")
+        return
+
+    def _fmt_user(r):
+        status = "active" if int(r.is_active or 0) == 1 else "inactive"
+        bu = f" · BU: {r.business_unit}" if pd.notna(r.business_unit) and str(r.business_unit).strip() else ""
+        return f"{r.name or r.email} <{r.email}> ({r.role}) — {status}{bu}"
+
+    labels = [_fmt_user(r) for r in mdf.itertuples(index=False)]
+    sel = st.selectbox("Select user", [""] + labels, index=0, key="mg_user_sel")
+
+    if not sel:
+        st.info("Select a user above to manage.")
+        return
+
+    row = mdf.iloc[labels.index(sel)]
+    uid = int(row["user_id"])
+    is_active = int(row["is_active"] or 0)
+    status_badge = "🟢 Active" if is_active else "🔴 Inactive"
+    st.caption(f"Selected: **{row['name'] or row['email']}** · {status_badge}")
+
+    colA, colB, colC = st.columns([1, 1, 2])
+
+    # Activate / Deactivate
+    with colA:
+        label = "Deactivate" if is_active else "Activate"
+        if st.button(label, key=f"mg_user_toggle_{uid}"):
+            current = st.session_state.get("user")
+            current_uid = int(current["user_id"]) if current and "user_id" in current else None
+            if label == "Deactivate" and current_uid == uid:
+                st.error("You can't deactivate your own account while logged in.")
+            else:
+                try:
+                    exec_sql("UPDATE users SET is_active=? WHERE user_id=?", (0 if is_active else 1, uid))
+                    st.success("Updated ✅")
+                except Exception as e:
+                    st.error("Could not update user status.")
+                    st.caption(str(e))
+
+    # Show current Role / BU
+    with colB:
+        bu_display = row["business_unit"] or "—"
+        st.markdown(f"**Role:** {row['role']}  \n**Business Unit:** {bu_display}")
+
+    # Quick Edit (Region / BU / Role)
+    with colC:
+        edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+        with edit_box:
+            bu_df2 = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active=1 ORDER BY name")
+            bu_labels = [""] + bu_df2["name"].tolist()
+
+            current_bu_name = row["business_unit"] or ""
+            bu_idx = bu_labels.index(current_bu_name) if current_bu_name in bu_labels else 0
+
+            with st.form(f"mg_user_edit_{uid}"):
+                new_region = st.selectbox(
+                    "Region",
+                    ["", "C/R", "W/R", "E/R"],
+                    index=(["", "C/R", "W/R", "E/R"].index(row["region"]) if row["region"] in ["", "C/R", "W/R", "E/R"] else 0)
+                )
+                new_bu_label = st.selectbox("Business Unit (optional)", bu_labels, index=bu_idx)
+                new_role = st.selectbox("Role", ["rep", "admin"], index=(0 if row["role"] == "rep" else 1))
+                save = st.form_submit_button("Save changes")
+
+            if save:
+                try:
+                    new_bu_id = None
+                    if new_bu_label:
+                        new_bu_id = int(bu_df2.loc[bu_df2["name"] == new_bu_label, "business_unit_id"].iloc[0])
+                    exec_sql(
+                        "UPDATE users SET region=?, business_unit_id=?, role=? WHERE user_id=?",
+                        (
+                            (new_region.strip() if new_region else None),
+                            new_bu_id,
+                            new_role,
+                            uid,
+                        ),
+                    )
+                    st.success("Saved ✅")
+                except Exception as e:
+                    st.error("Could not save changes.")
+                    st.caption(str(e))
+
+    st.divider()
+
+    # --- Admin: Reset password for selected user (no forced change) ---
+    st.subheader("🔐 Reset Password for Selected User")
+
+    # Flash message area (rendered directly under the button group)
+    flash_key = f"flash_reset_{uid}"
+    if st.session_state.get(flash_key):
+        st.success(st.session_state[flash_key])
+
+    # Keys for the input + buffer
+    tmp_input_key = f"tmp_pw_input_{uid}"
+    buf_key = f"tmp_pw_buf_{uid}"
+    st.session_state.setdefault(buf_key, "")
+
+    # IMPORTANT: Handle 'Generate' BEFORE rendering the text_input,
+    # so we can prefill the widget state in the same run.
+    gen_col, _ = st.columns([1, 6])
+    gen_clicked = gen_col.button("Generate", key=f"gen_tmp_pw_{uid}")
+    if gen_clicked:
+        gen_pw = _gen_tmp_pw()
+        st.session_state[buf_key] = gen_pw
+        # Pre-set the widget's state BEFORE it is created below
+        st.session_state[tmp_input_key] = gen_pw
+
+    # Now render the input (no 'value=' — it will use session_state if present)
+    tmp_pw = st.text_input(
+        "Temporary Password *",
+        key=tmp_input_key,
+        type="password",
+        help="Share this with the user. They can change it later from User Settings."
+    )
+
+    # Action buttons row
+    b1, _ = st.columns([2, 5])
+    if b1.button("Set Temporary Password", type="primary", key=f"set_tmp_pw_{uid}"):
+        final_tmp_pw = (st.session_state.get(tmp_input_key) or "").strip()
+        if not final_tmp_pw:
+            st.error("Please enter or generate a temporary password.")
+        else:
+            try:
+                new_hash = pbkdf2_sha256.hash(final_tmp_pw)
+                exec_sql("UPDATE users SET password_hash=? WHERE user_id=?", (new_hash, uid))
+                # Persist a flash that appears right under this section
+                st.session_state[flash_key] = f"Temporary password set ✅ (user not forced to change). Temp password: `{final_tmp_pw}`"
+                st.success(st.session_state[flash_key])
+            except Exception as e:
+                st.error("Could not reset the password.")
+                st.caption(str(e))
+
+# =============================
+# Footer
+# =============================
+def show_footer():
+    st.markdown("""
+    <hr style="margin-top:2rem;margin-bottom:1rem;opacity:0.25;">
+    <div style="text-align:center; color:#6c757d;">
+        <img src="https://www.physioassist.com/wp-content/uploads/2023/06/Almadar-Logo-01.png"
+             style="height:45px;opacity:.85;margin-bottom:6px;"><br>
+        <span style="font-size:0.9rem;">
+            © 2025 <strong>Al Madar Medical Co.</strong><br>
+            Core System © <strong>Muaz Sulaiman</strong><br>
+            <span style="font-size:0.8rem;">Version 11 • All rights reserved.</span>
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+# =============================
+# MAIN
+# =============================
+if not st.session_state.user:
+    login_block()
+else:
+    logout_button()
+    page = sidebar_nav()
+    if page == "Submit Visit":
+        page_submit_visit()
+    elif page == "My Submissions":
+        page_my_submissions()
+    elif page == "User Settings":
+        page_user_settings()
+    elif page == "Admin: Import Lookups":
+        page_admin_import()
+    elif page == "Admin: Data Browser":
+        page_admin_data()
+    elif page == "Admin: Users":
+        page_admin_users()
+
+    show_footer()
