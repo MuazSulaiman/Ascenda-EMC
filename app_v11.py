@@ -1768,14 +1768,16 @@ def page_admin_import():
 
             if bu_df.empty:
                 st.warning("No active Business Units found. Add one first.")
-                selected_bu_id = None
-                bu_labels = []
-                bu_ids = []
-                bu_index = 0
+                bu_labels, bu_ids = [], []
             else:
-                bu_labels = bu_df["name"].tolist()
-                bu_ids    = bu_df["business_unit_id"].astype(int).tolist()
-                bu_index  = bu_ids.index(st.session_state["ai_bu_id"]) if st.session_state["ai_bu_id"] in bu_ids else 0
+                bu_labels = [""] + bu_df["name"].tolist()  # <-- add blank at start
+                bu_ids    = [None] + bu_df["business_unit_id"].astype(int).tolist()
+
+            bu_index = (
+                bu_ids.index(st.session_state["ai_bu_id"])
+                if st.session_state["ai_bu_id"] in bu_ids
+                else 0
+            )
 
             bu_idx = st.selectbox(
                 "Business Unit *",
@@ -1798,23 +1800,20 @@ def page_admin_import():
                     AND business_unit_id = :bid
                     ORDER BY name
                     """,
-                    {"bid": int(selected_bu_id)}
+                    {"bid": int(selected_bu_id)},
                 )
             else:
                 bl_df = pd.DataFrame(columns=["business_line_id", "name"])
 
-            if selected_bu_id and bl_df.empty:
-                st.warning("This Business Unit has no active Business Lines.")
-                selected_bl_id = None
-                bl_labels = []
-                bl_ids    = []
-                bl_index  = 0
-            else:
-                bl_labels = bl_df["name"].tolist()
-                bl_ids    = bl_df["business_line_id"].astype(int).tolist()
-                bl_index  = bl_ids.index(st.session_state["ai_bl_id"]) if st.session_state["ai_bl_id"] in bl_ids else 0
+            bl_labels = [""] + bl_df["name"].tolist()  # <-- add blank at start
+            bl_ids    = [None] + bl_df["business_line_id"].astype(int).tolist() if not bl_df.empty else [None]
 
-            # Key includes BU so widget resets when BU changes
+            bl_index = (
+                bl_ids.index(st.session_state["ai_bl_id"])
+                if st.session_state["ai_bl_id"] in bl_ids
+                else 0
+            )
+
             bl_widget_key = f"ai_bl_idx__bu_{selected_bu_id or 'none'}"
             bl_idx = st.selectbox(
                 "Business Line *",
@@ -1822,7 +1821,7 @@ def page_admin_import():
                 index=bl_index if bl_labels else 0,
                 format_func=lambda i: bl_labels[i] if bl_labels else "",
                 key=bl_widget_key,
-                help="Choose a Business Unit first to load its lines."
+                help="Choose a Business Unit first to load its lines.",
             )
             selected_bl_id = bl_ids[bl_idx] if bl_labels else None
             st.session_state["ai_bl_id"] = selected_bl_id
@@ -1862,7 +1861,6 @@ def page_admin_import():
                             )
                         if (res.rowcount or 0) > 0:
                             st.success("Item added ✅")
-                            # Clear input fields; keep BU; reset BL to prevent accidental reuse
                             st.session_state["ai_article"] = ""
                             st.session_state["ai_desc"] = ""
                             st.session_state["ai_pid"] = ""
@@ -1873,6 +1871,7 @@ def page_admin_import():
                     except Exception as e:
                         st.error("Could not add item.")
                         st.caption(str(e))
+
                     
     # ---------------------
     # Bulk upload
