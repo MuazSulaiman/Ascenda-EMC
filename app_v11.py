@@ -1940,7 +1940,7 @@ def page_admin_import():
                 except Exception as e:
                     st.error("Could not add item.")
                     st.caption(str(e))
-        
+
     # ---------------------
     # Bulk upload (unchanged)
     # ---------------------
@@ -2095,7 +2095,10 @@ def page_admin_import():
         if cdf.empty:
             st.info("No customers yet.")
         else:
-            display = [_parts_join(r.account_name, r.region, r.city) for r in cdf.itertuples(index=False)]
+            display = [
+                _parts_join(r.account_name, r.region, r.city) + f" ({'Active' if bool(r.is_active) else 'Inactive'})"
+                for r in cdf.itertuples(index=False)
+            ]
             choice = st.selectbox("Select customer", display, index=0, key="mg_cust_sel")
             row = cdf.iloc[display.index(choice)]
             cid = int(row["customer_id"])
