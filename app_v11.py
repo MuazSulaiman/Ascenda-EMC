@@ -2952,16 +2952,19 @@ def page_admin_data():
                 st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
                                    "shelf_movement_lines.csv", "text/csv", key="dl_sm_lines")
 
-    # ---------- Export all ----------
-    st.divider()
-    if st.button("Export all tables (zip)", type="secondary", key="export_zip"):
+# ---------- Export all ----------
+st.divider()
+if st.button("Export all tables (zip)", type="secondary", key="export_zip"):
+    try:
+        # Safer timestamp for filenames (no ":" which breaks on Windows)
+        ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+
+        # Build dataframes
         tables = {
-            "visits": query_df(
-                """
+            "visits": query_df("""
                 SELECT
                     v.*,
                     c.account_name AS customer_name,
-                    -- product fields (optional)
                     i.article_number,
                     i.description,
                     bl.name AS business_line,
@@ -2983,31 +2986,25 @@ def page_admin_data():
                       WHERE h.visit_id = v.visit_id
                     ),0) AS shelf_total_qty
                 FROM visits v
-                JOIN customers c      ON v.customer_id = c.customer_id
-                LEFT JOIN items i     ON v.product_id = i.product_id
-                JOIN business_lines bl ON bl.business_line_id = v.business_line_id
-                JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
-                JOIN objectives o     ON v.objective_id = o.objective_id
+                JOIN customers c        ON v.customer_id = c.customer_id
+                LEFT JOIN items i        ON v.product_id = i.product_id
+                JOIN business_lines bl   ON bl.business_line_id = v.business_line_id
+                JOIN business_units bu   ON bu.business_unit_id = bl.business_unit_id
+                JOIN objectives o        ON v.objective_id = o.objective_id
                 LEFT JOIN home_visits hv ON hv.visit_id = v.visit_id
                 ORDER BY v.visit_id DESC
-                """
-            ),
+            """),
             "users": query_df("SELECT * FROM users ORDER BY user_id DESC"),
             "customers": query_df("SELECT * FROM customers ORDER BY account_name"),
             "target_audiences": query_df("SELECT * FROM target_audiences ORDER BY audience_id DESC"),
             "business_units": query_df("SELECT * FROM business_units ORDER BY business_unit_id"),
-            "business_lines": query_df(   # ← include business lines in export
-                """
-                SELECT
-                    bl.*,
-                    bu.name AS business_unit
+            "business_lines": query_df("""
+                SELECT bl.*, bu.name AS business_unit
                 FROM business_lines bl
                 JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
                 ORDER BY bu.name, bl.name
-                """
-            ),
-            "items": query_df(
-                """
+            """),
+            "items": query_df("""
                 SELECT
                     i.product_id,
                     i.article_number,
@@ -3019,34 +3016,230 @@ def page_admin_data():
                 JOIN business_lines bl ON bl.business_line_id = i.business_line_id
                 JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
                 ORDER BY COALESCE(i.article_number, i.product_id)
-                """
-            ),
+            """),
             "objectives": query_df("SELECT * FROM objectives ORDER BY objective_id"),
-            "home_visits": query_df(
-                """
+            "home_visits": query_df("""
                 SELECT hv.*, v.submitted_at_local, u.name AS rep, c.account_name AS customer
                 FROM home_visits hv
                 JOIN visits v ON v.visit_id = hv.visit_id
                 JOIN users u  ON u.user_id  = v.user_id
                 JOIN customers c ON c.customer_id = v.customer_id
                 ORDER BY hv.home_visit_id DESC
-                """
-            ),
+            """),
             "shelf_movement_headers": query_df("SELECT * FROM shelf_movement_headers ORDER BY movement_id DESC"),
             "shelf_movement_lines": query_df("SELECT * FROM shelf_movement_lines ORDER BY line_id DESC"),
         }
+
+        # Write a zip in-memory
         buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            ts = datetime.now().strftime("%Y-%m-%d_%H:%M")
+        with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
             for name, df in tables.items():
-                zf.writestr(f"{name}_{ts}.csv", df.to_csv(index=False).encode("utf-8-sig"))
+                # Make sure we don't emit "nan" strings in Excel
+                csv_bytes = df.to_csv(index=False, na_rep="").encode("utf-8-sig")
+                zf.writestr(f"{name}_{ts}.csv", csv_bytes)
+
+        data = buf.getvalue()
+        size_mb = len(data) / (1024 * 1024)
+        st.success(f"Export ready (~{size_mb:.2f} MB).")
         st.download_button(
             "Download export.zip",
-            data=buf.getvalue(),
-            file_name="export_pack.zip",
+            data=data,
+            file_name=f"export_pack_{ts}.zip",
             mime="application/zip",
             key="dl_zip_all",
         )
+    except Exception as e:
+        st.error("Export failed ❌")
+        st.caption(str(e))
+
+    # ---------- Full database backup options ----------
+    st.divider()
+    col_sql, col_zip = st.columns(2)
+
+    # Helper to get DATABASE_URL (Render provides it as DATABASE_URL or POSTGRES_URL / POSTGRES_CONNECTION_STRING)
+    def _db_url():
+        for k in ("DATABASE_URL", "POSTGRES_URL", "POSTGRES_CONNECTION_STRING"):
+            v = os.environ.get(k)
+            if v:
+                return v
+        return None
+
+    with col_sql:
+        if st.button("Download full DB (.sql via pg_dump)", key="export_pg_dump"):
+            try:
+                db_url = _db_url()
+                if not db_url:
+                    raise RuntimeError("DATABASE_URL is not set in environment.")
+
+                # Try to run pg_dump. We ask for plain SQL, no owner/privs so it imports cleanly.
+                # NOTE: If your password is in the URL, pg_dump will use it directly.
+                # If your URL has 'postgres://', pg_dump accepts it, but some builds prefer 'postgresql://'.
+                cmd = ["pg_dump", "--no-owner", "--no-privileges", "--format=plain", db_url]
+
+                # Capture to memory (could be large; fine for moderate DB sizes)
+                import subprocess
+                proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+                if proc.returncode != 0 or not proc.stdout:
+                    err = proc.stderr.decode("utf-8", errors="ignore")
+                    raise RuntimeError(f"pg_dump failed.\n{err.strip() or 'No error text.'}")
+
+                ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+                st.success("Full SQL dump ready.")
+                st.download_button(
+                    label="Download database.sql",
+                    data=proc.stdout,  # bytes
+                    file_name=f"database_backup_{ts}.sql",
+                    mime="application/sql",
+                    key="dl_pg_dump_sql",
+                )
+            except FileNotFoundError:
+                st.error("`pg_dump` is not available in this environment.")
+                st.info("Use the **portable backup** option on the right, or add `pg_dump` to your image.")
+            except Exception as e:
+                st.error("Full SQL dump failed ❌")
+                st.caption(str(e))
+
+    with col_zip:
+        if st.button("Download portable backup (schema+CSVs .zip)", key="export_portable_zip"):
+            try:
+                ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+
+                # 1) Prepare all dataframes (reuse same queries you already use for CSV export)
+                tables = {
+                    "visits": query_df("""
+                        SELECT
+                            v.*,
+                            c.account_name AS customer_name,
+                            i.article_number,
+                            i.description,
+                            bl.name AS business_line,
+                            bu.name AS business_unit,
+                            o.name AS objective_name,
+                            hv.patient_name,
+                            hv.patient_phone,
+                            hv.serial_no,
+                            COALESCE((
+                            SELECT COUNT(*)
+                            FROM shelf_movement_lines l
+                            JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
+                            WHERE h.visit_id = v.visit_id
+                            ),0) AS shelf_lines_count,
+                            COALESCE((
+                            SELECT SUM(l.qty_checked)
+                            FROM shelf_movement_lines l
+                            JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
+                            WHERE h.visit_id = v.visit_id
+                            ),0) AS shelf_total_qty
+                        FROM visits v
+                        JOIN customers c        ON v.customer_id = c.customer_id
+                        LEFT JOIN items i        ON v.product_id = i.product_id
+                        JOIN business_lines bl   ON bl.business_line_id = v.business_line_id
+                        JOIN business_units bu   ON bu.business_unit_id = bl.business_unit_id
+                        JOIN objectives o        ON v.objective_id = o.objective_id
+                        LEFT JOIN home_visits hv ON hv.visit_id = v.visit_id
+                        ORDER BY v.visit_id DESC
+                    """),
+                    "users": query_df("SELECT * FROM users ORDER BY user_id DESC"),
+                    "customers": query_df("SELECT * FROM customers ORDER BY account_name"),
+                    "target_audiences": query_df("SELECT * FROM target_audiences ORDER BY audience_id DESC"),
+                    "business_units": query_df("SELECT * FROM business_units ORDER BY business_unit_id"),
+                    "business_lines": query_df("""
+                        SELECT bl.*, bu.name AS business_unit
+                        FROM business_lines bl
+                        JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+                        ORDER BY bu.name, bl.name
+                    """),
+                    "items": query_df("""
+                        SELECT
+                            i.product_id,
+                            i.article_number,
+                            i.description,
+                            i.is_active,
+                            bl.name AS business_line,
+                            bu.name AS business_unit
+                        FROM items i
+                        JOIN business_lines bl ON bl.business_line_id = i.business_line_id
+                        JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+                        ORDER BY COALESCE(i.article_number, i.product_id)
+                    """),
+                    "objectives": query_df("SELECT * FROM objectives ORDER BY objective_id"),
+                    "home_visits": query_df("""
+                        SELECT hv.*, v.submitted_at_local, u.name AS rep, c.account_name AS customer
+                        FROM home_visits hv
+                        JOIN visits v ON v.visit_id = hv.visit_id
+                        JOIN users u  ON u.user_id  = v.user_id
+                        JOIN customers c ON c.customer_id = v.customer_id
+                        ORDER BY hv.home_visit_id DESC
+                    """),
+                    "shelf_movement_headers": query_df("SELECT * FROM shelf_movement_headers ORDER BY movement_id DESC"),
+                    "shelf_movement_lines": query_df("SELECT * FROM shelf_movement_lines ORDER BY line_id DESC"),
+                }
+
+                # 2) Build the ZIP: schema.sql + CSVs + README
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    # Include your schema SQL for easy rebuild
+                    try:
+                        # SCHEMA_SQL should be imported/defined in your app (the one you shared)
+                        from app_v11 import SCHEMA_SQL  # adjust import if needed
+                        schema_sql = SCHEMA_SQL.strip().encode("utf-8")
+                    except Exception:
+                        # Fallback stub if not importable (still useful together with CSVs)
+                        schema_sql = b"-- schema.sql not auto-included; add your schema here.\n"
+
+                    zf.writestr("schema.sql", schema_sql)
+
+                    # Add CSVs
+                    for name, df in tables.items():
+                        csv_bytes = df.to_csv(index=False, na_rep="").encode("utf-8-sig")
+                        zf.writestr(f"data/{name}_{ts}.csv", csv_bytes)
+
+                    # Add README with restore instructions
+                    readme = f"""# Portable Backup
+
+    This archive contains:
+    - `schema.sql` — your Postgres schema (run once to create empty tables).
+    - `data/*.csv` — table data exports.
+
+    ## Quick restore (psql):
+
+    1) Create an empty database.
+    2) Load the schema:
+
+    psql "$DATABASE_URL" -f schema.sql
+
+    3) Load CSVs (example):
+
+    psql "$DATABASE_URL" -c "\\copy users FROM 'data/users_{ts}.csv' WITH (FORMAT csv, HEADER true)"
+    psql "$DATABASE_URL" -c "\\copy customers FROM 'data/customers_{ts}.csv' WITH (FORMAT csv, HEADER true)"
+    psql "$DATABASE_URL" -c "\\copy objectives FROM 'data/objectives_{ts}.csv' WITH (FORMAT csv, HEADER true)"
+    psql "$DATABASE_URL" -c "\\copy business_units FROM 'data/business_units_{ts}.csv' WITH (FORMAT csv, HEADER true)"
+    psql "$DATABASE_URL" -c "\\copy business_lines FROM 'data/business_lines_{ts}.csv' WITH (FORMAT csv, HEADER true)"
+    psql "$DATABASE_URL" -c "\\copy items FROM 'data/items_{ts}.csv' WITH (FORMAT csv, HEADER true)"
+    psql "$DATABASE_URL" -c "\\copy target_audiences FROM 'data/target_audiences_{ts}.csv' WITH (FORMAT csv, HEADER true)"
+    psql "$DATABASE_URL" -c "\\copy visits FROM 'data/visits_{ts}.csv' WITH (FORMAT csv, HEADER true)"
+    psql "$DATABASE_URL" -c "\\copy home_visits FROM 'data/home_visits_{ts}.csv' WITH (FORMAT csv, HEADER true)"
+    psql "$DATABASE_URL" -c "\\copy shelf_movement_headers FROM 'data/shelf_movement_headers_{ts}.csv' WITH (FORMAT csv, HEADER true)"
+    psql "$DATABASE_URL" -c "\\copy shelf_movement_lines FROM 'data/shelf_movement_lines_{ts}.csv' WITH (FORMAT csv, HEADER true)"
+
+    > Tip: If you have foreign key errors, follow dependency order (units → lines → items → customers → target_audiences → visits → home_visits → shelf_*).
+    """
+                    zf.writestr("README_restore.md", readme.encode("utf-8"))
+
+                data = buf.getvalue()
+                size_mb = len(data) / (1024 * 1024)
+                st.success(f"Portable backup ready (~{size_mb:.2f} MB).")
+                st.download_button(
+                    "Download portable_backup.zip",
+                    data=data,
+                    file_name=f"portable_backup_{ts}.zip",
+                    mime="application/zip",
+                    key="dl_portable_zip",
+                )
+            except Exception as e:
+                st.error("Portable backup failed ❌")
+                st.caption(str(e))
 
 # =============================
 # Helpers (place near your imports)
