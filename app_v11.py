@@ -1742,176 +1742,105 @@ def page_admin_import():
     st.subheader("5) Items (Products)")
     st.write("Columns: **product_id**, article_number, description, **business_unit**, **business_line**")
 
-    # Ensure session keys exist
-    st.session_state.setdefault("add_item_bu_id", None)
-    st.session_state.setdefault("add_item_bl_id", None)
-
-    # Helper: reset BL when BU changes
-    def _on_bu_change():
-        st.session_state["add_item_bl_id"] = None
-
-    # --- Load active Business Units (be tolerant of NULLs) ---
-    bu_df = query_df("""
-        SELECT business_unit_id, name
-        FROM business_units
-        WHERE COALESCE(is_active, TRUE) IS TRUE
-        ORDER BY name
-    """)
-
-    # Render BU select (outside the form so it updates immediately)
-    if bu_df.empty:
-        st.warning("No active Business Units found. Add one first.")
-        selected_bu_id = None
-    else:
-        bu_labels = bu_df["name"].tolist()
-        bu_ids    = bu_df["business_unit_id"].astype(int).tolist()
-        # Determine index from session_state if possible
-        if st.session_state["add_item_bu_id"] in bu_ids:
-            bu_index = bu_ids.index(st.session_state["add_item_bu_id"])
-        else:
-            bu_index = 0  # default to first BU
-
-        selected_bu = st.selectbox(
-            "Business Unit *",
-            options=list(range(len(bu_labels))),
-            index=bu_index if bu_labels else 0,
-            format_func=lambda i: bu_labels[i] if bu_labels else "",
-            key="add_item_bu_idx",
-            on_change=_on_bu_change,
-        )
-        selected_bu_id = bu_ids[selected_bu] if bu_labels else None
-        st.session_state["add_item_bu_id"] = selected_bu_id
-
-    # --- Load BLs for the selected BU (live query) ---
-    if selected_bu_id:
-        bl_df = query_df(
-            """
-            SELECT business_line_id, name
-            FROM business_lines
-            WHERE COALESCE(is_active, TRUE) IS TRUE
-              AND business_unit_id = :bid
-            ORDER BY name
-            """,
-            {"bid": int(selected_bu_id)}
-        )
-    else:
-        bl_df = pd.DataFrame(columns=["business_line_id", "name"])
-
-    # Render BL select (also outside the form)
-    if selected_bu_id and bl_df.empty:
-        st.warning("This Business Unit has no active Business Lines.")
-        selected_bl_id = None
-    else:
-        bl_labels = bl_df["name"].tolist()
-        bl_ids    = bl_df["business_line_id"].astype(int).tolist()
-
-        if st.session_state["add_item_bl_id"] in bl_ids:
-            bl_index = bl_ids.index(st.session_state["add_item_bl_id"])
-        else:
-            bl_index = 0 if bl_labels else 0
-
-        selected_bl = st.selectbox(
-            "Business Line *",
-            options=list(range(len(bl_labels))),
-            index=bl_index if bl_labels else 0,
-            format_func=lambda i: bl_labels[i] if bl_labels else "",
-            key="add_item_bl_idx",
-            help="Choose a Business Unit first to load its lines."
-        )
-        selected_bl_id = bl_ids[selected_bl] if bl_labels else None
-        st.session_state["add_item_bl_id"] = selected_bl_id
-
-    # small helpers/state
+    # Keep state for in-form BU/BL
     st.session_state.setdefault("ai_bu_id", None)
     st.session_state.setdefault("ai_bl_id", None)
 
-    def _on_bu_change():
-        st.session_state["ai_bl_id"] = None  # force re-pick BL when BU changes
-
     with popout("➕ Add Item"):
-        # --------- Business Unit (inside popover) ----------
-        bu_df = query_df("""
-            SELECT business_unit_id, name
-            FROM business_units
-            WHERE COALESCE(is_active, TRUE) IS TRUE
-            ORDER BY name
-        """)
-
-        if bu_df.empty:
-            st.warning("No active Business Units found. Add one first.")
-            selected_bu_id = None
-        else:
-            bu_labels = bu_df["name"].tolist()
-            bu_ids    = bu_df["business_unit_id"].astype(int).tolist()
-
-            # map to index for selectbox
-            if st.session_state["ai_bu_id"] in bu_ids:
-                bu_index = bu_ids.index(st.session_state["ai_bu_id"])
-            else:
-                bu_index = 0
-
-            bu_idx = st.selectbox(
-                "Business Unit *",
-                options=list(range(len(bu_labels))),
-                index=bu_index if bu_labels else 0,
-                format_func=lambda i: bu_labels[i] if bu_labels else "",
-                key="ai_bu_idx",
-                on_change=_on_bu_change,  # reruns & clears BL
-            )
-            selected_bu_id = bu_ids[bu_idx] if bu_labels else None
-            st.session_state["ai_bu_id"] = selected_bu_id
-
-        # --------- Business Line filtered by BU (inside popover) ----------
-        if selected_bu_id:
-            bl_df = query_df(
-                """
-                SELECT business_line_id, name
-                FROM business_lines
-                WHERE COALESCE(is_active, TRUE) IS TRUE
-                  AND business_unit_id = :bid
-                ORDER BY name
-                    """,
-                {"bid": int(selected_bu_id)}
-            )
-        else:
-            bl_df = pd.DataFrame(columns=["business_line_id", "name"])
-
-        if selected_bu_id and bl_df.empty:
-            st.warning("This Business Unit has no active Business Lines.")
-            selected_bl_id = None
-        else:
-            bl_labels = bl_df["name"].tolist()
-            bl_ids    = bl_df["business_line_id"].astype(int).tolist()
-
-            # key depends on BU so Streamlit fully re-renders the BL widget when BU changes
-            bl_widget_key = f"ai_bl_idx__bu_{selected_bu_id or 'none'}"
-
-            if st.session_state["ai_bl_id"] in bl_ids:
-                bl_index = bl_ids.index(st.session_state["ai_bl_id"])
-            else:
-                bl_index = 0 if bl_labels else 0
-
-            bl_idx = st.selectbox(
-                "Business Line *",
-                options=list(range(len(bl_labels))),
-                index=bl_index if bl_labels else 0,
-                format_func=lambda i: bl_labels[i] if bl_labels else "",
-                key=bl_widget_key,
-                help="Choose a Business Unit first to load its lines."
-            )
-            selected_bl_id = bl_ids[bl_idx] if bl_labels else None
-            st.session_state["ai_bl_id"] = selected_bl_id
-
-        # --------- The actual submit form (also inside popover) ----------
+        # --------- The submit form (everything inside the bordered box) ----------
         with st.form("add_item_form_items", clear_on_submit=True):
+            # --------- Business Unit (inside form) ----------
+            bu_df = query_df("""
+                SELECT business_unit_id, name
+                FROM business_units
+                WHERE COALESCE(is_active, TRUE) IS TRUE
+                ORDER BY name
+            """)
+
+            if bu_df.empty:
+                st.warning("No active Business Units found. Add one first.")
+                selected_bu_id = None
+                bu_labels = []
+                bu_ids = []
+                bu_idx = 0
+            else:
+                bu_labels = bu_df["name"].tolist()
+                bu_ids    = bu_df["business_unit_id"].astype(int).tolist()
+
+                # map to index for selectbox
+                if st.session_state["ai_bu_id"] in bu_ids:
+                    bu_index = bu_ids.index(st.session_state["ai_bu_id"])
+                else:
+                    bu_index = 0
+
+                # Use a stable key so the widget is tracked; BL widget key will depend on BU
+                bu_idx = st.selectbox(
+                    "Business Unit *",
+                    options=list(range(len(bu_labels))),
+                    index=bu_index if bu_labels else 0,
+                    format_func=lambda i: bu_labels[i] if bu_labels else "",
+                    key="ai_bu_idx",
+                )
+                selected_bu_id = bu_ids[bu_idx] if bu_labels else None
+                st.session_state["ai_bu_id"] = selected_bu_id
+
+            # --------- Business Line filtered by BU (inside form) ----------
+            if selected_bu_id:
+                bl_df = query_df(
+                    """
+                    SELECT business_line_id, name
+                    FROM business_lines
+                    WHERE COALESCE(is_active, TRUE) IS TRUE
+                    AND business_unit_id = :bid
+                    ORDER BY name
+                    """,
+                    {"bid": int(selected_bu_id)}
+                )
+            else:
+                bl_df = pd.DataFrame(columns=["business_line_id", "name"])
+
+            if selected_bu_id and bl_df.empty:
+                st.warning("This Business Unit has no active Business Lines.")
+                selected_bl_id = None
+                bl_labels = []
+                bl_ids    = []
+                bl_idx    = 0
+            else:
+                bl_labels = bl_df["name"].tolist()
+                bl_ids    = bl_df["business_line_id"].astype(int).tolist()
+
+                # Key depends on BU so Streamlit fully re-renders the BL widget when BU changes
+                bl_widget_key = f"ai_bl_idx__bu_{selected_bu_id or 'none'}"
+
+                if st.session_state["ai_bl_id"] in bl_ids:
+                    bl_index = bl_ids.index(st.session_state["ai_bl_id"])
+                else:
+                    bl_index = 0 if bl_labels else 0
+
+                bl_idx = st.selectbox(
+                    "Business Line *",
+                    options=list(range(len(bl_labels))),
+                    index=bl_index if bl_labels else 0,
+                    format_func=lambda i: bl_labels[i] if bl_labels else "",
+                    key=bl_widget_key,
+                    help="Choose a Business Unit first to load its lines."
+                )
+                selected_bl_id = bl_ids[bl_idx] if bl_labels else None
+                st.session_state["ai_bl_id"] = selected_bl_id
+
+            # --------- Item fields (inside the same bordered form) ----------
             product_id = st.text_input("Product ID * (must be unique)")
-            article    = st.text_input("Article Number")
+            article    = st.text_input("Article Number *")
             desc       = st.text_input("Description")
+
             submitted  = st.form_submit_button("Save Item", type="primary")
 
+        # --------- Handle submit ----------
         if submitted:
             if not product_id.strip():
-                    st.error("Product ID is required.")
+                st.error("Product ID is required.")
+            elif not article.strip():
+                st.error("Article Number is required.")
             elif not selected_bu_id or not selected_bl_id:
                 st.error("Business Unit and Business Line are required.")
             else:
@@ -1920,13 +1849,13 @@ def page_admin_import():
                         res = conn.execute(
                             text("""
                                 INSERT INTO items(
-                                  product_id, article_number, description, business_line_id, is_active
+                                product_id, article_number, description, business_line_id, is_active
                                 ) VALUES (:pid, :article, :desc, :blid, TRUE)
                                 ON CONFLICT (product_id) DO NOTHING
                             """),
                             {
                                 "pid": product_id.strip(),
-                                "article": (article.strip() or None),
+                                "article": article.strip(),
                                 "desc": (desc.strip() or None),
                                 "blid": int(selected_bl_id),
                             },
@@ -1942,8 +1871,21 @@ def page_admin_import():
                     st.caption(str(e))
 
     # ---------------------
-    # Bulk upload (unchanged)
+    # Bulk upload
     # ---------------------
+    # Build a resolver map: BU name -> list[(BL name, BL id)]
+    _bl_map_df = query_df("""
+        SELECT bu.name AS bu_name, bl.name AS bl_name, bl.business_line_id AS bl_id
+        FROM business_lines bl
+        JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+        WHERE COALESCE(bu.is_active, TRUE) IS TRUE
+        AND COALESCE(bl.is_active, TRUE) IS TRUE
+        ORDER BY bu.name, bl.name
+    """)
+    bu_to_bls = {}
+    for r in _bl_map_df.itertuples(index=False):
+        bu_to_bls.setdefault(str(r.bu_name).strip(), []).append((str(r.bl_name).strip(), int(r.bl_id)))
+
     f3 = st.file_uploader("Upload Items", type=["xlsx", "csv"], key="items")
     if f3 is not None:
         df = _read_df_upload(f3)
@@ -1960,7 +1902,6 @@ def page_admin_import():
                 with engine.begin() as conn:
                     existing = set(pd.read_sql_query(text("SELECT product_id FROM items"), conn)["product_id"].astype(str).tolist())
 
-                    # Fast resolver using the map we already built
                     for i, r in enumerate(df.itertuples(index=False), start=1):
                         pid_raw = getattr(r, "product_id", None)
                         pid = (str(pid_raw).strip() if pd.notna(pid_raw) else "")
@@ -1972,7 +1913,7 @@ def page_admin_import():
                                 _update_progress(pb, ln, i, total, inserted, updated, skipped, label_prefix="Items")
                             continue
 
-                        # Resolve BL id from the in-memory mapping; fall back if BU not present
+                        # Resolve BL id from the in-memory mapping
                         bl_id = None
                         if bu_name_raw in bu_to_bls:
                             for name, _id in bu_to_bls[bu_name_raw]:
@@ -1994,10 +1935,10 @@ def page_admin_import():
                                 INSERT INTO items(product_id, article_number, description, business_line_id, is_active)
                                 VALUES (:pid, :article, :desc, :blid, TRUE)
                                 ON CONFLICT (product_id) DO UPDATE
-                                  SET article_number   = EXCLUDED.article_number,
-                                      description      = EXCLUDED.description,
-                                      business_line_id = EXCLUDED.business_line_id,
-                                      is_active        = TRUE
+                                SET article_number   = EXCLUDED.article_number,
+                                    description      = EXCLUDED.description,
+                                    business_line_id = EXCLUDED.business_line_id,
+                                    is_active        = TRUE
                             """),
                             {"pid": pid, "article": article_v, "desc": desc_v, "blid": int(bl_id)},
                         )
@@ -2096,7 +2037,7 @@ def page_admin_import():
             st.info("No customers yet.")
         else:
             display = [
-                _parts_join(r.account_name, r.region, r.city) + f" ({'Active' if bool(r.is_active) else 'Inactive'})"
+                _parts_join(r.account_name, r.region, r.city) + f" ({'active' if bool(r.is_active) else 'inactive'})"
                 for r in cdf.itertuples(index=False)
             ]
             choice = st.selectbox("Select customer", display, index=0, key="mg_cust_sel")
