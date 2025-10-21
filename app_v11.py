@@ -1747,9 +1747,18 @@ def page_admin_import():
     st.session_state.setdefault("ai_bl_id", None)
 
     with popout("➕ Add Item"):
-        # --------- The submit form (everything inside the bordered box) ----------
-        with st.form("add_item_form_items", clear_on_submit=True):
-            # --------- Business Unit (inside form) ----------
+        # One bordered box that contains everything (BU, BL, and fields)
+        with st.container(border=True):
+            # ---------- State ----------
+            st.session_state.setdefault("ai_bu_id", None)
+            st.session_state.setdefault("ai_bl_id", None)
+
+            def _on_bu_change():
+                # Clear BL when BU changes, then rerun to refresh BL list
+                st.session_state["ai_bl_id"] = None
+                st.rerun()
+
+            # ---------- Business Unit (dependent parent) ----------
             bu_df = query_df("""
                 SELECT business_unit_id, name
                 FROM business_units
@@ -1762,29 +1771,24 @@ def page_admin_import():
                 selected_bu_id = None
                 bu_labels = []
                 bu_ids = []
-                bu_idx = 0
+                bu_index = 0
             else:
                 bu_labels = bu_df["name"].tolist()
                 bu_ids    = bu_df["business_unit_id"].astype(int).tolist()
+                bu_index  = bu_ids.index(st.session_state["ai_bu_id"]) if st.session_state["ai_bu_id"] in bu_ids else 0
 
-                # map to index for selectbox
-                if st.session_state["ai_bu_id"] in bu_ids:
-                    bu_index = bu_ids.index(st.session_state["ai_bu_id"])
-                else:
-                    bu_index = 0
+            bu_idx = st.selectbox(
+                "Business Unit *",
+                options=list(range(len(bu_labels))),
+                index=bu_index if bu_labels else 0,
+                format_func=lambda i: bu_labels[i] if bu_labels else "",
+                key="ai_bu_idx",
+                on_change=_on_bu_change,
+            )
+            selected_bu_id = bu_ids[bu_idx] if bu_labels else None
+            st.session_state["ai_bu_id"] = selected_bu_id
 
-                # Use a stable key so the widget is tracked; BL widget key will depend on BU
-                bu_idx = st.selectbox(
-                    "Business Unit *",
-                    options=list(range(len(bu_labels))),
-                    index=bu_index if bu_labels else 0,
-                    format_func=lambda i: bu_labels[i] if bu_labels else "",
-                    key="ai_bu_idx",
-                )
-                selected_bu_id = bu_ids[bu_idx] if bu_labels else None
-                st.session_state["ai_bu_id"] = selected_bu_id
-
-            # --------- Business Line filtered by BU (inside form) ----------
+            # ---------- Business Line (child; filtered by BU) ----------
             if selected_bu_id:
                 bl_df = query_df(
                     """
@@ -1804,72 +1808,72 @@ def page_admin_import():
                 selected_bl_id = None
                 bl_labels = []
                 bl_ids    = []
-                bl_idx    = 0
+                bl_index  = 0
             else:
                 bl_labels = bl_df["name"].tolist()
                 bl_ids    = bl_df["business_line_id"].astype(int).tolist()
+                bl_index  = bl_ids.index(st.session_state["ai_bl_id"]) if st.session_state["ai_bl_id"] in bl_ids else 0
 
-                # Key depends on BU so Streamlit fully re-renders the BL widget when BU changes
-                bl_widget_key = f"ai_bl_idx__bu_{selected_bu_id or 'none'}"
+            # Key includes BU so widget resets when BU changes
+            bl_widget_key = f"ai_bl_idx__bu_{selected_bu_id or 'none'}"
+            bl_idx = st.selectbox(
+                "Business Line *",
+                options=list(range(len(bl_labels))),
+                index=bl_index if bl_labels else 0,
+                format_func=lambda i: bl_labels[i] if bl_labels else "",
+                key=bl_widget_key,
+                help="Choose a Business Unit first to load its lines."
+            )
+            selected_bl_id = bl_ids[bl_idx] if bl_labels else None
+            st.session_state["ai_bl_id"] = selected_bl_id
 
-                if st.session_state["ai_bl_id"] in bl_ids:
-                    bl_index = bl_ids.index(st.session_state["ai_bl_id"])
+            # ---------- Item fields ----------
+            product_id = st.text_input("Product ID * (must be unique)", key="ai_pid")
+            article    = st.text_input("Article Number *", key="ai_article")
+            desc       = st.text_input("Description", key="ai_desc")
+
+            # Submit button (acts like form submit)
+            submitted = st.button("Save Item", type="primary", key="ai_save_item")
+
+            # ---------- Handle submit ----------
+            if submitted:
+                if not product_id.strip():
+                    st.error("Product ID is required.")
+                elif not article.strip():
+                    st.error("Article Number is required.")
+                elif not selected_bu_id or not selected_bl_id:
+                    st.error("Business Unit and Business Line are required.")
                 else:
-                    bl_index = 0 if bl_labels else 0
-
-                bl_idx = st.selectbox(
-                    "Business Line *",
-                    options=list(range(len(bl_labels))),
-                    index=bl_index if bl_labels else 0,
-                    format_func=lambda i: bl_labels[i] if bl_labels else "",
-                    key=bl_widget_key,
-                    help="Choose a Business Unit first to load its lines."
-                )
-                selected_bl_id = bl_ids[bl_idx] if bl_labels else None
-                st.session_state["ai_bl_id"] = selected_bl_id
-
-            # --------- Item fields (inside the same bordered form) ----------
-            product_id = st.text_input("Product ID * (must be unique)")
-            article    = st.text_input("Article Number *")
-            desc       = st.text_input("Description")
-
-            submitted  = st.form_submit_button("Save Item", type="primary")
-
-        # --------- Handle submit ----------
-        if submitted:
-            if not product_id.strip():
-                st.error("Product ID is required.")
-            elif not article.strip():
-                st.error("Article Number is required.")
-            elif not selected_bu_id or not selected_bl_id:
-                st.error("Business Unit and Business Line are required.")
-            else:
-                try:
-                    with engine.begin() as conn:
-                        res = conn.execute(
-                            text("""
-                                INSERT INTO items(
-                                product_id, article_number, description, business_line_id, is_active
-                                ) VALUES (:pid, :article, :desc, :blid, TRUE)
-                                ON CONFLICT (product_id) DO NOTHING
-                            """),
-                            {
-                                "pid": product_id.strip(),
-                                "article": article.strip(),
-                                "desc": (desc.strip() or None),
-                                "blid": int(selected_bl_id),
-                            },
-                        )
-                    if (res.rowcount or 0) > 0:
-                        st.success("Item added ✅")
-                        # keep BU selection; clear BL to avoid accidental re-use
-                        st.session_state["ai_bl_id"] = None
-                    else:
-                        st.error("That Product ID already exists.")
-                except Exception as e:
-                    st.error("Could not add item.")
-                    st.caption(str(e))
-
+                    try:
+                        with engine.begin() as conn:
+                            res = conn.execute(
+                                text("""
+                                    INSERT INTO items(
+                                    product_id, article_number, description, business_line_id, is_active
+                                    ) VALUES (:pid, :article, :desc, :blid, TRUE)
+                                    ON CONFLICT (product_id) DO NOTHING
+                                """),
+                                {
+                                    "pid": product_id.strip(),
+                                    "article": article.strip(),
+                                    "desc": (desc.strip() or None),
+                                    "blid": int(selected_bl_id),
+                                },
+                            )
+                        if (res.rowcount or 0) > 0:
+                            st.success("Item added ✅")
+                            # Clear input fields; keep BU; reset BL to prevent accidental reuse
+                            st.session_state["ai_article"] = ""
+                            st.session_state["ai_desc"] = ""
+                            st.session_state["ai_pid"] = ""
+                            st.session_state["ai_bl_id"] = None
+                            st.rerun()
+                        else:
+                            st.error("That Product ID already exists.")
+                    except Exception as e:
+                        st.error("Could not add item.")
+                        st.caption(str(e))
+                    
     # ---------------------
     # Bulk upload
     # ---------------------
