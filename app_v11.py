@@ -515,7 +515,6 @@ def get_location_block(k) -> tuple[Optional[float], Optional[float], Optional[fl
         if lat is None or lon is None:
             st.warning(
                 "We couldn't read your location.\n\n"
-                "• On **mobile**, GPS requires **HTTPS** (Render uses HTTPS).\n"
                 "• Allow **Location** (and **Precise location** on iOS) in browser permissions.\n"
                 "• If it still fails, try tapping **Retry location**."
             )
@@ -775,7 +774,7 @@ def page_submit_visit():
 
         aud_labels = [""] + [x[0] for x in aud_rows]
         if len(aud_labels) == 1:
-            st.warning("This customer has no Target Audiences. Add one in **Admin → Import Lookups → Target Audiences** or pick a different customer.")
+            st.warning("This customer has no Target Audiences.")
 
     aud_choice_label = st.selectbox(
         "Target Audience *",
