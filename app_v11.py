@@ -2952,105 +2952,105 @@ def page_admin_data():
                 st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
                                    "shelf_movement_lines.csv", "text/csv", key="dl_sm_lines")
 
-# ---------- Export all ----------
-st.divider()
-if st.button("Export all tables (zip)", type="secondary", key="export_zip"):
-    try:
-        # Safer timestamp for filenames (no ":" which breaks on Windows)
-        ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+    # ---------- Export all ----------
+    st.divider()
+    if st.button("Export all tables (zip)", type="secondary", key="export_zip"):
+        try:
+            # Safer timestamp for filenames (no ":" which breaks on Windows)
+            ts = datetime.now().strftime("%Y-%m-%d_%H%M")
 
-        # Build dataframes
-        tables = {
-            "visits": query_df("""
-                SELECT
-                    v.*,
-                    c.account_name AS customer_name,
-                    i.article_number,
-                    i.description,
-                    bl.name AS business_line,
-                    bu.name AS business_unit,
-                    o.name AS objective_name,
-                    hv.patient_name,
-                    hv.patient_phone,
-                    hv.serial_no,
-                    COALESCE((
-                      SELECT COUNT(*)
-                      FROM shelf_movement_lines l
-                      JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
-                      WHERE h.visit_id = v.visit_id
-                    ),0) AS shelf_lines_count,
-                    COALESCE((
-                      SELECT SUM(l.qty_checked)
-                      FROM shelf_movement_lines l
-                      JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
-                      WHERE h.visit_id = v.visit_id
-                    ),0) AS shelf_total_qty
-                FROM visits v
-                JOIN customers c        ON v.customer_id = c.customer_id
-                LEFT JOIN items i        ON v.product_id = i.product_id
-                JOIN business_lines bl   ON bl.business_line_id = v.business_line_id
-                JOIN business_units bu   ON bu.business_unit_id = bl.business_unit_id
-                JOIN objectives o        ON v.objective_id = o.objective_id
-                LEFT JOIN home_visits hv ON hv.visit_id = v.visit_id
-                ORDER BY v.visit_id DESC
-            """),
-            "users": query_df("SELECT * FROM users ORDER BY user_id DESC"),
-            "customers": query_df("SELECT * FROM customers ORDER BY account_name"),
-            "target_audiences": query_df("SELECT * FROM target_audiences ORDER BY audience_id DESC"),
-            "business_units": query_df("SELECT * FROM business_units ORDER BY business_unit_id"),
-            "business_lines": query_df("""
-                SELECT bl.*, bu.name AS business_unit
-                FROM business_lines bl
-                JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
-                ORDER BY bu.name, bl.name
-            """),
-            "items": query_df("""
-                SELECT
-                    i.product_id,
-                    i.article_number,
-                    i.description,
-                    i.is_active,
-                    bl.name AS business_line,
-                    bu.name AS business_unit
-                FROM items i
-                JOIN business_lines bl ON bl.business_line_id = i.business_line_id
-                JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
-                ORDER BY COALESCE(i.article_number, i.product_id)
-            """),
-            "objectives": query_df("SELECT * FROM objectives ORDER BY objective_id"),
-            "home_visits": query_df("""
-                SELECT hv.*, v.submitted_at_local, u.name AS rep, c.account_name AS customer
-                FROM home_visits hv
-                JOIN visits v ON v.visit_id = hv.visit_id
-                JOIN users u  ON u.user_id  = v.user_id
-                JOIN customers c ON c.customer_id = v.customer_id
-                ORDER BY hv.home_visit_id DESC
-            """),
-            "shelf_movement_headers": query_df("SELECT * FROM shelf_movement_headers ORDER BY movement_id DESC"),
-            "shelf_movement_lines": query_df("SELECT * FROM shelf_movement_lines ORDER BY line_id DESC"),
-        }
+            # Build dataframes
+            tables = {
+                "visits": query_df("""
+                    SELECT
+                        v.*,
+                        c.account_name AS customer_name,
+                        i.article_number,
+                        i.description,
+                        bl.name AS business_line,
+                        bu.name AS business_unit,
+                        o.name AS objective_name,
+                        hv.patient_name,
+                        hv.patient_phone,
+                        hv.serial_no,
+                        COALESCE((
+                        SELECT COUNT(*)
+                        FROM shelf_movement_lines l
+                        JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
+                        WHERE h.visit_id = v.visit_id
+                        ),0) AS shelf_lines_count,
+                        COALESCE((
+                        SELECT SUM(l.qty_checked)
+                        FROM shelf_movement_lines l
+                        JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
+                        WHERE h.visit_id = v.visit_id
+                        ),0) AS shelf_total_qty
+                    FROM visits v
+                    JOIN customers c        ON v.customer_id = c.customer_id
+                    LEFT JOIN items i        ON v.product_id = i.product_id
+                    JOIN business_lines bl   ON bl.business_line_id = v.business_line_id
+                    JOIN business_units bu   ON bu.business_unit_id = bl.business_unit_id
+                    JOIN objectives o        ON v.objective_id = o.objective_id
+                    LEFT JOIN home_visits hv ON hv.visit_id = v.visit_id
+                    ORDER BY v.visit_id DESC
+                """),
+                "users": query_df("SELECT * FROM users ORDER BY user_id DESC"),
+                "customers": query_df("SELECT * FROM customers ORDER BY account_name"),
+                "target_audiences": query_df("SELECT * FROM target_audiences ORDER BY audience_id DESC"),
+                "business_units": query_df("SELECT * FROM business_units ORDER BY business_unit_id"),
+                "business_lines": query_df("""
+                    SELECT bl.*, bu.name AS business_unit
+                    FROM business_lines bl
+                    JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+                    ORDER BY bu.name, bl.name
+                """),
+                "items": query_df("""
+                    SELECT
+                        i.product_id,
+                        i.article_number,
+                        i.description,
+                        i.is_active,
+                        bl.name AS business_line,
+                        bu.name AS business_unit
+                    FROM items i
+                    JOIN business_lines bl ON bl.business_line_id = i.business_line_id
+                    JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+                    ORDER BY COALESCE(i.article_number, i.product_id)
+                """),
+                "objectives": query_df("SELECT * FROM objectives ORDER BY objective_id"),
+                "home_visits": query_df("""
+                    SELECT hv.*, v.submitted_at_local, u.name AS rep, c.account_name AS customer
+                    FROM home_visits hv
+                    JOIN visits v ON v.visit_id = hv.visit_id
+                    JOIN users u  ON u.user_id  = v.user_id
+                    JOIN customers c ON c.customer_id = v.customer_id
+                    ORDER BY hv.home_visit_id DESC
+                """),
+                "shelf_movement_headers": query_df("SELECT * FROM shelf_movement_headers ORDER BY movement_id DESC"),
+                "shelf_movement_lines": query_df("SELECT * FROM shelf_movement_lines ORDER BY line_id DESC"),
+            }
 
-        # Write a zip in-memory
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for name, df in tables.items():
-                # Make sure we don't emit "nan" strings in Excel
-                csv_bytes = df.to_csv(index=False, na_rep="").encode("utf-8-sig")
-                zf.writestr(f"{name}_{ts}.csv", csv_bytes)
+            # Write a zip in-memory
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for name, df in tables.items():
+                    # Make sure we don't emit "nan" strings in Excel
+                    csv_bytes = df.to_csv(index=False, na_rep="").encode("utf-8-sig")
+                    zf.writestr(f"{name}_{ts}.csv", csv_bytes)
 
-        data = buf.getvalue()
-        size_mb = len(data) / (1024 * 1024)
-        st.success(f"Export ready (~{size_mb:.2f} MB).")
-        st.download_button(
-            "Download export.zip",
-            data=data,
-            file_name=f"export_pack_{ts}.zip",
-            mime="application/zip",
-            key="dl_zip_all",
-        )
-    except Exception as e:
-        st.error("Export failed ❌")
-        st.caption(str(e))
+            data = buf.getvalue()
+            size_mb = len(data) / (1024 * 1024)
+            st.success(f"Export ready (~{size_mb:.2f} MB).")
+            st.download_button(
+                "Download export.zip",
+                data=data,
+                file_name=f"export_pack_{ts}.zip",
+                mime="application/zip",
+                key="dl_zip_all",
+            )
+        except Exception as e:
+            st.error("Export failed ❌")
+            st.caption(str(e))
 
     # ---------- Full database backup options ----------
     st.divider()
