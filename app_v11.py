@@ -576,8 +576,8 @@ def page_submit_visit():
     saved_ok_key     = f"_{PAGE_NS}_saved_ok"
     geo_nonce_key    = f"_{PAGE_NS}_geo_nonce"
     geo_captured_key = f"_{PAGE_NS}_geo_captured"
-    busy_key         = f"_{PAGE_NS}_busy"           # lock while saving
-    intent_key       = f"_{PAGE_NS}_submit_intent"  # set True when any submit is pressed
+    busy_key         = f"_{PAGE_NS}_busy"
+    intent_key       = f"_{PAGE_NS}_submit_intent"
 
     st.session_state.setdefault(nonce_key, 0)
     st.session_state.setdefault(geo_nonce_key, 0)
@@ -586,6 +586,27 @@ def page_submit_visit():
 
     def k(name: str) -> str:
         return f"{PAGE_NS}/{name}_{st.session_state[nonce_key]}"
+
+    # ---- cascade clear helpers (use current nonce'd keys) ----
+    def _on_region_change():
+        for n in ("city_sel", "sector_sel", "cust_sel", "aud_sel"):
+            st.session_state.pop(k(n), None)
+
+    def _on_city_change():
+        for n in ("sector_sel", "cust_sel", "aud_sel"):
+            st.session_state.pop(k(n), None)
+
+    def _on_sector_change():
+        for n in ("cust_sel", "aud_sel"):
+            st.session_state.pop(k(n), None)
+
+    def _on_bu_change():
+        for n in ("cat_sel", "bl_sel", "prod_sel"):
+            st.session_state.pop(k(n), None)
+
+    def _on_line_change():
+        for n in ("prod_sel",):
+            st.session_state.pop(k(n), None)
 
     u = st.session_state.user
     uid = int(u["user_id"] if "user_id" in u else u["id"])
@@ -609,28 +630,123 @@ def page_submit_visit():
         st.info("📍 Location is required before you can submit.")
         return
 
-    # ---------------- Customer (REQUIRED) ----------------
-    cust_df = query_df("""
-        SELECT customer_id, account_name
+    # =====================================================
+    # Region → City → Sector → Customer (all REQUIRED)
+    # =====================================================
+
+    # ---- Region (from customers.region) ----
+    reg_df = query_df("""
+        SELECT DISTINCT region
         FROM customers
         WHERE is_active IS TRUE
-        ORDER BY account_name
+          AND region IS NOT NULL AND trim(region) <> ''
+        ORDER BY region
     """)
-    cust_names = [""] + cust_df["account_name"].tolist()
-    cust_choice = st.selectbox("Customer *", cust_names, index=0, key=k("cust_sel"))
+    region_opts = [""] + reg_df["region"].tolist()
+    region_choice = st.selectbox(
+        "Region *",
+        region_opts,
+        index=0,
+        key=k("region_sel"),
+        on_change=_on_region_change
+    )
+
+    # ---- City (depends on Region; from customers.city) ----
+    if region_choice:
+        city_df = query_df(
+            """
+            SELECT DISTINCT city
+            FROM customers
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city IS NOT NULL AND trim(city) <> ''
+            ORDER BY city
+            """,
+            {"r": region_choice},
+        )
+        city_opts = [""] + city_df["city"].tolist()
+    else:
+        city_df = pd.DataFrame(columns=["city"])
+        city_opts = [""]
+
+    city_choice = st.selectbox(
+        "City *",
+        city_opts,
+        index=0,
+        key=k("city_sel"),
+        disabled=(not region_choice),
+        help=None if region_choice else "Select a Region first",
+        on_change=_on_city_change
+    )
+
+    # ---- Sector (depends on City; from customers.sector) ----
+    if region_choice and city_choice:
+        sec_df = query_df(
+            """
+            SELECT DISTINCT sector
+            FROM customers
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city   = :c
+              AND sector IS NOT NULL AND trim(sector) <> ''
+            ORDER BY sector
+            """,
+            {"r": region_choice, "c": city_choice},
+        )
+        sector_opts = [""] + sec_df["sector"].tolist()
+    else:
+        sec_df = pd.DataFrame(columns=["sector"])
+        sector_opts = [""]
+
+    sector_choice = st.selectbox(
+        "Sector *",
+        sector_opts,
+        index=0,
+        key=k("sector_sel"),
+        disabled=(not (region_choice and city_choice)),
+        help=None if (region_choice and city_choice) else "Select a City first",
+        on_change=_on_sector_change
+    )
+
+    # ---- Customer (depends on Region+City+Sector) ----
+    if region_choice and city_choice and sector_choice:
+        cust_df = query_df(
+            """
+            SELECT customer_id, account_name
+            FROM customers
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city   = :c
+              AND sector = :s
+            ORDER BY account_name
+            """,
+            {"r": region_choice, "c": city_choice, "s": sector_choice},
+        )
+        cust_names = [""] + cust_df["account_name"].tolist()
+    else:
+        cust_df = pd.DataFrame(columns=["customer_id","account_name"])
+        cust_names = [""]
+
+    cust_choice = st.selectbox(
+        "Customer *",
+        cust_names,
+        index=0,
+        key=k("cust_sel"),
+        disabled=(not (region_choice and city_choice and sector_choice)),
+        help=None if (region_choice and city_choice and sector_choice) else "Select Sector first",
+    )
+
     customer_id = None
     if cust_choice:
         match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
         customer_id = int(match.iloc[0]) if not match.empty else None
 
-    # ---------------- Target Audience (REQUIRED) ----------------
+    # ---------------- Target Audience (REQUIRED; depends on Customer) ----------------
     audience_id = None
-    aud_choice_label = ""     # label shown to user
-    aud_choice_name = None    # raw 'name' from DB
+    aud_choice_label = ""
+    aud_choice_name = None
 
-    aud_labels = [""]  # list of strings for the selectbox
-    aud_rows = []      # list of tuples (label, audience_id, raw_name)
-
+    aud_labels = [""]; aud_rows = []
     if customer_id:
         aud_df = query_df(
             """
@@ -641,11 +757,10 @@ def page_submit_visit():
             """,
             {"cid": customer_id},
         )
-
         def _fmt_audience(row) -> str:
             parts = []
             title = (str(row.title).strip() + " ") if pd.notna(row.title) and str(row.title).strip() else ""
-            name = str(row.name).strip() if pd.notna(row.name) else ""
+            name  = str(row.name).strip() if pd.notna(row.name) else ""
             parts.append((title + name).strip())
             if pd.notna(row.department) and str(row.department).strip():
                 parts.append(str(row.department).strip())
@@ -670,7 +785,6 @@ def page_submit_visit():
         disabled=(customer_id is None),
         help=None if customer_id else "Select a Customer first",
     )
-
     if customer_id and aud_choice_label:
         for lbl, aid, raw_name in aud_rows:
             if lbl == aud_choice_label:
@@ -680,13 +794,12 @@ def page_submit_visit():
 
     # -------- Home Visit block (REQUIRED only if triggered) --------
     is_home_visit = bool(aud_choice_label and aud_choice_label.strip().lower().startswith("home visit"))
-
     patient_name = patient_phone = serial_no = None
     if is_home_visit:
         with st.container():
-            patient_name = st.text_input("Patient Name *", key=k("pat_name"))
+            patient_name  = st.text_input("Patient Name *", key=k("pat_name"))
             patient_phone = st.text_input("Patient Phone # *", key=k("pat_phone"))
-            serial_no = st.text_input("Serial # *", key=k("serial_no"))
+            serial_no     = st.text_input("Serial # *", key=k("serial_no"))
 
     # ---------------- Business Unit (REQUIRED) ----------------
     bu_df = query_df("""
@@ -757,7 +870,6 @@ def page_submit_visit():
         on_change=_on_line_change,
         help=None if (bu_id and cat_choice) else "Select a Category first",
     )
-
     if bu_id and cat_choice and bl_choice:
         match = bl_df.loc[bl_df["name"] == bl_choice, "business_line_id"]
         business_line_id = int(match.iloc[0]) if not match.empty else None
@@ -814,7 +926,6 @@ def page_submit_visit():
         objective_id = int(match.iloc[0]) if not match.empty else None
 
     is_shelf_movement = bool(obj_choice) and ("shelf movement" in obj_choice.strip().lower())
-
     notes = st.text_area("Notes (optional)", key=k("notes"))
 
     allowed_evals = {"Positive", "Negative", "Neutral", "IDK"}
@@ -879,7 +990,7 @@ def page_submit_visit():
         if mins is not None and mins < DUP_MINUTES:
             st.info(f"You submitted for **{cust_choice}** {mins} minutes ago — potential duplicate.")
 
-    # ---------------- Dual Submit buttons (inline + sticky) ----------------
+    # ---------------- Submit button ----------------
     inline_click = st.button(
         "Submit",
         type="primary",
@@ -888,13 +999,11 @@ def page_submit_visit():
         help="Saves immediately. You’ll see a spinner while saving."
     )
 
-    # Any submit → set intent & lock, then rerun to process exactly once
     if (inline_click) and not st.session_state[busy_key]:
         st.session_state[intent_key] = True
         st.session_state[busy_key]   = True
         st.rerun()
 
-    # If not submitting, stop here
     if not st.session_state[intent_key]:
         return
 
@@ -902,7 +1011,13 @@ def page_submit_visit():
     with st.spinner("Saving your visit…"):
         errors = []
 
-        # In page order:
+        # REQUIRED in page order (new cascade first)
+        if not region_choice:
+            errors.append("Please choose a **Region**.")
+        if not city_choice:
+            errors.append("Please choose a **City**.")
+        if not sector_choice:
+            errors.append("Please choose a **Sector**.")
         if not customer_id:
             errors.append("Please choose a **Customer**.")
         if not audience_id:
@@ -950,7 +1065,6 @@ def page_submit_visit():
                         for _, r in filled_rows.iterrows()
                     ]
 
-        # If there are any errors, render them all (in order) and unlock for retry.
         if errors:
             for msg in errors:
                 st.error(msg)
@@ -961,17 +1075,17 @@ def page_submit_visit():
         # ----- All validations passed → persist -----
         visit_row = {
             "user_id": uid,
-            "submitted_at_utc": _utcnow(),          # let SQLAlchemy pass as TIMESTAMPTZ
-            "submitted_at_local": _local_now_str(), # keep text field as before
+            "submitted_at_utc": _utcnow(),
+            "submitted_at_local": _local_now_str(),
             "latitude": lat,
             "longitude": lon,
             "accuracy_m": acc,
             "customer_id": int(customer_id),
             "audience_id": int(audience_id) if audience_id else None,
             "business_line_id": int(business_line_id),
-            "product_id": (None if is_shelf_movement else product_id),  # OPTIONAL
+            "product_id": (None if is_shelf_movement else product_id),
             "objective_id": int(objective_id),
-            "notes": (notes.strip() if notes else None),                # OPTIONAL
+            "notes": (notes.strip() if notes else None),
             "evaluation": evaluation_val,
         }
 
@@ -984,16 +1098,15 @@ def page_submit_visit():
             }
 
         try:
-            # 1) Atomic insert (+ home_visits [+ shelf movement if any])
             visit_id = insert_visit_atomic(visit_row, home_payload, shelf_lines_payload)
 
-            # 2) Build Power BI row
+            # Power BI row
             def _article_from_label(lbl: str | None) -> str:
                 if not lbl: return ""
                 return str(lbl).split(" — ", 1)[0].strip()
 
             shelf_lines_count = int(len(filled_rows)) if (is_shelf_movement and filled_rows is not None) else 0
-            shelf_total_qty = int(filled_rows["qty_checked"].sum()) if (is_shelf_movement and filled_rows is not None) else 0
+            shelf_total_qty   = int(filled_rows["qty_checked"].sum()) if (is_shelf_movement and filled_rows is not None) else 0
 
             pbi_row = {
                 "submitted_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -1015,7 +1128,6 @@ def page_submit_visit():
                 "shelf_lines_count": shelf_lines_count,
                 "shelf_total_qty": shelf_total_qty,
             }
-
             if is_home_visit:
                 pbi_row.update({
                     "patient_name": patient_name.strip(),
@@ -1029,7 +1141,7 @@ def page_submit_visit():
             else:
                 st.toast("Pushed to Power BI ✅", icon="✅")
 
-            # 3) Reset & rerun
+            # reset
             st.session_state[nonce_key] += 1
             st.session_state[geo_nonce_key] += 1
             st.session_state.pop(geo_captured_key, None)
@@ -1039,7 +1151,6 @@ def page_submit_visit():
             st.rerun()
 
         except IntegrityError as e:
-            # Friendly duplicate check for unique serial_no on home_visits
             emsg = str(e).lower()
             if (UniqueViolation and isinstance(e.orig, UniqueViolation)) or ("duplicate key value violates unique constraint" in emsg) or ("unique constraint" in emsg and "home_visits_serial_no" in emsg):
                 st.error("Serial # already exists. Please verify and try again.")
