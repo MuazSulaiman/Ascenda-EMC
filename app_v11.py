@@ -1414,6 +1414,9 @@ def page_admin_import():
     st.subheader("1) Customers")
     st.write("Columns: **account_name**, sector, region, city")
 
+    def _norm_or_empty(v):
+        return (v.strip() if isinstance(v, str) else v) or ""
+
     with popout("➕ Add Customer"):
         with st.form("add_customer_form", clear_on_submit=True):
             acc = st.text_input("Account Name *")
@@ -1426,26 +1429,32 @@ def page_admin_import():
                 st.error("Account Name is required.")
             else:
                 try:
+                    acc_v   = acc.strip()
+                    sector_v = sector.strip() or None
+                    region_v = region.strip() or None
+                    city_v   = city.strip() or None
+
                     with engine.begin() as conn:
+                        # Insert ONLY if no existing row has the same (name, sector, region, city) case-insensitively
                         res = conn.execute(
                             text("""
                                 INSERT INTO customers(account_name, sector, region, city)
                                 SELECT :acc, :sector, :region, :city
                                 WHERE NOT EXISTS (
-                                  SELECT 1 FROM customers WHERE lower(account_name) = lower(:acc)
+                                SELECT 1
+                                FROM customers c
+                                WHERE lower(coalesce(c.account_name, '')) = lower(coalesce(:acc, ''))
+                                    AND lower(coalesce(c.sector,       '')) = lower(coalesce(:sector, ''))
+                                    AND lower(coalesce(c.region,       '')) = lower(coalesce(:region, ''))
+                                    AND lower(coalesce(c.city,         '')) = lower(coalesce(:city, ''))
                                 )
                             """),
-                            {
-                                "acc": acc.strip(),
-                                "sector": (sector.strip() or None),
-                                "region": (region.strip() or None),
-                                "city": (city.strip() or None),
-                            },
+                            {"acc": acc_v, "sector": sector_v, "region": region_v, "city": city_v},
                         )
                     if (res.rowcount or 0) > 0:
                         st.success("Customer added ✅")
                     else:
-                        st.info("A customer with that name already exists — nothing added.")
+                        st.info("A customer with the same **Name + Sector + Region + City** already exists — nothing added.")
                 except Exception as e:
                     st.error("Could not add customer.")
                     st.caption(str(e))
@@ -1460,29 +1469,41 @@ def page_admin_import():
             inserted = 0
             skipped = 0
             sts, pb, ln, has_status = _mk_status("Importing Customers…")
+
             try:
                 with engine.begin() as conn:
                     for i, r in enumerate(df.itertuples(index=False), start=1):
-                        acc_v = str(getattr(r, "account_name", "")).strip()
+                        acc_raw   = getattr(r, "account_name", "")
+                        acc_v     = str(acc_raw).strip() if pd.notna(acc_raw) else ""
                         if not acc_v:
                             skipped += 1
                             if i % 200 == 0 or i == total:
                                 _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Customers")
                             continue
-                        sector_v = str(getattr(r, "sector")).strip() if hasattr(r, "sector") and pd.notna(getattr(r, "sector")) else None
-                        region_v = str(getattr(r, "region")).strip() if hasattr(r, "region") and pd.notna(getattr(r, "region")) else None
-                        city_v   = str(getattr(r, "city")).strip()   if hasattr(r, "city")   and pd.notna(getattr(r, "city"))   else None
+
+                        sector_v = (str(getattr(r, "sector")).strip()
+                                    if hasattr(r, "sector") and pd.notna(getattr(r, "sector")) else None)
+                        region_v = (str(getattr(r, "region")).strip()
+                                    if hasattr(r, "region") and pd.notna(getattr(r, "region")) else None)
+                        city_v   = (str(getattr(r, "city")).strip()
+                                    if hasattr(r, "city") and pd.notna(getattr(r, "city")) else None)
 
                         res = conn.execute(
                             text("""
                                 INSERT INTO customers(account_name, sector, region, city)
                                 SELECT :acc, :sector, :region, :city
                                 WHERE NOT EXISTS (
-                                  SELECT 1 FROM customers WHERE lower(account_name) = lower(:acc)
+                                SELECT 1
+                                FROM customers c
+                                WHERE lower(coalesce(c.account_name, '')) = lower(coalesce(:acc, ''))
+                                    AND lower(coalesce(c.sector,       '')) = lower(coalesce(:sector, ''))
+                                    AND lower(coalesce(c.region,       '')) = lower(coalesce(:region, ''))
+                                    AND lower(coalesce(c.city,         '')) = lower(coalesce(:city, ''))
                                 )
                             """),
                             {"acc": acc_v, "sector": sector_v, "region": region_v, "city": city_v},
                         )
+
                         if (res.rowcount or 0) > 0:
                             inserted += 1
                         else:
@@ -1492,7 +1513,7 @@ def page_admin_import():
                             _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Customers")
                             time.sleep(0.001)
 
-                _finish_status(sts, has_status, f"Customers import ✅ Inserted: {inserted} | Updated: 0 | Skipped: {skipped}", ok=True)
+                _finish_status(sts, has_status, f"Customers import ✅ Inserted: {inserted} | Skipped: {skipped}", ok=True)
             except Exception as e:
                 _finish_status(sts, has_status, "Customers import failed ❌", ok=False)
                 st.caption(str(e))
@@ -1534,36 +1555,45 @@ def page_admin_import():
                         st.error("Selected customer was not found.")
                     else:
                         with engine.begin() as conn:
-                            res = conn.execute(
+                            # Check if duplicate exists (customer + name + department + position case-insensitive)
+                            exists = conn.execute(
                                 text("""
-                                    INSERT INTO target_audiences(
-                                      customer_id, title, name, department, position, potentiality, loyalty,
-                                      mobile, landline, external_number, email, is_active
-                                    ) VALUES (:cid, :title, :name, :dept, :pos, :pot, :loy, :mob, :land, :extn, :email, TRUE)
-                                    ON CONFLICT (customer_id, name) DO NOTHING
+                                    SELECT 1 FROM target_audiences
+                                    WHERE customer_id = :cid
+                                    AND lower(coalesce(name, '')) = lower(:name)
+                                    AND lower(coalesce(department, '')) = lower(coalesce(:dept, ''))
+                                    AND lower(coalesce(position, '')) = lower(coalesce(:pos, ''))
+                                    LIMIT 1
                                 """),
-                                {
-                                    "cid": cid,
-                                    "title": (title.strip() or None),
-                                    "name": aud_name.strip(),
-                                    "dept": (dept.strip() or None),
-                                    "pos": (pos.strip() or None),
-                                    "pot": (pot.strip() or None),
-                                    "loy": (loy.strip() or None),
-                                    "mob": (mobile.strip() or None),
-                                    "land": (land.strip() or None),
-                                    "extn": (extn.strip() or None),
-                                    "email": (email.strip() or None),
-                                },
-                            )
-                        if (res.rowcount or 0) > 0:
-                            st.success("Target audience added ✅")
-                        else:
-                            st.info("This customer + name already exists — nothing added.")
+                                {"cid": cid, "name": aud_name.strip(), "dept": (dept.strip() or ""), "pos": (pos.strip() or "")}
+                            ).fetchone()
+
+                            if exists:
+                                st.info("This combination (Customer + Name + Department + Position) already exists — skipped.")
+                            else:
+                                conn.execute(
+                                    text("""
+                                        INSERT INTO target_audiences(
+                                        customer_id, title, name, department, position, potentiality, loyalty,
+                                        mobile, landline, external_number, email, is_active
+                                        ) VALUES (
+                                        :cid, :title, :name, :dept, :pos, :pot, :loy, :mob, :land, :extn, :email, TRUE
+                                        )
+                                    """),
+                                    {
+                                        "cid": cid, "title": (title.strip() or None),
+                                        "name": aud_name.strip(), "dept": (dept.strip() or None), "pos": (pos.strip() or None),
+                                        "pot": (pot.strip() or None), "loy": (loy.strip() or None),
+                                        "mob": (mobile.strip() or None), "land": (land.strip() or None),
+                                        "extn": (extn.strip() or None), "email": (email.strip() or None)
+                                    },
+                                )
+                                st.success("Target audience added ✅")
                 except Exception as e:
                     st.error("Could not add target audience.")
                     st.caption(str(e))
 
+    # ============ BULK UPLOAD ============
     f2 = st.file_uploader("Upload Target Audiences", type=["xlsx", "csv"], key="aud")
     if f2 is not None:
         df = _read_df_upload(f2)
@@ -1573,9 +1603,9 @@ def page_admin_import():
         else:
             total = len(df)
             inserted = 0
-            updated = 0
             skipped = 0
             sts, pb, ln, has_status = _mk_status("Importing Target Audiences…")
+
             try:
                 with engine.begin() as conn:
                     cdf = pd.read_sql_query(text("SELECT customer_id, account_name FROM customers"), conn)
@@ -1586,14 +1616,11 @@ def page_admin_import():
                         aname = str(getattr(r, "name", "")).strip()
                         if not (cname and aname):
                             skipped += 1
-                            if i % 200 == 0 or i == total:
-                                _update_progress(pb, ln, i, total, inserted, updated, skipped, label_prefix="Audiences")
                             continue
+
                         cid = cmap.get(cname.lower())
                         if not cid:
                             skipped += 1
-                            if i % 200 == 0 or i == total:
-                                _update_progress(pb, ln, i, total, inserted, updated, skipped, label_prefix="Audiences")
                             continue
 
                         title_v = (str(getattr(r, "title")).strip() if hasattr(r, "title") and pd.notna(getattr(r, "title")) else None)
@@ -1606,52 +1633,48 @@ def page_admin_import():
                         extn_v  = (str(getattr(r, "external_number")).strip() if hasattr(r, "external_number") and pd.notna(getattr(r, "external_number")) else None)
                         email_v = (str(getattr(r, "email")).strip() if hasattr(r, "email") and pd.notna(getattr(r, "email")) else None)
 
-                        # Upsert, count exactly
-                        existed = conn.execute(
-                            text("SELECT 1 FROM target_audiences WHERE customer_id=:cid AND lower(name)=lower(:n)"),
-                            {"cid": cid, "n": aname}
-                        ).fetchone() is not None
+                        # Skip if same customer+name+dept+pos already exists (case-insensitive)
+                        dup = conn.execute(
+                            text("""
+                                SELECT 1 FROM target_audiences
+                                WHERE customer_id = :cid
+                                AND lower(coalesce(name, '')) = lower(:name)
+                                AND lower(coalesce(department, '')) = lower(coalesce(:dept, ''))
+                                AND lower(coalesce(position, '')) = lower(coalesce(:pos, ''))
+                                LIMIT 1
+                            """),
+                            {"cid": cid, "name": aname, "dept": (dept_v or ""), "pos": (pos_v or "")}
+                        ).fetchone()
+
+                        if dup:
+                            skipped += 1
+                            continue
 
                         conn.execute(
                             text("""
                                 INSERT INTO target_audiences(
-                                  customer_id, title, name, department, position, potentiality, loyalty,
-                                  mobile, landline, external_number, email, is_active
+                                customer_id, title, name, department, position, potentiality, loyalty,
+                                mobile, landline, external_number, email, is_active
                                 )
                                 VALUES (:cid, :title, :name, :dept, :pos, :pot, :loy, :mob, :land, :extn, :email, TRUE)
-                                ON CONFLICT (customer_id, name) DO UPDATE
-                                  SET title=:title,
-                                      department=:dept,
-                                      position=:pos,
-                                      potentiality=:pot,
-                                      loyalty=:loy,
-                                      mobile=:mob,
-                                      landline=:land,
-                                      external_number=:extn,
-                                      email=:email,
-                                      is_active=TRUE
                             """),
-                            {
-                                "cid": cid, "title": title_v, "name": aname, "dept": dept_v, "pos": pos_v,
-                                "pot": pot_v, "loy": loy_v, "mob": mob_v, "land": land_v, "extn": extn_v, "email": email_v,
-                            },
+                            {"cid": cid, "title": title_v, "name": aname, "dept": dept_v, "pos": pos_v,
+                            "pot": pot_v, "loy": loy_v, "mob": mob_v, "land": land_v, "extn": extn_v, "email": email_v}
                         )
 
-                        if existed:
-                            updated += 1
-                        else:
-                            inserted += 1
-
+                        inserted += 1
                         if i % 200 == 0 or i == total:
-                            _update_progress(pb, ln, i, total, inserted, updated, skipped, label_prefix="Audiences")
+                            _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Audiences")
                             time.sleep(0.001)
 
-                _finish_status(sts, has_status, f"Target audiences import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}", ok=True)
+                _finish_status(sts, has_status, f"✅ Target audiences import done. Inserted: {inserted} | Skipped: {skipped}", ok=True)
+
             except Exception as e:
-                _finish_status(sts, has_status, "Target audiences import failed ❌", ok=False)
+                _finish_status(sts, has_status, "❌ Target audiences import failed.", ok=False)
                 st.caption(str(e))
 
     st.divider()
+
 
     # =====================
     # 3) Business Units
