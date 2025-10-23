@@ -1029,9 +1029,11 @@ def page_submit_visit():
                 errors.append("For **Home Visit**, please enter **Patient Phone #**.")
             elif not re.fullmatch(r"(?:\+966|00966|0)?5\d{8}", patient_phone.strip()):
                 errors.append("**Patient Phone #** looks invalid (expected KSA mobile like 05XXXXXXXX).")
+            
+        if is_home_visit:
             if not serial_no:
                 errors.append("For **Home Visit**, please enter **Serial #**.")
-
+        
         if not bu_id:
             errors.append("Please choose a **Business Unit**.")
         if not cat_choice:
