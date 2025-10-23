@@ -798,7 +798,7 @@ def page_submit_visit():
         with st.container():
             patient_name  = st.text_input("Patient Name *", key=k("pat_name"))
             patient_phone = st.text_input("Patient Phone # *", key=k("pat_phone"))
-            serial_no     = st.text_input("Serial # *", key=k("serial_no"))
+            serial_no     = st.text_input("Device Serial # *", key=k("serial_no"))
 
     # ---------------- Business Unit (REQUIRED) ----------------
     bu_df = query_df("""
@@ -1029,10 +1029,8 @@ def page_submit_visit():
                 errors.append("For **Home Visit**, please enter **Patient Phone #**.")
             elif not re.fullmatch(r"(?:\+966|00966|0)?5\d{8}", patient_phone.strip()):
                 errors.append("**Patient Phone #** looks invalid (expected KSA mobile like 05XXXXXXXX).")
-            
-        if is_home_visit:
             if not serial_no:
-                errors.append("For **Home Visit**, please enter **Serial #**.")
+                errors.append("For **Home Visit**, please enter **Serial #**.")          
         
         if not bu_id:
             errors.append("Please choose a **Business Unit**.")
