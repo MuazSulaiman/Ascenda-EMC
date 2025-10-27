@@ -37,7 +37,7 @@ from db import engine
 # =============================
 # Config
 # =============================
-APP_TITLE = "Sales Daily Feedback — v11"
+APP_TITLE = "Ascenda - v11"
 TIMEZONE = "Asia/Riyadh"
 SESSION_TTL_MIN = 60        # 60 mins (1 hour)
 DUP_MINUTES = 15            # duplicate detection lookback (minutes)
