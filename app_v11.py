@@ -2165,86 +2165,94 @@ def page_admin_import():
     st.subheader("📝 Manage (Edit / Activate / Delete)")
 
     tabs = st.tabs(["Customers", "Target Audiences", "Business Units", "Business Lines", "Items", "Objectives"])
-
+    
     # ---- Customers ----
-    with tabs[0]:
+    with tabs[0]:   
         cdf = query_df("SELECT customer_id, account_name, sector, region, city, is_active FROM customers ORDER BY account_name")
         if cdf.empty:
             st.info("No customers yet.")
         else:
+            # Add "(active)" or "(inactive)" and start with an empty option
             display = [
                 _parts_join(r.account_name, r.region, r.city) + f" ({'active' if bool(r.is_active) else 'inactive'})"
                 for r in cdf.itertuples(index=False)
             ]
+            display = [""] + display  # <-- add a blank option at the top
+
             choice = st.selectbox("Select customer", display, index=0, key="mg_cust_sel")
-            row = cdf.iloc[display.index(choice)]
-            cid = int(row["customer_id"])
 
-            colA, colB, colC = st.columns(3)
-            with colA:
-                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE customer_id=:cid", {"cid": cid})
-                a_cnt = _refcount("SELECT COUNT(*) FROM target_audiences WHERE customer_id=:cid", {"cid": cid})
-                st.caption(f"Refs → Visits: **{v_cnt}** · Audiences: **{a_cnt}**")
+            if choice == "":
+                st.info("Please select a customer.")
+            else:
+                # Adjust index (-1) because of the blank line we added
+                row = cdf.iloc[display.index(choice) - 1]
+                cid = int(row["customer_id"])
 
-            with colB:
-                new_active = not bool(row["is_active"])
-                label = "Deactivate" if bool(row["is_active"]) else "Activate"
-                if st.button(label, key="mg_cust_toggle"):
-                    exec_sql("UPDATE customers SET is_active=:b WHERE customer_id=:id", {"b": new_active, "id": cid})
-                    st.success("Updated ✅")
+                colA, colB, colC = st.columns(3)
+                with colA:
+                    v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE customer_id=:cid", {"cid": cid})
+                    a_cnt = _refcount("SELECT COUNT(*) FROM target_audiences WHERE customer_id=:cid", {"cid": cid})
+                    st.caption(f"Refs → Visits: **{v_cnt}** · Audiences: **{a_cnt}**")
 
-            with colC:
-                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
-                with edit_box:
-                    with st.form("mg_cust_edit"):
-                        acc = st.text_input("Account Name *", value=row["account_name"] or "")
-                        sector = st.text_input("Sector", value=row["sector"] or "")
-                        region = st.text_input("Region", value=row["region"] or "")
-                        city = st.text_input("City", value=row["city"] or "")
-                        save = st.form_submit_button("Save changes")
-                    if save:
-                        acc_clean = acc.strip()
-                        if not acc_clean:
-                            st.error("Account Name is required.")
-                        else:
-                            dup = query_df(
-                                "SELECT 1 FROM customers WHERE lower(account_name)=lower(:n) AND customer_id<>:id",
-                                {"n": acc_clean, "id": cid},
-                            )
-                            if not dup.empty:
-                                st.error("Account Name already exists.")
+                with colB:
+                    new_active = not bool(row["is_active"])
+                    label = "Deactivate" if bool(row["is_active"]) else "Activate"
+                    if st.button(label, key="mg_cust_toggle"):
+                        exec_sql("UPDATE customers SET is_active=:b WHERE customer_id=:id", {"b": new_active, "id": cid})
+                        st.success("Updated ✅")
+
+                with colC:
+                    edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                    with edit_box:
+                        with st.form("mg_cust_edit"):
+                            acc = st.text_input("Account Name *", value=row["account_name"] or "")
+                            sector = st.text_input("Sector", value=row["sector"] or "")
+                            region = st.text_input("Region", value=row["region"] or "")
+                            city = st.text_input("City", value=row["city"] or "")
+                            save = st.form_submit_button("Save changes")
+                        if save:
+                            acc_clean = acc.strip()
+                            if not acc_clean:
+                                st.error("Account Name is required.")
                             else:
-                                exec_sql(
-                                    "UPDATE customers SET account_name=:acc, sector=:s, region=:r, city=:c WHERE customer_id=:id",
-                                    {"acc": acc_clean, "s": sector.strip() or None, "r": region.strip() or None, "c": city.strip() or None, "id": cid},
+                                dup = query_df(
+                                    "SELECT 1 FROM customers WHERE lower(account_name)=lower(:n) AND customer_id<>:id",
+                                    {"n": acc_clean, "id": cid},
                                 )
-                                st.success("Saved ✅")
+                                if not dup.empty:
+                                    st.error("Account Name already exists.")
+                                else:
+                                    exec_sql(
+                                        "UPDATE customers SET account_name=:acc, sector=:s, region=:r, city=:c WHERE customer_id=:id",
+                                        {"acc": acc_clean, "s": sector.strip() or None, "r": region.strip() or None, "c": city.strip() or None, "id": cid},
+                                    )
+                                    st.success("Saved ✅")
 
-            dz_keybase = "mg_cust_conf"
-            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
-            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
-            with danger:
-                st.write("Delete permanently (only if not referenced).")
-                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
-                if st.button("Delete Customer", type="primary", disabled=not confirm, key="mg_cust_del"):
-                    st.session_state["danger_nonce"] += 1
-                    if v_cnt > 0 or a_cnt > 0:
-                        st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits and/or target audiences. Deactivate instead.")
+                dz_keybase = "mg_cust_conf"
+                conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+                danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+                with danger:
+                    st.write("Delete permanently (only if not referenced).")
+                    confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                    if st.button("Delete Customer", type="primary", disabled=not confirm, key="mg_cust_del"):
+                        st.session_state["danger_nonce"] += 1
+                        if v_cnt > 0 or a_cnt > 0:
+                            st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits and/or target audiences. Deactivate instead.")
+                            st.rerun()
+                        try:
+                            exec_sql("DELETE FROM customers WHERE customer_id=:id", {"id": cid})
+                            st.session_state["flash_admin"] = ("success", "Customer deleted ✅")
+                        except Exception as e:
+                            st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
                         st.rerun()
-                    try:
-                        exec_sql("DELETE FROM customers WHERE customer_id=:id", {"id": cid})
-                        st.session_state["flash_admin"] = ("success", "Customer deleted ✅")
-                    except Exception as e:
-                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
-                    st.rerun()
 
     # ---- Target Audiences ----
     with tabs[1]:
         adf = query_df("""
             SELECT ta.audience_id, ta.customer_id, c.account_name AS customer,
-                   ta.title, ta.name, ta.department, ta.position,
-                   ta.potentiality, ta.loyalty, ta.mobile, ta.landline, ta.external_number, ta.email,
-                   ta.is_active
+                ta.title, ta.name, ta.department, ta.position,
+                ta.potentiality, ta.loyalty, ta.mobile, ta.landline, ta.external_number, ta.email,
+                ta.is_active
             FROM target_audiences ta
             JOIN customers c ON c.customer_id = ta.customer_id
             ORDER BY c.account_name, ta.name
@@ -2261,98 +2269,105 @@ def page_admin_import():
                     parts.append(str(r.position).strip())
                 return " - ".join([p for p in parts if p])
 
-            display = [f"{_fmt_ta(r)}  ({'active' if r.is_active else 'inactive'})" for r in adf.itertuples(index=False)]
+            # Add blank entry first
+            display = [""] + [f"{_fmt_ta(r)}  ({'active' if r.is_active else 'inactive'})" for r in adf.itertuples(index=False)]
+
             choice = st.selectbox("Select audience", display, index=0, key="mg_aud_sel")
-            row = adf.iloc[display.index(choice)]
-            aid = int(row["audience_id"])
 
-            colA, colB, colC = st.columns(3)
-            with colA:
-                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE audience_id=:aid", {"aid": aid})
-                st.caption(f"Refs → Visits: **{v_cnt}**")
+            if choice == "":
+                st.info("Please select an audience.")
+            else:
+                # Adjust index because of the blank entry at top
+                row = adf.iloc[display.index(choice) - 1]
+                aid = int(row["audience_id"])
 
-            with colB:
-                new_active = not bool(row["is_active"])
-                label = "Deactivate" if bool(row["is_active"]) else "Activate"
-                if st.button(label, key="mg_aud_toggle"):
-                    exec_sql("UPDATE target_audiences SET is_active=:b WHERE audience_id=:id", {"b": new_active, "id": aid})
-                    st.success("Updated ✅")
+                colA, colB, colC = st.columns(3)
+                with colA:
+                    v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE audience_id=:aid", {"aid": aid})
+                    st.caption(f"Refs → Visits: **{v_cnt}**")
 
-            with colC:
-                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
-                with edit_box:
-                    cust_choices = query_df("SELECT customer_id, account_name FROM customers ORDER BY account_name")
-                    cust_labels = [f"{r.account_name}" for r in cust_choices.itertuples(index=False)]
-                    cust_idx = 0
-                    for i, r in enumerate(cust_choices.itertuples(index=False)):
-                        if int(r.customer_id) == int(row["customer_id"]):
-                            cust_idx = i
-                            break
+                with colB:
+                    new_active = not bool(row["is_active"])
+                    label = "Deactivate" if bool(row["is_active"]) else "Activate"
+                    if st.button(label, key="mg_aud_toggle"):
+                        exec_sql("UPDATE target_audiences SET is_active=:b WHERE audience_id=:id", {"b": new_active, "id": aid})
+                        st.success("Updated ✅")
 
-                    with st.form("mg_aud_edit"):
-                        cust_label_sel = st.selectbox("Customer *", cust_labels, index=cust_idx, key="mg_aud_cust_sel")
-                        new_cust_id = int(cust_choices.iloc[cust_labels.index(cust_label_sel)]["customer_id"])
-                        title = st.text_input("Title", value=row["title"] or "")
-                        name = st.text_input("Name *", value=row["name"] or "")
-                        dept = st.text_input("Department", value=row["department"] or "")
-                        pos = st.text_input("Position", value=row["position"] or "")
-                        pot = st.text_input("Potentiality", value=row["potentiality"] or "")
-                        loy = st.text_input("Loyalty", value=row["loyalty"] or "")
-                        mob = st.text_input("Mobile", value=row["mobile"] or "")
-                        land = st.text_input("Landline", value=row["landline"] or "")
-                        extn = st.text_input("External Number", value=row["external_number"] or "")
-                        email = st.text_input("Email", value=row["email"] or "")
-                        save = st.form_submit_button("Save changes")
-                    if save:
-                        nm = name.strip()
-                        if not nm:
-                            st.error("Name is required.")
-                        else:
-                            dup = query_df(
-                                """
-                                SELECT 1 FROM target_audiences
-                                WHERE customer_id=:cid AND lower(name)=lower(:nm) AND audience_id<>:aid
-                                """,
-                                {"cid": new_cust_id, "nm": nm, "aid": aid},
-                            )
-                            if not dup.empty:
-                                st.error("An audience with the same name already exists for that customer.")
+                with colC:
+                    edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                    with edit_box:
+                        cust_choices = query_df("SELECT customer_id, account_name FROM customers ORDER BY account_name")
+                        cust_labels = [f"{r.account_name}" for r in cust_choices.itertuples(index=False)]
+                        cust_idx = 0
+                        for i, r in enumerate(cust_choices.itertuples(index=False)):
+                            if int(r.customer_id) == int(row["customer_id"]):
+                                cust_idx = i
+                                break
+
+                        with st.form("mg_aud_edit"):
+                            cust_label_sel = st.selectbox("Customer *", cust_labels, index=cust_idx, key="mg_aud_cust_sel")
+                            new_cust_id = int(cust_choices.iloc[cust_labels.index(cust_label_sel)]["customer_id"])
+                            title = st.text_input("Title", value=row["title"] or "")
+                            name = st.text_input("Name *", value=row["name"] or "")
+                            dept = st.text_input("Department", value=row["department"] or "")
+                            pos = st.text_input("Position", value=row["position"] or "")
+                            pot = st.text_input("Potentiality", value=row["potentiality"] or "")
+                            loy = st.text_input("Loyalty", value=row["loyalty"] or "")
+                            mob = st.text_input("Mobile", value=row["mobile"] or "")
+                            land = st.text_input("Landline", value=row["landline"] or "")
+                            extn = st.text_input("External Number", value=row["external_number"] or "")
+                            email = st.text_input("Email", value=row["email"] or "")
+                            save = st.form_submit_button("Save changes")
+                        if save:
+                            nm = name.strip()
+                            if not nm:
+                                st.error("Name is required.")
                             else:
-                                exec_sql(
+                                dup = query_df(
                                     """
-                                    UPDATE target_audiences
-                                    SET customer_id=:cid, title=:title, name=:name, department=:dept, position=:pos,
-                                        potentiality=:pot, loyalty=:loy, mobile=:mob, landline=:land, external_number=:extn, email=:email
-                                    WHERE audience_id=:aid
+                                    SELECT 1 FROM target_audiences
+                                    WHERE customer_id=:cid AND lower(name)=lower(:nm) AND audience_id<>:aid
                                     """,
-                                    {
-                                        "cid": new_cust_id, "title": title.strip() or None, "name": nm,
-                                        "dept": dept.strip() or None, "pos": pos.strip() or None,
-                                        "pot": pot.strip() or None, "loy": loy.strip() or None,
-                                        "mob": mob.strip() or None, "land": land.strip() or None,
-                                        "extn": extn.strip() or None, "email": email.strip() or None,
-                                        "aid": aid,
-                                    },
+                                    {"cid": new_cust_id, "nm": nm, "aid": aid},
                                 )
-                                st.success("Saved ✅")
+                                if not dup.empty:
+                                    st.error("An audience with the same name already exists for that customer.")
+                                else:
+                                    exec_sql(
+                                        """
+                                        UPDATE target_audiences
+                                        SET customer_id=:cid, title=:title, name=:name, department=:dept, position=:pos,
+                                            potentiality=:pot, loyalty=:loy, mobile=:mob, landline=:land, external_number=:extn, email=:email
+                                        WHERE audience_id=:aid
+                                        """,
+                                        {
+                                            "cid": new_cust_id, "title": title.strip() or None, "name": nm,
+                                            "dept": dept.strip() or None, "pos": pos.strip() or None,
+                                            "pot": pot.strip() or None, "loy": loy.strip() or None,
+                                            "mob": mob.strip() or None, "land": land.strip() or None,
+                                            "extn": extn.strip() or None, "email": email.strip() or None,
+                                            "aid": aid,
+                                        },
+                                    )
+                                    st.success("Saved ✅")
 
-            dz_keybase = "mg_aud_conf"
-            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
-            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
-            with danger:
-                st.write("Delete permanently (only if not referenced).")
-                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
-                if st.button("Delete Audience", type="primary", disabled=not confirm, key="mg_aud_del"):
-                    st.session_state["danger_nonce"] += 1
-                    if v_cnt > 0:
-                        st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits. Deactivate instead.")
+                dz_keybase = "mg_aud_conf"
+                conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+                danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+                with danger:
+                    st.write("Delete permanently (only if not referenced).")
+                    confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                    if st.button("Delete Audience", type="primary", disabled=not confirm, key="mg_aud_del"):
+                        st.session_state["danger_nonce"] += 1
+                        if v_cnt > 0:
+                            st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits. Deactivate instead.")
+                            st.rerun()
+                        try:
+                            exec_sql("DELETE FROM target_audiences WHERE audience_id=:id", {"id": aid})
+                            st.session_state["flash_admin"] = ("success", "Audience deleted ✅")
+                        except Exception as e:
+                            st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
                         st.rerun()
-                    try:
-                        exec_sql("DELETE FROM target_audiences WHERE audience_id=:id", {"id": aid})
-                        st.session_state["flash_admin"] = ("success", "Audience deleted ✅")
-                    except Exception as e:
-                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
-                    st.rerun()
 
     # ---- Business Units (Manage)
     with tabs[2]:
@@ -2360,68 +2375,74 @@ def page_admin_import():
         if bdf.empty:
             st.info("No business units yet.")
         else:
-            display = [f"{r.name}  ({'active' if r.is_active else 'inactive'})" for r in bdf.itertuples(index=False)]
+            # Start with a blank option
+            display = [""] + [f"{r.name}  ({'active' if r.is_active else 'inactive'})" for r in bdf.itertuples(index=False)]
             choice = st.selectbox("Select business unit", display, index=0, key="mg_bu_sel")
-            row = bdf.iloc[display.index(choice)]
-            buid = int(row["business_unit_id"])
 
-            colA, colB, colC = st.columns(3)
-            with colA:
-                u_cnt = _refcount("SELECT COUNT(*) FROM users WHERE business_unit_id=:id", {"id": buid})
-                bl_cnt = _refcount("SELECT COUNT(*) FROM business_lines WHERE business_unit_id=:id", {"id": buid})
-                st.caption(f"Refs → Users: **{u_cnt}** · Business Lines: **{bl_cnt}**")
+            if choice == "":
+                st.info("Please select a business unit.")
+            else:
+                # Adjust index because of the blank entry
+                row = bdf.iloc[display.index(choice) - 1]
+                buid = int(row["business_unit_id"])
 
-            with colB:
-                new_active = not bool(row["is_active"])
-                label = "Deactivate" if bool(row["is_active"]) else "Activate"
-                if st.button(label, key="mg_bu_toggle"):
-                    exec_sql("UPDATE business_units SET is_active=:b WHERE business_unit_id=:id", {"b": new_active, "id": buid})
-                    st.success("Updated ✅")
+                colA, colB, colC = st.columns(3)
+                with colA:
+                    u_cnt = _refcount("SELECT COUNT(*) FROM users WHERE business_unit_id=:id", {"id": buid})
+                    bl_cnt = _refcount("SELECT COUNT(*) FROM business_lines WHERE business_unit_id=:id", {"id": buid})
+                    st.caption(f"Refs → Users: **{u_cnt}** · Business Lines: **{bl_cnt}**")
 
-            with colC:
-                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
-                with edit_box:
-                    with st.form("mg_bu_edit"):
-                        nm = st.text_input("Business Unit Name *", value=row["name"] or "")
-                        save = st.form_submit_button("Save changes")
-                    if save:
-                        nm_clean = nm.strip()
-                        if not nm_clean:
-                            st.error("Name is required.")
-                        else:
-                            dup = query_df(
-                                "SELECT 1 FROM business_units WHERE lower(name)=lower(:n) AND business_unit_id<>:id",
-                                {"n": nm_clean, "id": buid},
-                            )
-                            if not dup.empty:
-                                st.error("A business unit with that name already exists.")
+                with colB:
+                    new_active = not bool(row["is_active"])
+                    label = "Deactivate" if bool(row["is_active"]) else "Activate"
+                    if st.button(label, key="mg_bu_toggle"):
+                        exec_sql("UPDATE business_units SET is_active=:b WHERE business_unit_id=:id", {"b": new_active, "id": buid})
+                        st.success("Updated ✅")
+
+                with colC:
+                    edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                    with edit_box:
+                        with st.form("mg_bu_edit"):
+                            nm = st.text_input("Business Unit Name *", value=row["name"] or "")
+                            save = st.form_submit_button("Save changes")
+                        if save:
+                            nm_clean = nm.strip()
+                            if not nm_clean:
+                                st.error("Name is required.")
                             else:
-                                exec_sql("UPDATE business_units SET name=:n WHERE business_unit_id=:id", {"n": nm_clean, "id": buid})
-                                st.success("Saved ✅")
+                                dup = query_df(
+                                    "SELECT 1 FROM business_units WHERE lower(name)=lower(:n) AND business_unit_id<>:id",
+                                    {"n": nm_clean, "id": buid},
+                                )
+                                if not dup.empty:
+                                    st.error("A business unit with that name already exists.")
+                                else:
+                                    exec_sql("UPDATE business_units SET name=:n WHERE business_unit_id=:id", {"n": nm_clean, "id": buid})
+                                    st.success("Saved ✅")
 
-            dz_keybase = "mg_bu_conf"
-            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
-            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
-            with danger:
-                st.write("Delete permanently (only if not referenced by users/lines).")
-                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
-                if st.button("Delete Business Unit", type="primary", disabled=not confirm, key="mg_bu_del"):
-                    st.session_state["danger_nonce"] += 1
-                    if u_cnt > 0 or bl_cnt > 0:
-                        st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by users and/or business lines. Deactivate instead.")
+                dz_keybase = "mg_bu_conf"
+                conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+                danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+                with danger:
+                    st.write("Delete permanently (only if not referenced by users/lines).")
+                    confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                    if st.button("Delete Business Unit", type="primary", disabled=not confirm, key="mg_bu_del"):
+                        st.session_state["danger_nonce"] += 1
+                        if u_cnt > 0 or bl_cnt > 0:
+                            st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by users and/or business lines. Deactivate instead.")
+                            st.rerun()
+                        try:
+                            exec_sql("DELETE FROM business_units WHERE business_unit_id=:id", {"id": buid})
+                            st.session_state["flash_admin"] = ("success", "Business Unit deleted ✅")
+                        except Exception as e:
+                            st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
                         st.rerun()
-                    try:
-                        exec_sql("DELETE FROM business_units WHERE business_unit_id=:id", {"id": buid})
-                        st.session_state["flash_admin"] = ("success", "Business Unit deleted ✅")
-                    except Exception as e:
-                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
-                    st.rerun()
 
     # ---- Business Lines (Manage)
     with tabs[3]:
         bll = query_df("""
             SELECT bl.business_line_id, bl.name, bl.supplier, bl.category, bl.product_group, bl.is_active,
-                   bl.business_unit_id, bu.name AS business_unit
+                bl.business_unit_id, bu.name AS business_unit
             FROM business_lines bl
             JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
             ORDER BY bu.name, bl.name
@@ -2431,101 +2452,108 @@ def page_admin_import():
         else:
             def _fmt_bl(r):
                 return " - ".join([p for p in [str(r.business_unit), str(r.name), str(r.category or ""), str(r.product_group or "")] if p and p != "None"])
-            display = [f"{_fmt_bl(r)}  ({'active' if r.is_active else 'inactive'})" for r in bll.itertuples(index=False)]
+
+            # Start dropdown with a blank option
+            display = [""] + [f"{_fmt_bl(r)}  ({'active' if r.is_active else 'inactive'})" for r in bll.itertuples(index=False)]
             choice = st.selectbox("Select business line", display, index=0, key="mg_bl_sel")
-            row = bll.iloc[display.index(choice)]
-            blid = int(row["business_line_id"])
 
-            colA, colB, colC = st.columns(3)
-            with colA:
-                i_cnt = _refcount("SELECT COUNT(*) FROM items WHERE business_line_id=:id", {"id": blid})
-                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE business_line_id=:id", {"id": blid})
-                st.caption(f"Refs → Items: **{i_cnt}** · Visits: **{v_cnt}**")
+            if choice == "":
+                st.info("Please select a business line.")
+            else:
+                # Adjust index because of the blank entry
+                row = bll.iloc[display.index(choice) - 1]
+                blid = int(row["business_line_id"])
 
-            with colB:
-                new_active = not bool(row["is_active"])
-                label = "Deactivate" if bool(row["is_active"]) else "Activate"
-                if st.button(label, key="mg_bl_toggle"):
-                    exec_sql("UPDATE business_lines SET is_active=:b WHERE business_line_id=:id", {"b": new_active, "id": blid})
-                    st.success("Updated ✅")
+                colA, colB, colC = st.columns(3)
+                with colA:
+                    i_cnt = _refcount("SELECT COUNT(*) FROM items WHERE business_line_id=:id", {"id": blid})
+                    v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE business_line_id=:id", {"id": blid})
+                    st.caption(f"Refs → Items: **{i_cnt}** · Visits: **{v_cnt}**")
 
-            with colC:
-                bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
-                bu_labels = bu_df["name"].tolist()
-                bu_idx = 0
-                if pd.notna(row["business_unit_id"]):
-                    for i, r in enumerate(bu_df.itertuples(index=False)):
-                        if int(r.business_unit_id) == int(row["business_unit_id"]):
-                            bu_idx = i
-                            break
+                with colB:
+                    new_active = not bool(row["is_active"])
+                    label = "Deactivate" if bool(row["is_active"]) else "Activate"
+                    if st.button(label, key="mg_bl_toggle"):
+                        exec_sql("UPDATE business_lines SET is_active=:b WHERE business_line_id=:id", {"b": new_active, "id": blid})
+                        st.success("Updated ✅")
 
-                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
-                with edit_box:
-                    with st.form("mg_bl_edit"):
-                        bu_label = st.selectbox("Business Unit *", bu_labels, index=bu_idx if bu_labels else 0)
-                        nm = st.text_input("Business Line Name *", value=row["name"] or "")
-                        supplier = st.text_input("Supplier", value=row["supplier"] or "")
-                        category = st.text_input("Category *", value=row["category"] or "")
-                        prod_group = st.text_input("Product Group", value=row["product_group"] or "")
-                        save = st.form_submit_button("Save changes")
-                    if save:
-                        nm_clean = nm.strip()
-                        cat_clean = category.strip()
-                        if not nm_clean or not cat_clean:
-                            st.error("Business Line Name and Category are required.")
-                        else:
-                            new_bu_id = int(bu_df.loc[bu_df["name"] == bu_label, "business_unit_id"].iloc[0]) if not bu_df.empty else None
-                            dup = query_df(
-                                """
-                                SELECT 1 FROM business_lines
-                                WHERE business_unit_id=:bid AND lower(name)=lower(:nm) AND business_line_id<>:id
-                                """,
-                                {"bid": new_bu_id, "nm": nm_clean, "id": blid},
-                            )
-                            if not dup.empty:
-                                st.error("A business line with that name already exists in the selected Business Unit.")
+                with colC:
+                    bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
+                    bu_labels = bu_df["name"].tolist()
+                    bu_idx = 0
+                    if pd.notna(row["business_unit_id"]):
+                        for i, r in enumerate(bu_df.itertuples(index=False)):
+                            if int(r.business_unit_id) == int(row["business_unit_id"]):
+                                bu_idx = i
+                                break
+
+                    edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                    with edit_box:
+                        with st.form("mg_bl_edit"):
+                            bu_label = st.selectbox("Business Unit *", bu_labels, index=bu_idx if bu_labels else 0)
+                            nm = st.text_input("Business Line Name *", value=row["name"] or "")
+                            supplier = st.text_input("Supplier", value=row["supplier"] or "")
+                            category = st.text_input("Category *", value=row["category"] or "")
+                            prod_group = st.text_input("Product Group", value=row["product_group"] or "")
+                            save = st.form_submit_button("Save changes")
+                        if save:
+                            nm_clean = nm.strip()
+                            cat_clean = category.strip()
+                            if not nm_clean or not cat_clean:
+                                st.error("Business Line Name and Category are required.")
                             else:
-                                exec_sql(
+                                new_bu_id = int(bu_df.loc[bu_df["name"] == bu_label, "business_unit_id"].iloc[0]) if not bu_df.empty else None
+                                dup = query_df(
                                     """
-                                    UPDATE business_lines
-                                    SET business_unit_id=:bid, name=:name, supplier=:supplier, category=:cat, product_group=:pg
-                                    WHERE business_line_id=:id
+                                    SELECT 1 FROM business_lines
+                                    WHERE business_unit_id=:bid AND lower(name)=lower(:nm) AND business_line_id<>:id
                                     """,
-                                    {
-                                        "bid": new_bu_id, "name": nm_clean, "supplier": (supplier.strip() or None),
-                                        "cat": cat_clean, "pg": (prod_group.strip() or None), "id": blid
-                                    },
+                                    {"bid": new_bu_id, "nm": nm_clean, "id": blid},
                                 )
-                                st.success("Saved ✅")
+                                if not dup.empty:
+                                    st.error("A business line with that name already exists in the selected Business Unit.")
+                                else:
+                                    exec_sql(
+                                        """
+                                        UPDATE business_lines
+                                        SET business_unit_id=:bid, name=:name, supplier=:supplier, category=:cat, product_group=:pg
+                                        WHERE business_line_id=:id
+                                        """,
+                                        {
+                                            "bid": new_bu_id, "name": nm_clean, "supplier": (supplier.strip() or None),
+                                            "cat": cat_clean, "pg": (prod_group.strip() or None), "id": blid
+                                        },
+                                    )
+                                    st.success("Saved ✅")
 
-            dz_keybase = "mg_bl_conf"
-            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
-            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
-            with danger:
-                st.write("Delete permanently (only if not referenced by items/visits).")
-                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
-                if st.button("Delete Business Line", type="primary", disabled=not confirm, key="mg_bl_del"):
-                    st.session_state["danger_nonce"] += 1
-                    if i_cnt > 0 or v_cnt > 0:
-                        st.session_state["flash_admin"] = ("error", "Cannot delete: referenced by items and/or visits. Deactivate instead.")
+                dz_keybase = "mg_bl_conf"
+                conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+                danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+                with danger:
+                    st.write("Delete permanently (only if not referenced by items/visits).")
+                    confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                    if st.button("Delete Business Line", type="primary", disabled=not confirm, key="mg_bl_del"):
+                        st.session_state["danger_nonce"] += 1
+                        if i_cnt > 0 or v_cnt > 0:
+                            st.session_state["flash_admin"] = ("error", "Cannot delete: referenced by items and/or visits. Deactivate instead.")
+                            st.rerun()
+                        try:
+                            exec_sql("DELETE FROM business_lines WHERE business_line_id=:id", {"id": blid})
+                            st.session_state["flash_admin"] = ("success", "Business Line deleted ✅")
+                        except Exception as e:
+                            st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
                         st.rerun()
-                    try:
-                        exec_sql("DELETE FROM business_lines WHERE business_line_id=:id", {"id": blid})
-                        st.session_state["flash_admin"] = ("success", "Business Line deleted ✅")
-                    except Exception as e:
-                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
-                    st.rerun()
 
     # ---- Items (Manage)
     with tabs[4]:
         idf = query_df("""
             SELECT i.product_id,
-                   i.article_number,
-                   i.description,
-                   i.is_active,
-                   bl.business_line_id,
-                   bl.name AS business_line,
-                   bu.name AS business_unit
+                i.article_number,
+                i.description,
+                i.is_active,
+                bl.business_line_id,
+                bl.name AS business_line,
+                bu.name AS business_unit
             FROM items i
             JOIN business_lines bl   ON bl.business_line_id = i.business_line_id
             JOIN business_units bu   ON bu.business_unit_id = bl.business_unit_id
@@ -2541,102 +2569,108 @@ def page_admin_import():
                 desc = (str(r.description).strip() if pd.notna(r.description) and str(r.description).strip() else "")
                 return " - ".join([p for p in [art, bu, bl, desc] if p]) or str(r.product_id)
 
-            display = [f"{_fmt_item(r)}  ({'active' if r.is_active else 'inactive'})" for r in idf.itertuples(index=False)]
+            # Start dropdown with a blank option
+            display = [""] + [f"{_fmt_item(r)}  ({'active' if r.is_active else 'inactive'})" for r in idf.itertuples(index=False)]
             choice = st.selectbox("Select item", display, index=0, key="mg_item_sel")
-            row = idf.iloc[display.index(choice)]
-            pid = str(row["product_id"])
 
-            colA, colB, colC = st.columns(3)
-            with colA:
-                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE product_id=:pid", {"pid": pid})
-                st.caption(f"Refs → Visits: **{v_cnt}**")
+            if choice == "":
+                st.info("Please select an item.")
+            else:
+                # Adjust index because of the blank entry
+                row = idf.iloc[display.index(choice) - 1]
+                pid = str(row["product_id"])
 
-            with colB:
-                new_active = not bool(row["is_active"])
-                label = "Deactivate" if bool(row["is_active"]) else "Activate"
-                if st.button(label, key="mg_item_toggle"):
-                    exec_sql("UPDATE items SET is_active=:b WHERE product_id=:pid", {"b": new_active, "pid": pid})
-                    st.success("Updated ✅")
+                colA, colB, colC = st.columns(3)
+                with colA:
+                    v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE product_id=:pid", {"pid": pid})
+                    st.caption(f"Refs → Visits: **{v_cnt}**")
 
-            with colC:
-                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
-                with edit_box:
-                    bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
-                    bu_labels = bu_df["name"].tolist()
-                    bu_idx = 0
-                    for i, r in enumerate(bu_df.itertuples(index=False)):
-                        if str(r.name) == str(row["business_unit"]):
-                            bu_idx = i
-                            break
+                with colB:
+                    new_active = not bool(row["is_active"])
+                    label = "Deactivate" if bool(row["is_active"]) else "Activate"
+                    if st.button(label, key="mg_item_toggle"):
+                        exec_sql("UPDATE items SET is_active=:b WHERE product_id=:pid", {"b": new_active, "pid": pid})
+                        st.success("Updated ✅")
 
-                    with st.form("mg_item_edit"):
-                        bu_label = st.selectbox("Business Unit *", bu_labels, index=bu_idx if bu_labels else 0)
-                        sel_bu_id = int(bu_df.loc[bu_df["name"] == bu_label, "business_unit_id"].iloc[0]) if not bu_df.empty else None
-                        bl_df = query_df(
-                            "SELECT business_line_id, name FROM business_lines WHERE is_active IS TRUE AND business_unit_id=:bid ORDER BY name",
-                            {"bid": sel_bu_id}
-                        ) if sel_bu_id else pd.DataFrame()
-                        bl_labels = bl_df["name"].tolist() if not bl_df.empty else []
-                        bl_idx = 0
-                        for i, r in enumerate(bl_df.itertuples(index=False)):
-                            if int(r.business_line_id) == int(row["business_line_id"]):
-                                bl_idx = i
+                with colC:
+                    edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                    with edit_box:
+                        bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
+                        bu_labels = bu_df["name"].tolist()
+                        bu_idx = 0
+                        for i, r in enumerate(bu_df.itertuples(index=False)):
+                            if str(r.name) == str(row["business_unit"]):
+                                bu_idx = i
                                 break
 
-                        art = st.text_input("Article Number (unique)", value=row["article_number"] or "")
-                        desc = st.text_input("Description", value=row["description"] or "")
-                        bl_label = st.selectbox("Business Line *", bl_labels, index=bl_idx if bl_labels else 0)
-                        save = st.form_submit_button("Save changes")
+                        with st.form("mg_item_edit"):
+                            bu_label = st.selectbox("Business Unit *", bu_labels, index=bu_idx if bu_labels else 0)
+                            sel_bu_id = int(bu_df.loc[bu_df["name"] == bu_label, "business_unit_id"].iloc[0]) if not bu_df.empty else None
+                            bl_df = query_df(
+                                "SELECT business_line_id, name FROM business_lines WHERE is_active IS TRUE AND business_unit_id=:bid ORDER BY name",
+                                {"bid": sel_bu_id}
+                            ) if sel_bu_id else pd.DataFrame()
+                            bl_labels = bl_df["name"].tolist() if not bl_df.empty else []
+                            bl_idx = 0
+                            for i, r in enumerate(bl_df.itertuples(index=False)):
+                                if int(r.business_line_id) == int(row["business_line_id"]):
+                                    bl_idx = i
+                                    break
 
-                    if save:
-                        new_bl_id = int(bl_df.loc[bl_df["name"] == bl_label, "business_line_id"].iloc[0]) if bl_labels else None
+                            art = st.text_input("Article Number (unique)", value=row["article_number"] or "")
+                            desc = st.text_input("Description", value=row["description"] or "")
+                            bl_label = st.selectbox("Business Line *", bl_labels, index=bl_idx if bl_labels else 0)
+                            save = st.form_submit_button("Save changes")
 
-                        if not new_bl_id:
-                            st.error("Business Line is required.")
-                        else:
-                            if art.strip():
-                                dup = query_df("SELECT 1 FROM items WHERE lower(article_number)=lower(:a) AND product_id<>:pid",
-                                               {"a": art.strip(), "pid": pid})
-                                if not dup.empty:
-                                    st.error("Article Number already exists.")
+                        if save:
+                            new_bl_id = int(bl_df.loc[bl_df["name"] == bl_label, "business_line_id"].iloc[0]) if bl_labels else None
+
+                            if not new_bl_id:
+                                st.error("Business Line is required.")
+                            else:
+                                if art.strip():
+                                    dup = query_df("SELECT 1 FROM items WHERE lower(article_number)=lower(:a) AND product_id<>:pid",
+                                                {"a": art.strip(), "pid": pid})
+                                    if not dup.empty:
+                                        st.error("Article Number already exists.")
+                                    else:
+                                        exec_sql(
+                                            """
+                                            UPDATE items
+                                            SET article_number=:a, description=:d, business_line_id=:bl
+                                            WHERE product_id=:pid
+                                            """,
+                                            {"a": art.strip(), "d": (desc.strip() or None), "bl": new_bl_id, "pid": pid},
+                                        )
+                                        st.success("Saved ✅")
                                 else:
                                     exec_sql(
                                         """
                                         UPDATE items
-                                        SET article_number=:a, description=:d, business_line_id=:bl
+                                        SET article_number=NULL, description=:d, business_line_id=:bl
                                         WHERE product_id=:pid
                                         """,
-                                        {"a": art.strip(), "d": (desc.strip() or None), "bl": new_bl_id, "pid": pid},
+                                        {"d": (desc.strip() or None), "bl": new_bl_id, "pid": pid},
                                     )
                                     st.success("Saved ✅")
-                            else:
-                                exec_sql(
-                                    """
-                                    UPDATE items
-                                    SET article_number=NULL, description=:d, business_line_id=:bl
-                                    WHERE product_id=:pid
-                                    """,
-                                    {"d": (desc.strip() or None), "bl": new_bl_id, "pid": pid},
-                                )
-                                st.success("Saved ✅")
 
-            dz_keybase = "mg_item_conf"
-            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
-            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
-            with danger:
-                st.write("Delete permanently (only if not referenced).")
-                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
-                if st.button("Delete Item", type="primary", disabled=not confirm, key="mg_item_del"):
-                    st.session_state["danger_nonce"] += 1
-                    if v_cnt > 0:
-                        st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits. Deactivate instead.")
+                dz_keybase = "mg_item_conf"
+                conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+                danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+                with danger:
+                    st.write("Delete permanently (only if not referenced).")
+                    confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                    if st.button("Delete Item", type="primary", disabled=not confirm, key="mg_item_del"):
+                        st.session_state["danger_nonce"] += 1
+                        if v_cnt > 0:
+                            st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits. Deactivate instead.")
+                            st.rerun()
+                        try:
+                            exec_sql("DELETE FROM items WHERE product_id=:pid", {"pid": pid})
+                            st.session_state["flash_admin"] = ("success", "Item deleted ✅")
+                        except Exception as e:
+                            st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
                         st.rerun()
-                    try:
-                        exec_sql("DELETE FROM items WHERE product_id=:pid", {"pid": pid})
-                        st.session_state["flash_admin"] = ("success", "Item deleted ✅")
-                    except Exception as e:
-                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
-                    st.rerun()
 
     # ---- Objectives (Manage)
     with tabs[5]:
@@ -2644,64 +2678,72 @@ def page_admin_import():
         if odf.empty:
             st.info("No objectives yet.")
         else:
-            display = [f"{r.name}  ({'active' if bool(r.is_active) else 'inactive'})" for r in odf.itertuples(index=False)]
+            # Add blank entry first
+            display = [""] + [f"{r.name}  ({'active' if bool(r.is_active) else 'inactive'})" for r in odf.itertuples(index=False)]
             choice = st.selectbox("Select objective", display, index=0, key="mg_obj_sel")
-            row = odf.iloc[display.index(choice)]
-            oid = int(row["objective_id"])
-            active_now = bool(row["is_active"])
 
-            colA, colB, colC = st.columns([1,1,2])
-            with colA:
-                v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE objective_id=:id", {"id": oid})
-                st.caption(f"Refs → Visits: **{v_cnt}**")
+            if choice == "":
+                st.info("Please select an objective.")
+            else:
+                # Adjust index for blank entry
+                row = odf.iloc[display.index(choice) - 1]
+                oid = int(row["objective_id"])
+                active_now = bool(row["is_active"])
 
-            with colB:
-                new_active = not active_now
-                label = "Deactivate" if active_now else "Activate"
-                if st.button(label, key=f"mg_obj_toggle_{oid}"):
-                    try:
-                        exec_sql("UPDATE objectives SET is_active=:b WHERE objective_id=:id", {"b": new_active, "id": oid})
-                        st.success("Updated ✅")
-                    except Exception as e:
-                        st.error("Could not update objective status.")
-                        st.caption(str(e))
+                colA, colB, colC = st.columns([1, 1, 2])
+                with colA:
+                    v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE objective_id=:id", {"id": oid})
+                    st.caption(f"Refs → Visits: **{v_cnt}**")
 
-            with colC:
-                edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
-                with edit_box:
-                    with st.form("mg_obj_edit"):
-                        nm = st.text_input("Objective name *", value=row["name"] or "")
-                        save = st.form_submit_button("Save changes")
-                    if save:
-                        nm_clean = nm.strip()
-                        if not nm_clean:
-                            st.error("Name is required.")
-                        else:
-                            dup = query_df("SELECT 1 FROM objectives WHERE lower(name)=lower(:n) AND objective_id<>:id",
-                                           {"n": nm_clean, "id": oid})
-                            if not dup.empty:
-                                st.error("Objective already exists.")
+                with colB:
+                    new_active = not active_now
+                    label = "Deactivate" if active_now else "Activate"
+                    if st.button(label, key=f"mg_obj_toggle_{oid}"):
+                        try:
+                            exec_sql("UPDATE objectives SET is_active=:b WHERE objective_id=:id", {"b": new_active, "id": oid})
+                            st.success("Updated ✅")
+                        except Exception as e:
+                            st.error("Could not update objective status.")
+                            st.caption(str(e))
+
+                with colC:
+                    edit_box = st.popover("Edit") if hasattr(st, "popover") else st.expander("Edit", expanded=False)
+                    with edit_box:
+                        with st.form("mg_obj_edit"):
+                            nm = st.text_input("Objective name *", value=row["name"] or "")
+                            save = st.form_submit_button("Save changes")
+                        if save:
+                            nm_clean = nm.strip()
+                            if not nm_clean:
+                                st.error("Name is required.")
                             else:
-                                exec_sql("UPDATE objectives SET name=:n WHERE objective_id=:id", {"n": nm_clean, "id": oid})
-                                st.success("Saved ✅")
+                                dup = query_df(
+                                    "SELECT 1 FROM objectives WHERE lower(name)=lower(:n) AND objective_id<>:id",
+                                    {"n": nm_clean, "id": oid}
+                                )
+                                if not dup.empty:
+                                    st.error("Objective already exists.")
+                                else:
+                                    exec_sql("UPDATE objectives SET name=:n WHERE objective_id=:id", {"n": nm_clean, "id": oid})
+                                    st.success("Saved ✅")
 
-            dz_keybase = "mg_obj_conf"
-            conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
-            danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
-            with danger:
-                st.write("Delete permanently (only if not referenced).")
-                confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
-                if st.button("Delete Objective", type="primary", disabled=not confirm, key="mg_obj_del"):
-                    st.session_state["danger_nonce"] += 1
-                    if v_cnt > 0:
-                        st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits.")
+                dz_keybase = "mg_obj_conf"
+                conf_key = f"{dz_keybase}_{st.session_state['danger_nonce']}"
+                danger = st.popover("Danger Zone") if hasattr(st, "popover") else st.expander("Danger Zone", expanded=False)
+                with danger:
+                    st.write("Delete permanently (only if not referenced).")
+                    confirm = st.checkbox("I understand this cannot be undone.", key=conf_key)
+                    if st.button("Delete Objective", type="primary", disabled=not confirm, key="mg_obj_del"):
+                        st.session_state["danger_nonce"] += 1
+                        if v_cnt > 0:
+                            st.session_state["flash_admin"] = ("error", "Cannot delete: it is referenced by visits.")
+                            st.rerun()
+                        try:
+                            exec_sql("DELETE FROM objectives WHERE objective_id=:id", {"id": oid})
+                            st.session_state["flash_admin"] = ("success", "Objective deleted ✅")
+                        except Exception as e:
+                            st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
                         st.rerun()
-                    try:
-                        exec_sql("DELETE FROM objectives WHERE objective_id=:id", {"id": oid})
-                        st.session_state["flash_admin"] = ("success", "Objective deleted ✅")
-                    except Exception as e:
-                        st.session_state["flash_admin"] = ("error", f"Delete failed: {e}")
-                    st.rerun()
 
 # =============================
 # Page — Admin: Data Browser
