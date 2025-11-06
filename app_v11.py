@@ -766,7 +766,7 @@ def page_submit_visit():
             if pd.notna(row.position) and str(row.position).strip():
                 parts.append(str(row.position).strip())
             parts = [p for p in parts if p]
-            return " — ".join(parts) if parts else name
+            return " || ".join(parts) if parts else name
 
         for r in aud_df.itertuples(index=False):
             label = _fmt_audience(r)
@@ -1175,6 +1175,7 @@ def page_my_submissions():
     sql = """
         SELECT v.visit_id,
                v.submitted_at_local,
+               to_char(v.submitted_at_local, 'Day') AS day_name,
                c.account_name AS customer,
                ta.name AS audience,
                v.latitude, v.longitude, v.accuracy_m,
@@ -1210,6 +1211,7 @@ def page_my_submissions():
         WHERE v.user_id = :uid
         ORDER BY v.visit_id DESC
     """
+
     df = query_df(sql, {"uid": uid})
 
     if df.empty:
