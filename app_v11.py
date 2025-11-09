@@ -37,7 +37,7 @@ from db import engine
 # =============================
 # Config
 # =============================
-APP_TITLE = "Ascenda - v11"
+APP_TITLE = "Ascenda"
 TIMEZONE = "Asia/Riyadh"
 SESSION_TTL_MIN = 60        # 60 mins (1 hour)
 DUP_MINUTES = 15            # duplicate detection lookback (minutes)
@@ -50,6 +50,43 @@ try:
 except Exception:
     PBI_PUSH_URL = os.environ.get("PBI_PUSH_URL", "")  # env only if no secrets.toml
 st.set_page_config(page_title=APP_TITLE, layout="centered")
+
+# =============================
+# App Icons for Home Screen Addition
+# =============================
+# After st.set_page_config(...)
+import streamlit.components.v1 as components
+
+components.html(f"""
+<script>
+(function() {{
+  const head = document.head;
+  function add(tag, attrs) {{
+    const el = document.createElement(tag);
+    Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k, v));
+    head.appendChild(el);
+  }}
+  // iOS icon + title
+  add('link', {{ rel: 'apple-touch-icon', href: '/static/ascenda_180.png' }});
+  add('meta', {{ name: 'apple-mobile-web-app-capable', content: 'yes' }});
+  add('meta', {{ name: 'apple-mobile-web-app-title', content: 'Ascenda' }});
+
+  // Android / PWA
+  add('link', {{ rel: 'manifest', href: '/static/manifest.webmanifest' }});
+  add('meta', {{ name: 'theme-color', content: '#0ea5e9' }});
+
+  // (Optional) regular favicon fallback
+  add('link', {{ rel: 'icon', type: 'image/png', sizes: '192x192', href: '/static/ascenda_192.png' }});
+}})();
+</script>
+""", height=0)
+
+from PIL import Image
+st.set_page_config(
+    page_title=APP_TITLE,
+    page_icon=Image.open("static/ascenda_180.png"),
+    layout="centered"
+)
 
 # =============================
 # DB Utilities (PostgreSQL)
@@ -389,7 +426,7 @@ def _on_line_change():
 # UI — Login / Logout (blocks inactive accounts)
 # =============================
 def login_block():
-    st.title(f"{APP_TITLE} — Login")
+    st.title(f"{APP_TITLE} - Login")
     with st.form("login"):
         email = st.text_input("Email", placeholder="you@company.com")
         pw = st.text_input("Password", type="password")
