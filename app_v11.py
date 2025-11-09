@@ -39,7 +39,7 @@ from db import engine
 # =============================
 APP_TITLE = "Ascenda"
 TIMEZONE = "Asia/Riyadh"
-SESSION_TTL_MIN = 60        # 60 mins (1 hour)
+SESSION_TTL_MIN = 20       # 20 mins (1 hour)
 DUP_MINUTES = 15            # duplicate detection lookback (minutes)
 
 # Power BI push URL:
