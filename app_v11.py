@@ -358,12 +358,12 @@ def resolve_session_user() -> Optional[Dict[str, Any]]:
         return None
 
     # Extend session
-    new_exp = _utcnow() + timedelta(minutes=SESSION_TTL_MIN)
-    with engine.begin() as conn:
-        conn.execute(
-            text("UPDATE app_sessions SET expires_at_utc = :exp WHERE session_id = :sid"),
-            {"exp": new_exp, "sid": sid},
-        )
+    #new_exp = _utcnow() + timedelta(minutes=SESSION_TTL_MIN)
+    #with engine.begin() as conn:
+    #    conn.execute(
+    #        text("UPDATE app_sessions SET expires_at_utc = :exp WHERE session_id = :sid"),
+    #        {"exp": new_exp, "sid": sid},
+    #    )
 
     return u
 
