@@ -210,51 +210,50 @@ CREATE INDEX IF NOT EXISTS idx_smv_lines_movement ON shelf_movement_lines(moveme
 CREATE INDEX IF NOT EXISTS idx_smv_lines_product ON shelf_movement_lines(product_id);
 """
 
-SEED_BUSINESS_UNITS = [
-    ("ANESTHESIA & ICU", True),
-    ("GASTROINTESTINAL & OR", True),
-    ("RESPIRATORY CARE", True),
-    ("PHARMA & MEDICAL SHOWROOMS", True),
-    ("OTHERS", True),
-]
+#SEED_BUSINESS_UNITS = [
+#    ("ANESTHESIA & ICU", True),
+#    ("GASTROINTESTINAL & OR", True),
+#    ("RESPIRATORY CARE", True),
+#    ("PHARMA & MEDICAL SHOWROOMS", True),
+#    ("OTHERS", True),
+#]
 
-SEED_OBJECTIVES = [
-    ("01. Profiling",), ("02. Standard F2F Call",), ("03. Sample Delivery",),
-    ("04. Demonstration/AV",), ("05. Presentation/AV",), ("06. Workshop/AV",),
-    ("07. Evaluation Follow Up",), ("08. Handling Objection",),
-    ("09. Quotation Follow Up",), ("10. Post-Sales Technical Feedback",),
-    ("11. Post-Sales Logistic Feedback",), ("12. Monitoring Competitors",),
-    ("13. Trouble Shooting",), ("14. Delivery Follow Up",),
-    ("15. Collection Follow Up",), ("16. Shelf Movement",)
-]
+#SEED_OBJECTIVES = [
+#    ("01. Profiling",), ("02. Standard F2F Call",), ("03. Sample Delivery",),
+#    ("04. Demonstration/AV",), ("05. Presentation/AV",), ("06. Workshop/AV",),
+#    ("07. Evaluation Follow Up",), ("08. Handling Objection",),
+#    ("09. Quotation Follow Up",), ("10. Post-Sales Technical Feedback",),
+#    ("11. Post-Sales Logistic Feedback",), ("12. Monitoring Competitors",),
+#    ("13. Trouble Shooting",), ("14. Delivery Follow Up",),
+#    ("15. Collection Follow Up",), ("16. Shelf Movement",)
+#]
 
-#
-DEMO_REPS = [
-    ("ahmed.rep@company.com", "Ahmed Ali", "C/R"),
-    ("sara.rep@company.com", "Sara Nasser", "W/R"),
-]
+#DEMO_REPS = [
+#    ("ahmed.rep@company.com", "Ahmed Ali", "C/R"),
+#    ("sara.rep@company.com", "Sara Nasser", "W/R"),
+#]
 
 def ensure_schema_and_seed():
     with engine.begin() as conn:
         conn.exec_driver_sql(SCHEMA_SQL)
 
-        conn.execute(
-            text("""
-            INSERT INTO business_units (name, is_active)
-            VALUES (:name, :active)
-            ON CONFLICT (name) DO NOTHING
-            """),
-            [{"name": n, "active": a} for (n, a) in SEED_BUSINESS_UNITS]
-        )
+        #conn.execute(
+        #    text("""
+        #    INSERT INTO business_units (name, is_active)
+        #    VALUES (:name, :active)
+        #    ON CONFLICT (name) DO NOTHING
+        #    """),
+        #    [{"name": n, "active": a} for (n, a) in SEED_BUSINESS_UNITS]
+        #)
 
-        conn.execute(
-            text("""
-            INSERT INTO objectives (name)
-            VALUES (:name)
-            ON CONFLICT (name) DO NOTHING
-            """),
-            [{"name": n[0]} for n in SEED_OBJECTIVES]
-        )
+        #conn.execute(
+        #    text("""
+        #    INSERT INTO objectives (name)
+        #    VALUES (:name)
+        #    ON CONFLICT (name) DO NOTHING
+        #    """),
+        #    [{"name": n[0]} for n in SEED_OBJECTIVES]
+        #)
 
         admin_email = (_env("ADMIN_EMAIL", "") or "").strip().lower()
         admin_password = (_env("ADMIN_PASSWORD", "") or "").strip()
@@ -278,18 +277,18 @@ def ensure_schema_and_seed():
                 )
                 print(f"✅ Created initial admin: {admin_email}")
 
-        if (_env("SEED_DEMO", "0") or "0").strip() == "1":
-            for email, name, region in DEMO_REPS:
-                r = conn.execute(text("SELECT 1 FROM users WHERE email=:e"), {"e": email}).fetchone()
-                if not r:
-                    conn.execute(
-                        text("""
-                            INSERT INTO users(email, password_hash, name, region, business_unit_id, role, is_active)
-                            VALUES (:email, :pwd, :name, :region, NULL, 'rep', TRUE)
-                        """),
-                        {"email": email, "pwd": pbkdf2_sha256.hash("rep12345"), "name": name, "region": region},
-                    )
-            print("✅ Seeded demo reps.")
+        #if (_env("SEED_DEMO", "0") or "0").strip() == "1":
+        #    for email, name, region in DEMO_REPS:
+        #        r = conn.execute(text("SELECT 1 FROM users WHERE email=:e"), {"e": email}).fetchone()
+        #        if not r:
+        #            conn.execute(
+        #                text("""
+        #                    INSERT INTO users(email, password_hash, name, region, business_unit_id, role, is_active)
+        #                    VALUES (:email, :pwd, :name, :region, NULL, 'rep', TRUE)
+        #                """),
+        #                {"email": email, "pwd": pbkdf2_sha256.hash("rep12345"), "name": name, "region": region},
+        #            )
+        #    print("✅ Seeded demo reps.")
 
     print("✅ Schema ensured & base data ready.")
 
