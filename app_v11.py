@@ -426,10 +426,14 @@ def _on_line_change():
 # UI — Login / Logout (blocks inactive accounts)
 # =============================
 def login_block():
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
-        st.title(APP_TITLE)
-        st.subheader("Login")
+    st.markdown(
+        f"""
+        <h1 style="text-align:center; margin-bottom:0;">{APP_TITLE}</h1>
+        <h3 style="text-align:center; margin-top:0;">Login</h3>
+        """,
+        unsafe_allow_html=True
+    )
+    
     with st.form("login"):
         email = st.text_input("Email", placeholder="you@company.com")
         pw = st.text_input("Password", type="password")
