@@ -92,11 +92,21 @@ st.set_page_config(
 # Removing anchor links
 # =============================
 
+# hide anchor/permalink icons on all headings (st.title, st.header, markdown headings)
 st.markdown("""
 <style>
-/* Hide ALL anchor links globally */
-a.anchor-link {
-    display: none !important;
+/* st.title / st.header */
+[data-testid="stHeading"] a { 
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+/* markdown-rendered headings inside st.markdown */
+.stMarkdown h1 a, .stMarkdown h2 a, .stMarkdown h3 a,
+.stMarkdown h4 a, .stMarkdown h5 a, .stMarkdown h6 a {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 </style>
 """, unsafe_allow_html=True)
