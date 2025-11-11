@@ -3641,6 +3641,7 @@ def show_footer():
 # =============================
 if not st.session_state.user:
     login_block()
+    show_footer()
 else:
     logout_button()
     page = sidebar_nav()
