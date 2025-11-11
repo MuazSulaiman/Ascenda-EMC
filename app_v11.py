@@ -6,7 +6,7 @@
 # - Power BI push BEFORE rerun; includes shelf aggregates when present
 # - Secrets fallback: env["PBI_PUSH_URL"] or st.secrets["PBI_PUSH_URL"]
 # - Duplicate check uses submitted_at_utc
-# - Render + PostgreSQL (psycopg v3) — no SQLite, no settings.get
+# - Render + PostgreSQL (psycopg v3) — no SQLite, no settings.get 
 
 import io
 import os
