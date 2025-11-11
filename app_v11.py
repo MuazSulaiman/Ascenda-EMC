@@ -3209,32 +3209,45 @@ def page_admin_data():
             st.error("Export failed ❌")
             st.caption(str(e))
 
-    # ---------- Full database backup options ----------
+    # ---------- Full database backup options (auto schema from pg_dump) ----------
     st.divider()
     col_sql, col_zip = st.columns(2)
 
-    # Helper to get DATABASE_URL (Render provides it as DATABASE_URL or POSTGRES_URL / POSTGRES_CONNECTION_STRING)
     def _db_url():
+        # Prefer env; fall back to secrets (you already have _get_secret, reuse if you like)
         for k in ("DATABASE_URL", "POSTGRES_URL", "POSTGRES_CONNECTION_STRING"):
-            v = os.environ.get(k)
+            v = os.environ.get(k) or _get_secret(k, "")
             if v:
                 return v
         return None
+
+    def _normalize_pg_url(url: str) -> str:
+        # Some pg tools prefer 'postgresql://' over 'postgres://'
+        return url.replace("postgres://", "postgresql://", 1) if url.startswith("postgres://") else url
+
+    def _pg_dump_available() -> bool:
+        import shutil
+        return shutil.which("pg_dump") is not None
 
     with col_sql:
         if st.button("Download full DB (.sql via pg_dump)", key="export_pg_dump"):
             try:
                 db_url = _db_url()
                 if not db_url:
-                    raise RuntimeError("DATABASE_URL is not set in environment.")
+                    raise RuntimeError("DATABASE_URL / POSTGRES_URL not set.")
 
-                # Try to run pg_dump. We ask for plain SQL, no owner/privs so it imports cleanly.
-                # NOTE: If your password is in the URL, pg_dump will use it directly.
-                # If your URL has 'postgres://', pg_dump accepts it, but some builds prefer 'postgresql://'.
-                cmd = ["pg_dump", "--no-owner", "--no-privileges", "--format=plain", db_url]
+                if not _pg_dump_available():
+                    raise FileNotFoundError("pg_dump not found in PATH.")
 
-                # Capture to memory (could be large; fine for moderate DB sizes)
+                # Plain SQL, no owner/privs for easy import
                 import subprocess
+                cmd = [
+                    "pg_dump",
+                    "--no-owner",
+                    "--no-privileges",
+                    "--format=plain",
+                    _normalize_pg_url(db_url),
+                ]
                 proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 
                 if proc.returncode != 0 or not proc.stdout:
@@ -3245,14 +3258,14 @@ def page_admin_data():
                 st.success("Full SQL dump ready.")
                 st.download_button(
                     label="Download database.sql",
-                    data=proc.stdout,  # bytes
+                    data=proc.stdout,                      # bytes
                     file_name=f"database_backup_{ts}.sql",
                     mime="application/sql",
                     key="dl_pg_dump_sql",
                 )
-            except FileNotFoundError:
+            except FileNotFoundError as e:
                 st.error("`pg_dump` is not available in this environment.")
-                st.info("Use the **portable backup** option on the right, or add `pg_dump` to your image.")
+                st.info("Use the portable backup (right column) or add `pg_dump` to your image.")
             except Exception as e:
                 st.error("Full SQL dump failed ❌")
                 st.caption(str(e))
@@ -3262,7 +3275,7 @@ def page_admin_data():
             try:
                 ts = datetime.now().strftime("%Y-%m-%d_%H%M")
 
-                # 1) Prepare all dataframes (reuse same queries you already use for CSV export)
+                # 1) Prepare dataframes (same queries you already use)
                 tables = {
                     "visits": query_df("""
                         SELECT
@@ -3333,33 +3346,58 @@ def page_admin_data():
                     "shelf_movement_lines": query_df("SELECT * FROM shelf_movement_lines ORDER BY line_id DESC"),
                 }
 
-                # 2) Build the ZIP: schema.sql + CSVs + README
+                # 2) Build ZIP in-memory: schema.sql (from live DB) + CSVs + README
                 buf = io.BytesIO()
                 with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-                    # Include your schema SQL for easy rebuild
+
+                    # 2a) Try to get **live schema** via pg_dump --schema-only
+                    schema_bytes = b""
                     try:
-                        # SCHEMA_SQL should be imported/defined in your app (the one you shared)
-                        from app_v11 import SCHEMA_SQL  # adjust import if needed
-                        schema_sql = SCHEMA_SQL.strip().encode("utf-8")
-                    except Exception:
-                        # Fallback stub if not importable (still useful together with CSVs)
-                        schema_sql = b"-- schema.sql not auto-included; add your schema here.\n"
+                        db_url = _db_url()
+                        if not db_url:
+                            raise RuntimeError("DATABASE_URL / POSTGRES_URL not set.")
 
-                    zf.writestr("schema.sql", schema_sql)
+                        if not _pg_dump_available():
+                            raise FileNotFoundError("pg_dump not found")
 
-                    # Add CSVs
+                        import subprocess
+                        cmd_schema = [
+                            "pg_dump",
+                            "--no-owner",
+                            "--no-privileges",
+                            "--format=plain",
+                            "--schema-only",
+                            _normalize_pg_url(db_url),
+                        ]
+                        p = subprocess.run(cmd_schema, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+                        if p.returncode != 0 or not p.stdout:
+                            err = p.stderr.decode("utf-8", errors="ignore")
+                            raise RuntimeError(f"pg_dump --schema-only failed.\n{err.strip() or 'No error text.'}")
+                        schema_bytes = p.stdout
+                    except Exception as e:
+                        # Fall back to placeholder schema + guidance
+                        schema_bytes = (
+                            b"-- schema.sql not auto-included.\n"
+                            b"-- Reason: " + str(e).encode("utf-8", errors="ignore") + b"\n"
+                            b"-- Tip: Run a full SQL dump from a machine with pg_dump installed, or\n"
+                            b"--       enable pg_dump in your deployment image.\n"
+                        )
+
+                    zf.writestr("schema.sql", schema_bytes)
+
+                    # 2b) Add CSVs
                     for name, df in tables.items():
                         csv_bytes = df.to_csv(index=False, na_rep="").encode("utf-8-sig")
                         zf.writestr(f"data/{name}_{ts}.csv", csv_bytes)
 
-                    # Add README with restore instructions
+                    # 2c) README with restore steps
                     readme = f"""# Portable Backup
 
     This archive contains:
-    - `schema.sql` — your Postgres schema (run once to create empty tables).
+    - `schema.sql` — your **live** PostgreSQL schema (dumped via pg_dump when available).
     - `data/*.csv` — table data exports.
 
-    ## Quick restore (psql):
+    ## Quick restore (psql)
 
     1) Create an empty database.
     2) Load the schema:
@@ -3380,7 +3418,7 @@ def page_admin_data():
     psql "$DATABASE_URL" -c "\\copy shelf_movement_headers FROM 'data/shelf_movement_headers_{ts}.csv' WITH (FORMAT csv, HEADER true)"
     psql "$DATABASE_URL" -c "\\copy shelf_movement_lines FROM 'data/shelf_movement_lines_{ts}.csv' WITH (FORMAT csv, HEADER true)"
 
-    > Tip: If you have foreign key errors, follow dependency order (units → lines → items → customers → target_audiences → visits → home_visits → shelf_*).
+    > If you get FK errors, import in dependency order (units → lines → items → customers → target_audiences → visits → home_visits → shelf_*).
     """
                     zf.writestr("README_restore.md", readme.encode("utf-8"))
 
