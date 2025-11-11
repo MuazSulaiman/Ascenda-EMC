@@ -89,6 +89,19 @@ st.set_page_config(
 )
 
 # =============================
+# Removing anchor links
+# =============================
+
+st.markdown("""
+<style>
+/* Hide ALL anchor links globally */
+a.anchor-link {
+    display: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# =============================
 # DB Utilities (PostgreSQL)
 # =============================
 
