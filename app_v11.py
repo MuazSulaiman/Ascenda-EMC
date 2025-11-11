@@ -434,6 +434,13 @@ def _gen_tmp_pw(length: int = 12) -> str:
     core = "".join(secrets.choice(alphabet) for _ in range(length - 1))
     return core + secrets.choice("!@#$%^&*")
 
+from pathlib import Path
+import base64
+import streamlit as st
+
+def _img_b64(p: Path) -> str:
+    return base64.b64encode(p.read_bytes()).decode("utf-8")
+
 # ====== dependency reset callbacks ======
 def _on_customer_change():
     st.session_state.pop("aud_sel", None)
@@ -450,13 +457,27 @@ def _on_line_change():
 # =============================
 def login_block():
     
+    # ---- paths (logo in ./static/Login_Logo.png next to this script)
+    app_root = Path(__file__).parent
+    logo_path = app_root / "static" / "Login_Logo.png"
+
+    # ---- logo
+    if logo_path.exists():
+        b64 = _img_b64(logo_path)
+        st.markdown(
+            f"""
+            <div style="text-align:center;">
+              <img src="data:image/png;base64,{b64}" alt="Ascenda" style="width:220px;"/>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.warning(f"Logo not found at: {logo_path}")
+
+    # ---- title
     st.markdown(
-        """
-        <div style='text-align:center; margin-bottom:5px;'>
-            <img src='static/Login_Logo.png' style='width:180px;'>
-        </div>
-        <h2 style="text-align:center; margin-top:0;">Login</h2>
-        """,
+        "<h2 style='text-align:center; margin-top:8px;'>Login</h2>",
         unsafe_allow_html=True
     )
     
