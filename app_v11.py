@@ -449,9 +449,12 @@ def _on_line_change():
 # UI — Login / Logout (blocks inactive accounts)
 # =============================
 def login_block():
+    
     st.markdown(
-        f"""
-        <h1 style="text-align:center; margin-bottom:0;">{APP_TITLE}</h1>
+        """
+        <div style='text-align:center; margin-bottom:5px;'>
+            <img src='static/Login_Logo.png' style='width:180px;'>
+        </div>
         <h2 style="text-align:center; margin-top:0;">Login</h2>
         """,
         unsafe_allow_html=True
@@ -3373,11 +3376,6 @@ def page_admin_data():
             except Exception as e:
                 st.error("Portable backup failed ❌")
                 st.caption(str(e))
-
-# =============================
-# Helpers (place near your imports)
-# =============================
-
 
 # =============================
 # Helper — generate a strong temporary password
