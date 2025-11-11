@@ -426,7 +426,10 @@ def _on_line_change():
 # UI — Login / Logout (blocks inactive accounts)
 # =============================
 def login_block():
-    st.title(f"{APP_TITLE} - Login")
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        st.title(APP_TITLE)
+        st.subheader("Login")
     with st.form("login"):
         email = st.text_input("Email", placeholder="you@company.com")
         pw = st.text_input("Password", type="password")
