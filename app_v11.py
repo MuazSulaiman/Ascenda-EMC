@@ -728,8 +728,21 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
 
         # Success UI
         st.success(f"Captured location: {flat:.6f}, {flon:.6f}{_acc_str(facc)}")
+
+        # Use a local PNG (put your marker in ./static/location_marker.png)
+        marker_icon_path = "static/location_marker.png"
+        custom_icon = None
+        try:
+            custom_icon = folium.CustomIcon(marker_icon_path, icon_size=(40, 40))
+        except Exception:
+            pass  # fallback to default if file missing
+
         m = folium.Map(location=[flat, flon], zoom_start=16, control_scale=True)
-        folium.Marker([flat, flon], tooltip="Your location").add_to(m)
+        folium.Marker(
+            [flat, flon],
+            tooltip="Your location",
+            icon=custom_icon if custom_icon else None
+        ).add_to(m)
         st_folium(m, height=300, key=k("geo_map"))
 
         if st.button("🔁 Capture again", key=k("btn_retry_after_ok")):
