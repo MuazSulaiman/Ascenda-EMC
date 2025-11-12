@@ -574,58 +574,119 @@ def sidebar_nav():
 # =============================
 # Location block (auto-flow, minimal UI) – required
 # =============================
-def get_location_block(k) -> tuple[Optional[float], Optional[float], Optional[float]]:
+# ---- imports (put near the top of your file) ----
+import time
+import math
+from typing import Optional, Tuple
+import streamlit as st
+import folium
+from streamlit_folium import st_folium
+from streamlit_autorefresh import st_autorefresh
+
+# Prefer JS geolocation (no tiny Leaflet button needed)
+try:
+    from streamlit_js_eval import get_geolocation as _get_geo_js
+except Exception:
+    _get_geo_js = None
+
+
+def _acc_str(v: Optional[float]) -> str:
+    return f" (~{v:.0f} m accuracy)" if isinstance(v, (int, float)) and math.isfinite(v) else ""
+
+
+def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """
+    UX:
+      1) First screen: a single 'Get location' button.
+      2) After click: poll once/second for up to TIMEOUT_S seconds.
+         - Show spinner + 'Waiting for permission…'
+         - If coords arrive => success + map
+         - If timeout => show friendly warning + Retry button
+    """
+    TIMEOUT_S = 15  # adjust if you want longer/shorter
+
     with st.expander("📍 Location (auto) — required for check-in", expanded=True):
-        # Hide the default locate button from Leaflet controls if any
-        st.markdown("<style>.leaflet-control-locate{display:none!important}</style>", unsafe_allow_html=True)
+        tried_key   = k("geo_try")
+        start_key   = k("geo_start_ts")
+        refresh_key = k("geo_autorefresh")
 
-        tried_key = k("geo_try")
-        tried = st.session_state.get(tried_key, False)
+        st.session_state.setdefault(tried_key, False)
 
-        if not tried:
-            c1, _ = st.columns([1, 3])
-            with c1:
-                if st.button("📍 Get location", key=k("btn_get_loc"), type="primary"):
-                    st.session_state[tried_key] = True
-                    st.rerun()
+        # Screen 1 — just the “Get location” button
+        if not st.session_state[tried_key]:
+            st.caption("Allow your browser to share location. We only capture it for this visit submission.")
+            if st.button("📍 Get location", key=k("btn_get_loc"), type="primary"):
+                st.session_state[tried_key] = True
+                st.session_state[start_key] = time.time()
+                st.rerun()
             return (None, None, None)
 
-        # NOTE: Works reliably over HTTPS (Render is HTTPS by default).
-        loc = streamlit_geolocation()  # dict or None
-        lat = loc.get("latitude") if isinstance(loc, dict) else None
-        lon = loc.get("longitude") if isinstance(loc, dict) else None
-        acc = loc.get("accuracy") if isinstance(loc, dict) else None
+        # Screen 2 — actively trying to get geolocation
+        lat = lon = acc = None
 
-        c1, _ = st.columns([1, 3])
-        with c1:
-            if st.button("🔁 Retry location", key=k("btn_retry_loc")):
-                st.session_state.pop(tried_key, None)
-                st.rerun()
+        # 1) Try the JS path (non-blocking; returns immediately)
+        if _get_geo_js is not None:
+            try:
+                geo = _get_geo_js() or {}
+                lat = (geo.get("coords") or {}).get("latitude")
+                lon = (geo.get("coords") or {}).get("longitude")
+                acc = (geo.get("coords") or {}).get("accuracy")
+            except Exception:
+                pass
 
-        # Use None checks (0.0 is a valid coordinate)
+        # If still no coords, keep polling until timeout
         if lat is None or lon is None:
+            # Fire an auto-rerun every 1s while we wait, but only until timeout
+            started = st.session_state.get(start_key) or time.time()
+            elapsed = time.time() - started
+
+            if elapsed < TIMEOUT_S:
+                with st.spinner("Waiting for permission…"):
+                    st.progress(min(1.0, elapsed / TIMEOUT_S))
+                # auto-refresh in 1s to re-check
+                st_autorefresh(interval=1000, key=refresh_key, limit=TIMEOUT_S + 2)
+                # Offer cancel/retry immediately if user wants
+                # if st.button("🔁 Retry location", key=k("btn_retry_loc")):
+                #     st.session_state.pop(tried_key, None)
+                #     st.session_state.pop(start_key, None)
+                #     st.rerun()
+                return (None, None, None)
+
+            # Timeout reached → show the warning (only now)
             st.warning(
                 "We couldn't read your location.\n\n"
                 "• Allow **Location** (and **Precise location** on iOS) in browser permissions.\n"
-                "• If it still fails, try tapping **Retry location**."
+                "• Make sure you’re on **HTTPS** and device location is **ON**.\n"
+                "• Then tap **Retry location**."
             )
+            if st.button("🔁 Retry location", key=k("btn_retry_after_timeout")):
+                st.session_state.pop(tried_key, None)
+                st.session_state.pop(start_key, None)
+                st.rerun()
             return (None, None, None)
 
-        # Safe numeric casts
+        # Validate numeric
         try:
-            flat = float(lat)
-            flon = float(lon)
+            flat = float(lat); flon = float(lon)
             facc = float(acc) if acc is not None else None
-        except (TypeError, ValueError):
+        except Exception:
             st.warning("Location values looked invalid. Please try again.")
+            if st.button("🔁 Retry location", key=k("btn_retry_invalid")):
+                st.session_state.pop(tried_key, None)
+                st.session_state.pop(start_key, None)
+                st.rerun()
             return (None, None, None)
 
-        acc_txt = f" (~{facc:.0f} m accuracy)" if facc is not None else ""
-        st.success(f"Captured location: {flat:.6f}, {flon:.6f}{acc_txt}")
-
+        # Success UI
+        st.success(f"Captured location: {flat:.6f}, {flon:.6f}{_acc_str(facc)}")
         m = folium.Map(location=[flat, flon], zoom_start=16, control_scale=True)
         folium.Marker([flat, flon], tooltip="Your location").add_to(m)
         st_folium(m, height=300, key=k("geo_map"))
+
+        if st.button("🔁 Capture again", key=k("btn_retry_after_ok")):
+            st.session_state.pop(tried_key, None)
+            st.session_state.pop(start_key, None)
+            st.rerun()
 
         return (flat, flon, facc)
 
