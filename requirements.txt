@@ -26,4 +26,11 @@ passlib>=1.7
 pandas>=2.2
 requests>=2.32
 python-dotenv>=1.0
-
+streamlit
+streamlit-autorefresh
+streamlit-folium
+streamlit-js-eval
+folium
+sqlalchemy
+psycopg2-binary
+pandas
