@@ -452,6 +452,46 @@ def _on_bu_change():
 def _on_line_change():
     st.session_state.pop("prod_sel", None)
 
+# ====== reset pages for location ======
+
+import re
+
+# Namespaced keys we use inside get_location_block()
+_GEO_KEYS = ("geo_try", "geo_start_ts", "geo_autorefresh", "geo_map")
+
+def _reset_location_state_for_page(page_ns: str):
+    """Delete any geo-related session_state keys for this page namespace (any nonce)."""
+    prefix = f"{page_ns}/"
+    for k in list(st.session_state.keys()):
+        if k.startswith(prefix) and any(gk in k for gk in _GEO_KEYS):
+            st.session_state.pop(k, None)
+
+def _reset_geo_on_user_or_page_change(page_ns: str, uid: int):
+    """
+    If user or page changed since last render, clear geo state so the flow starts fresh.
+    Works even if you navigated away and came back.
+    """
+    last_uid_key  = f"__{page_ns}_last_uid"
+    last_page_key = "__current_page"
+
+    current_page  = page_ns
+    last_uid      = st.session_state.get(last_uid_key)
+    last_page     = st.session_state.get(last_page_key)
+
+    if (last_uid is None) or (last_uid != uid) or (last_page != current_page):
+        _reset_location_state_for_page(page_ns)
+        st.session_state[last_uid_key]  = uid
+        st.session_state[last_page_key] = current_page
+    
+def set_current_page(page_ns: str):
+    """Update the global page marker so other pages can detect navigation."""
+    prev = st.session_state.get("__current_page")
+    if prev != page_ns:
+        # Optionally: reset *this* page’s geo right when you enter it
+        _reset_location_state_for_page(page_ns)
+    st.session_state["__current_page"] = page_ns
+
+
 # =============================
 # UI — Login / Logout (blocks inactive accounts)
 # =============================
@@ -518,12 +558,16 @@ def login_block():
 
 def logout_button():
     if st.sidebar.button("Logout"):
+        # Clear submit page geo state when logging out
+        _reset_location_state_for_page("submit_visit")
+
         sid = st.query_params.get("sid")
         if sid:
             delete_session(sid)
         set_url_session_param(None)
         st.session_state.user = None
         st.session_state.pop("_current_page", None)
+        st.session_state.pop("__current_page", None)  # <— ensure page tracker is cleared
         set_url_param("page", None)
         st.rerun()
 
@@ -552,9 +596,14 @@ def sidebar_nav():
     idx = pages.index(current)
 
     def _on_change():
+        old = st.session_state.get("_current_page")
         chosen = st.session_state["_nav_choice"]
         st.session_state["_current_page"] = chosen
         set_url_param("page", chosen)
+
+        # If we are leaving the submit page, clear its geo state
+        if old == "Submit Visit" and chosen != "Submit Visit":
+            _reset_location_state_for_page("submit_visit")
 
     choice = st.sidebar.radio(
         "Go to",
@@ -759,9 +808,13 @@ def page_submit_visit():
         for n in ("prod_sel",):
             st.session_state.pop(k(n), None)
 
+    set_current_page(PAGE_NS)
     u = st.session_state.user
     uid = int(u["user_id"] if "user_id" in u else u["id"])
     st.caption(f"Logged in as **{u['name']}** · Region: **{u.get('region') or '—'}** · Role: **{u.get('role')}**")
+    
+    # ⬇️ Ensure location flow is reset when user or page changes
+    _reset_geo_on_user_or_page_change(PAGE_NS, uid)
 
     if st.session_state.pop(saved_ok_key, False):
         st.success("Saved ✅ — fields cleared, you can enter a new visit.")
@@ -1321,6 +1374,7 @@ def page_submit_visit():
 # =============================
 def page_my_submissions():
     st.title("📄 My Submissions")
+    set_current_page("my_submissions")
     u = st.session_state.user
     uid = int(u.get("user_id")) if u.get("user_id") is not None else int(u["id"])
 
@@ -1386,6 +1440,8 @@ def page_user_settings():
     import re
 
     st.title("👤 User Settings")
+    
+    set_current_page("user_settings")
 
     u = st.session_state.user
     uid = int(u["user_id"] if "user_id" in u else u["id"])
@@ -1489,6 +1545,8 @@ from sqlalchemy import text
 def page_admin_import():
     st.title("🛠️ Admin — Import Lookups (Excel/CSV)")
     st.caption("Files should have exact column names shown below. Existing rows are kept; duplicates are skipped.")
+    
+    set_current_page("admin_import")
 
     # -----------------------
     # Progress UI helpers
@@ -2906,6 +2964,7 @@ from sqlalchemy import text  # local import for clarity with query_df/exec_sql
 
 def page_admin_data():
     st.title("📊 Admin — Data Browser")
+    set_current_page("admin_data")
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
         "Visits", "Users", "Customers", "Target Audiences",
         "Business Units", "Business Lines",  # ← added Business Lines right after Business Units
@@ -3519,6 +3578,7 @@ from passlib.hash import pbkdf2_sha256
 
 def page_admin_users():
     st.title("👤 Admin — Users")
+    set_current_page("admin_users")
     st.subheader("Add a user")
 
     # --- Temp Password Generator (outside the form) ---
