@@ -8,30 +8,41 @@
 # - Duplicate check uses submitted_at_utc
 # - Render + PostgreSQL (psycopg v3) — no SQLite, no settings.get 
 
+# Standard library
+import base64
 import io
+import json
+import math
 import os
+import re
+import secrets
+import string
+import time
+import unicodedata
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-import pandas as pd
-import sqlalchemy as sa
-from sqlalchemy import text
-import streamlit as st
-from passlib.hash import pbkdf2_sha256
-from streamlit_geolocation import streamlit_geolocation
-from dateutil import tz
-from streamlit_folium import st_folium
+# Third-party
 import folium
+import pandas as pd
+import requests
+import sqlalchemy as sa
+import streamlit as st
 import streamlit.components.v1 as components
-import json, requests
-import re
-import secrets, string
+from PIL import Image
+from dateutil import tz
+from passlib.hash import pbkdf2_sha256
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from streamlit_autorefresh import st_autorefresh
+from streamlit_folium import st_folium
+from streamlit_geolocation import streamlit_geolocation
+from streamlit_js_eval import get_geolocation as _get_geo_js
 
-# USE our centralized Postgres engine (Render): provided by db.py
-# db.py must define `engine = create_engine(get_database_url(), ...)`
+# Local
 from db import engine
 
 # =============================
@@ -55,7 +66,6 @@ st.set_page_config(page_title=APP_TITLE, layout="centered")
 # App Icons for Home Screen Addition
 # =============================
 # After st.set_page_config(...)
-import streamlit.components.v1 as components
 
 components.html(f"""
 <script>
@@ -81,7 +91,6 @@ components.html(f"""
 </script>
 """, height=0)
 
-from PIL import Image
 st.set_page_config(
     page_title=APP_TITLE,
     page_icon=Image.open("static/ascenda_180.png"),
@@ -114,8 +123,6 @@ st.markdown("""
 # =============================
 # DB Utilities (PostgreSQL)
 # =============================
-
-from sqlalchemy import text
 
 def _get_secret(name: str, default: str = "") -> str:
     # Prefer env var (Render). Fall back to st.secrets only if present locally.
@@ -434,10 +441,6 @@ def _gen_tmp_pw(length: int = 12) -> str:
     core = "".join(secrets.choice(alphabet) for _ in range(length - 1))
     return core + secrets.choice("!@#$%^&*")
 
-from pathlib import Path
-import base64
-import streamlit as st
-
 def _img_b64(p: Path) -> str:
     return base64.b64encode(p.read_bytes()).decode("utf-8")
 
@@ -454,7 +457,6 @@ def _on_line_change():
 
 # ====== reset pages for location ======
 
-import re
 
 # Namespaced keys we use inside get_location_block()
 _GEO_KEYS = ("geo_try", "geo_start_ts", "geo_autorefresh", "geo_map")
@@ -624,13 +626,7 @@ def sidebar_nav():
 # Location block (auto-flow, minimal UI) – required
 # =============================
 # ---- imports (put near the top of your file) ----
-import time
-import math
-from typing import Optional, Tuple
-import streamlit as st
-import folium
-from streamlit_folium import st_folium
-from streamlit_autorefresh import st_autorefresh
+
 
 # Prefer JS geolocation (no tiny Leaflet button needed)
 try:
@@ -755,7 +751,6 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
 # =============================
 # Page — Submit Visit (sticky submit + dedupe guard)
 # =============================
-from sqlalchemy.exc import IntegrityError
 try:
     # psycopg 3 error class (optional, for finer duplicate checks)
     from psycopg.errors import UniqueViolation
@@ -1449,8 +1444,6 @@ def page_my_submissions():
 # Page — User Settings
 # =============================
 def page_user_settings():
-    from passlib.hash import pbkdf2_sha256
-    import re
 
     st.title("👤 User Settings")
     
@@ -1550,11 +1543,6 @@ def page_user_settings():
 # =============================
 # Page — Admin: Import Lookups (PostgreSQL + live progress)
 # =============================
-import time, re, unicodedata
-import pandas as pd
-import sqlalchemy as sa
-from sqlalchemy import text
-
 def page_admin_import():
     st.title("🛠️ Admin — Import Lookups (Excel/CSV)")
     st.caption("Files should have exact column names shown below. Existing rows are kept; duplicates are skipped.")
@@ -2973,8 +2961,6 @@ def page_admin_import():
 # =============================
 # Page — Admin: Data Browser
 # =============================
-from sqlalchemy import text  # local import for clarity with query_df/exec_sql
-
 def page_admin_data():
     st.title("📊 Admin — Data Browser")
     set_current_page("admin_data")
