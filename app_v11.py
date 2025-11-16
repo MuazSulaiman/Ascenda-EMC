@@ -120,6 +120,51 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- Client fingerprint capture ---
+import streamlit as st
+
+try:
+    # library provides handy helpers
+    from streamlit_js_eval import get_user_agent, streamlit_js_eval
+except Exception:
+    get_user_agent = None
+    streamlit_js_eval = None
+
+def capture_client_fingerprints():
+    """Populate st.session_state['client_ip'] and ['user_agent'] from the browser."""
+    # User Agent
+    if "user_agent" not in st.session_state:
+        ua_val = None
+        try:
+            if get_user_agent:
+                ua = get_user_agent()
+                # get_user_agent returns a dict like {"userAgent": "..."} in recent versions
+                ua_val = (ua or {}).get("userAgent") if isinstance(ua, dict) else ua
+        except Exception:
+            ua_val = None
+        if ua_val:
+            st.session_state["user_agent"] = str(ua_val)
+
+    # Public IP (must be fetched client-side; server-side requests return the server IP)
+    if "client_ip" not in st.session_state:
+        ip_val = None
+        try:
+            if streamlit_js_eval:
+                ip_val = streamlit_js_eval(
+                    js_expressions=(
+                        "await fetch('https://api.ipify.org?format=json')"
+                        ".then(r=>r.json()).then(j=>j.ip)"
+                    ),
+                    key="client_ip_fetch"
+                )
+        except Exception:
+            ip_val = None
+        if ip_val:
+            st.session_state["client_ip"] = str(ip_val)
+
+# Call this once early (e.g., at the start of your main script, before any login UI)
+capture_client_fingerprints()
+
 # =============================
 # DB Utilities (PostgreSQL)
 # =============================
