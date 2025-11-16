@@ -864,7 +864,7 @@ except Exception:
     UniqueViolation = None
 
 def page_submit_visit():
-    st.title("📝 Submit Visit (v11)")
+    st.title("📝 Submit Visit")
 
     # ---- tiny CSS for floating submit ----
     st.markdown("""
