@@ -226,6 +226,10 @@ def _utcnow_iso() -> str:
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
+def _client_ip() -> Optional[str]:
+    # If you capture IP via reverse proxy header, read it here; else keep None.
+    return st.session_state.get("client_ip") if "client_ip" in st.session_state else None
+
 def _local_now() -> datetime:
     return datetime.now(tz.gettz(TIMEZONE))
 
@@ -257,6 +261,25 @@ def push_visit_to_pbi(row: dict) -> Tuple[bool, Optional[str]]:
 # Auth helpers (PostgreSQL)
 # =============================
 
+def _user_agent() -> Optional[str]:
+    return st.session_state.get("user_agent")
+
+def _log_event(conn, sid: str, evt: str, details: dict | None = None):
+    payload = {
+        "sid": sid,
+        "evt": evt,
+        "ip": _client_ip(),
+        "ua": _user_agent(),
+        "details": json.dumps(details or {}),  # <-- serialize
+    }
+    conn.execute(
+        text("""
+            INSERT INTO app_session_events(session_id, event_type, ip, user_agent, details)
+            VALUES (:sid, :evt, :ip, :ua, :details::jsonb)       -- <-- cast
+        """),
+        payload,
+    )
+
 def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     with engine.begin() as conn:
         row = conn.execute(
@@ -280,28 +303,39 @@ def create_session(user_id: int) -> str:
     with engine.begin() as conn:
         conn.execute(
             text("""
-                INSERT INTO app_sessions(session_id, user_id, created_at_utc, expires_at_utc)
-                VALUES (:sid, :uid, :created, :expires)
+                INSERT INTO app_sessions(session_id, user_id, created_at_utc, expires_at_utc, last_seen_utc, ip, user_agent)
+                VALUES (:sid, :uid, :created, :expires, :last_seen, :ip, :ua)
             """),
             {
                 "sid": sid,
                 "uid": user_id,
-                "created": now,   # SQLAlchemy/psycopg converts to TIMESTAMPTZ
+                "created": now,
                 "expires": exp,
+                "last_seen": now,
+                "ip": _client_ip(),
+                "ua": _user_agent(),
             },
         )
+        _log_event(conn, sid, "created", {"ttl_min": SESSION_TTL_MIN})
     return sid
 
 def purge_expired_sessions() -> None:
+    """No hard delete; just mark any that have passed expiry as closed, idempotently."""
     with engine.begin() as conn:
-        conn.execute(
-            text("DELETE FROM app_sessions WHERE expires_at_utc < :now"),
-            {"now": _utcnow()},
+        res = conn.execute(
+            text("""
+                UPDATE app_sessions
+                SET revoked_at_utc = NOW(), closed_reason = 'expired'
+                WHERE expires_at_utc < NOW() AND revoked_at_utc IS NULL
+                RETURNING session_id
+            """)
         )
+        sids = [r[0] for r in res.fetchall()]
+        for sid in sids:
+            _log_event(conn, sid, "expired", {"batch": True})
 
 def delete_session(sid: str) -> None:
-    with engine.begin() as conn:
-        conn.execute(text("DELETE FROM app_sessions WHERE session_id = :sid"), {"sid": sid})
+    revoke_session(sid, reason="manual_revoke")
 
 # Optional: guard if someone runs the app before init_db_v11.py locally
 def _ensure_sessions_table_exists():
@@ -340,7 +374,7 @@ def set_url_session_param(sid: Optional[str]):
 # =============================
 
 def resolve_session_user() -> Optional[Dict[str, Any]]:
-    # Support both sid and legacy _sid param
+    # Support both sid and legacy _sid param (your existing logic)
     sid = st.query_params.get("sid") or st.query_params.get("_sid")
     if st.query_params.get("_sid"):
         st.query_params["sid"] = st.query_params["_sid"]
@@ -353,49 +387,59 @@ def resolve_session_user() -> Optional[Dict[str, Any]]:
     with engine.begin() as conn:
         row = conn.execute(
             text("""
-                SELECT session_id, user_id, expires_at_utc
+                SELECT session_id, user_id, expires_at_utc, revoked_at_utc
                 FROM app_sessions
                 WHERE session_id = :sid
             """),
             {"sid": sid},
         ).mappings().first()
 
-    if not row:
-        st.query_params.pop("sid", None)
-        return None
+        now = _utcnow()
+        if not row:
+            # Unknown token – do not leak which part failed
+            _log_event(conn, sid, "failed_validation", {"reason": "not_found"})
+            st.query_params.pop("sid", None)
+            return None
 
-    try:
-        # psycopg returns aware datetimes already; but guard anyway
-        exp = row["expires_at_utc"]
-        if isinstance(exp, str):
-            exp = datetime.fromisoformat(exp)
-    except Exception:
-        delete_session(sid)
-        st.query_params.pop("sid", None)
-        return None
+        # Hard fails: revoked or expired
+        if row["revoked_at_utc"] is not None:
+            _log_event(conn, sid, "failed_validation", {"reason": "revoked"})
+            st.query_params.pop("sid", None)
+            return None
 
-    exp_cmp = exp if getattr(exp, "tzinfo", None) else exp.replace(tzinfo=timezone.utc)
-    if _utcnow() >= exp_cmp:
-        delete_session(sid)
-        st.query_params.pop("sid", None)
-        return None
+        if row["expires_at_utc"] <= now:
+            # Mark as expired in place (soft close) and log
+            conn.execute(
+                text("""
+                    UPDATE app_sessions
+                    SET revoked_at_utc = :now, closed_reason = 'expired'
+                    WHERE session_id = :sid AND revoked_at_utc IS NULL
+                """),
+                {"sid": sid, "now": now},
+            )
+            _log_event(conn, sid, "expired")
+            st.query_params.pop("sid", None)
+            return None
 
-    u = get_user_by_id(int(row["user_id"]))
-    # In Postgres schema, is_active is BOOLEAN; treat None/False as inactive
-    if not u or not bool(u.get("is_active", True)):
-        delete_session(sid)
-        st.query_params.pop("sid", None)
-        return None
-
-    # Extend session
-    #new_exp = _utcnow() + timedelta(minutes=SESSION_TTL_MIN)
-    #with engine.begin() as conn:
-    #    conn.execute(
-    #        text("UPDATE app_sessions SET expires_at_utc = :exp WHERE session_id = :sid"),
-    #        {"exp": new_exp, "sid": sid},
-    #    )
-
-    return u
+        # Happy path: bump last_seen and log a lightweight event
+        conn.execute(
+            text("UPDATE app_sessions SET last_seen_utc = :now WHERE session_id = :sid"),
+            {"now": now, "sid": sid},
+        )
+        _log_event(conn, sid, "validated")
+        return {"session_id": sid, "user_id": int(row["user_id"])}
+    
+def revoke_session(sid: str, reason: str = "manual_revoke") -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                UPDATE app_sessions
+                SET revoked_at_utc = :now, closed_reason = :reason
+                WHERE session_id = :sid AND revoked_at_utc IS NULL
+            """),
+            {"sid": sid, "now": _utcnow(), "reason": reason},
+        )
+        _log_event(conn, sid, "revoked", {"reason": reason})
 
 # Run a tiny guard (safe no-op if table already exists), then load session
 _ensure_sessions_table_exists()
