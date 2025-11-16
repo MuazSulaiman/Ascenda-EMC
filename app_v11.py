@@ -91,6 +91,20 @@ components.html(f"""
 </script>
 """, height=0)
 
+# Global layout tweak: reduce the big top padding on all pages
+st.markdown(
+    """
+    <style>
+    /* Streamlit main view container – shrink vertical padding everywhere */
+    [data-testid="stAppViewContainer"] .block-container {
+        padding-top: 1.5rem !important;    /* try 0–2rem */
+        padding-bottom: 1.5rem !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.set_page_config(
     page_title=APP_TITLE,
     page_icon=Image.open("static/ascenda_180.png"),
