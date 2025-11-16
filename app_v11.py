@@ -264,21 +264,29 @@ def push_visit_to_pbi(row: dict) -> Tuple[bool, Optional[str]]:
 def _user_agent() -> Optional[str]:
     return st.session_state.get("user_agent")
 
-def _log_event(conn, sid: str, evt: str, details: dict | None = None):
-    payload = {
+import json
+from sqlalchemy import text, bindparam
+from sqlalchemy.dialects.postgresql import JSONB
+
+def _log_event(conn, sid: str, evt: str, details=None):
+    # Always bind a value for :details so it never goes missing
+    if details is None:
+        details = {}
+
+    stmt = text("""
+        INSERT INTO app_session_events(session_id, event_type, ip, user_agent, details)
+        VALUES (:sid, :evt, :ip, :ua, :details)
+    """).bindparams(
+        bindparam("details", type_=JSONB)
+    )
+
+    conn.execute(stmt, {
         "sid": sid,
         "evt": evt,
         "ip": _client_ip(),
         "ua": _user_agent(),
-        "details": json.dumps(details or {}),  # <-- serialize
-    }
-    conn.execute(
-        text("""
-            INSERT INTO app_session_events(session_id, event_type, ip, user_agent, details)
-            VALUES (:sid, :evt, :ip, :ua, :details::jsonb)       -- <-- cast
-        """),
-        payload,
-    )
+        "details": details,   # raw dict; SQLAlchemy adapts it to JSONB
+    })
 
 def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     with engine.begin() as conn:
