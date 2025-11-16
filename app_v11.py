@@ -381,61 +381,70 @@ def set_url_session_param(sid: Optional[str]):
 # App state — restore session
 # =============================
 
-def resolve_session_user() -> Optional[Dict[str, Any]]:
-    # Support both sid and legacy _sid param (your existing logic)
+def resolve_session_user():
     sid = st.query_params.get("sid") or st.query_params.get("_sid")
     if st.query_params.get("_sid"):
         st.query_params["sid"] = st.query_params["_sid"]
         st.query_params.pop("_sid", None)
         sid = st.query_params.get("sid")
-
     if not sid:
         return None
 
+    now = _utcnow()
     with engine.begin() as conn:
         row = conn.execute(
             text("""
-                SELECT session_id, user_id, expires_at_utc, revoked_at_utc
-                FROM app_sessions
-                WHERE session_id = :sid
+                SELECT s.session_id,
+                       s.user_id,
+                       s.expires_at_utc,
+                       s.revoked_at_utc,
+                       u.name         AS name,
+                       u.region       AS region,
+                       u.role         AS role,
+                       u.email        AS email
+                FROM app_sessions s
+                JOIN users u ON u.user_id = s.user_id
+                WHERE s.session_id = :sid
             """),
             {"sid": sid},
         ).mappings().first()
 
-        now = _utcnow()
         if not row:
-            # Unknown token – do not leak which part failed
             _log_event(conn, sid, "failed_validation", {"reason": "not_found"})
             st.query_params.pop("sid", None)
             return None
 
-        # Hard fails: revoked or expired
-        if row["revoked_at_utc"] is not None:
-            _log_event(conn, sid, "failed_validation", {"reason": "revoked"})
-            st.query_params.pop("sid", None)
-            return None
-
-        if row["expires_at_utc"] <= now:
-            # Mark as expired in place (soft close) and log
+        if row["revoked_at_utc"] is not None or row["expires_at_utc"] <= now:
             conn.execute(
                 text("""
                     UPDATE app_sessions
-                    SET revoked_at_utc = :now, closed_reason = 'expired'
-                    WHERE session_id = :sid AND revoked_at_utc IS NULL
+                    SET revoked_at_utc = GREATEST(COALESCE(revoked_at_utc, NOW()), NOW()),
+                        closed_reason = CASE
+                            WHEN expires_at_utc <= :now THEN 'expired'
+                            ELSE 'revoked'
+                        END
+                    WHERE session_id = :sid
                 """),
                 {"sid": sid, "now": now},
             )
-            _log_event(conn, sid, "expired")
+            _log_event(conn, sid, "expired" if row["expires_at_utc"] <= now else "revoked")
             st.query_params.pop("sid", None)
             return None
 
-        # Happy path: bump last_seen and log a lightweight event
-        conn.execute(
-            text("UPDATE app_sessions SET last_seen_utc = :now WHERE session_id = :sid"),
-            {"now": now, "sid": sid},
-        )
-        _log_event(conn, sid, "validated")
-        return {"session_id": sid, "user_id": int(row["user_id"])}
+        # bump last_seen and log
+        conn.execute(text("UPDATE app_sessions SET last_seen_utc = :now WHERE session_id = :sid"),
+                     {"now": now, "sid": sid})
+        _log_event(conn, sid, "validated", {"note": "ok"})
+
+        # return a plain dict with the fields your UI expects
+        return {
+            "session_id": row["session_id"],
+            "user_id": int(row["user_id"]),
+            "name": row.get("name"),
+            "region": row.get("region"),
+            "role": row.get("role"),
+            "email": row.get("email"),
+        }
     
 def revoke_session(sid: str, reason: str = "manual_revoke") -> None:
     with engine.begin() as conn:
@@ -871,7 +880,19 @@ def page_submit_visit():
     set_current_page(PAGE_NS)
     u = st.session_state.user
     uid = int(u["user_id"] if "user_id" in u else u["id"])
-    st.caption(f"Logged in as **{u['name']}** · Region: **{u.get('region') or '—'}** · Role: **{u.get('role')}**")
+    # --- Resolve logged-in user safely ---
+    u = st.session_state.get("user") or resolve_session_user()
+    if not u:
+        st.warning("Please sign in to continue.")
+        st.stop()
+
+    # --- Defensive fallbacks ---
+    display_name = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
+    display_region = u.get("region") or "—"
+    display_role = u.get("role") or "—"
+
+    # --- Display info ---
+    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")    
     
     # ⬇️ Ensure location flow is reset when user or page changes
     _reset_geo_on_user_or_page_change(PAGE_NS, uid)
