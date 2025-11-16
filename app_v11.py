@@ -121,48 +121,78 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Client fingerprint capture ---
-import streamlit as st
-
 try:
-    # library provides handy helpers
     from streamlit_js_eval import get_user_agent, streamlit_js_eval
 except Exception:
     get_user_agent = None
     streamlit_js_eval = None
 
+_IPV4 = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
+_IPV6 = re.compile(r"^(?:[A-Fa-f0-9:]+:+)+[A-Fa-f0-9]+$")
+
+def _valid_ip(s: str) -> bool:
+    if not s or not isinstance(s, str):
+        return False
+    s = s.strip()
+    # basic sanity for IPv4 ranges
+    if _IPV4.match(s):
+        try:
+            return all(0 <= int(o) <= 255 for o in s.split("."))
+        except Exception:
+            return False
+    return bool(_IPV6.match(s))
+
 def capture_client_fingerprints():
-    """Populate st.session_state['client_ip'] and ['user_agent'] from the browser."""
-    # User Agent
+    # 1) User Agent (works for you already)
     if "user_agent" not in st.session_state:
-        ua_val = None
         try:
             if get_user_agent:
                 ua = get_user_agent()
-                # get_user_agent returns a dict like {"userAgent": "..."} in recent versions
                 ua_val = (ua or {}).get("userAgent") if isinstance(ua, dict) else ua
+                if ua_val:
+                    st.session_state["user_agent"] = str(ua_val)
         except Exception:
-            ua_val = None
-        if ua_val:
-            st.session_state["user_agent"] = str(ua_val)
+            pass
 
-    # Public IP (must be fetched client-side; server-side requests return the server IP)
+    # 2) Public IP via browser JS (with multi-provider fallback + timeout)
     if "client_ip" not in st.session_state:
         ip_val = None
         try:
             if streamlit_js_eval:
-                ip_val = streamlit_js_eval(
-                    js_expressions=(
-                        "await fetch('https://api.ipify.org?format=json')"
-                        ".then(r=>r.json()).then(j=>j.ip)"
-                    ),
-                    key="client_ip_fetch"
-                )
+                # Try multiple endpoints; whichever returns first wins (with a 1500ms timeout)
+                js = """
+                    const to = (ms) => new Promise((_, rej) => setTimeout(()=>rej(new Error('timeout')), ms));
+                    const ipify = fetch('https://api.ipify.org?format=json', {cache:'no-store'}).then(r=>r.json()).then(j=>j.ip).catch(()=>null);
+                    const ipapi = fetch('https://ipapi.co/json', {cache:'no-store'}).then(r=>r.json()).then(j=>j.ip).catch(()=>null);
+                    const cf = fetch('https://1.1.1.1/cdn-cgi/trace', {cache:'no-store'}).then(r=>r.text()).then(t=>{
+                        const m = t.match(/ip=([^\n]+)/); return m ? m[1] : null;
+                    }).catch(()=>null);
+                    const race = Promise.any([ipify, ipapi, cf].map(p =>
+                        p.then(v => {
+                            if (v && typeof v === 'string') return v;
+                            throw new Error('no ip');
+                        })
+                    ));
+                    await Promise.race([race, to(1500)]);
+                """
+                ip_val = streamlit_js_eval(js_expressions=js, key="client_ip_fetch_v2")
         except Exception:
             ip_val = None
-        if ip_val:
-            st.session_state["client_ip"] = str(ip_val)
 
-# Call this once early (e.g., at the start of your main script, before any login UI)
+        if _valid_ip(ip_val):
+            st.session_state["client_ip"] = ip_val
+        else:
+            # mark as attempted so we don't hammer the APIs
+            st.session_state["client_ip"] = None
+
+    # 3) If UA is present but IP not yet, ask Streamlit to rerun once (JS returns on next cycle)
+    if st.session_state.get("user_agent") and st.session_state.get("client_ip") is None:
+        # Avoid infinite loops: only do this once
+        if not st.session_state.get("_ip_rerun_done"):
+            st.session_state["_ip_rerun_done"] = True
+            st.experimental_rerun()
+
+# Call early in your script, before login/session creation
 capture_client_fingerprints()
 
 # =============================
