@@ -279,6 +279,66 @@ def insert_visit_atomic(
 
     return int(vid)
 
+def insert_project(project_row: dict) -> int:
+    """
+    Inserts a new project and returns its project_id.
+    Also updates adj_name = project_id || '. ' || name if you decide to add that column.
+    """
+    with engine.begin() as conn:
+        # Insert project
+        result = conn.execute(
+            text("""
+                INSERT INTO projects (
+                    name,
+                    description,
+                    assigned_by_id,
+                    assigned_to_id,
+                    business_line_id,
+                    product_id,
+                    customer_id,
+                    planned_start_date,
+                    planned_end_date,
+                    actual_end_date,
+                    status,
+                    project_objective_id,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :name,
+                    :description,
+                    :assigned_by_id,
+                    :assigned_to_id,
+                    :business_line_id,
+                    :product_id,
+                    :customer_id,
+                    :planned_start_date,
+                    :planned_end_date,
+                    :actual_end_date,
+                    :status,
+                    :project_objective_id,
+                    :created_at,
+                    :updated_at
+                )
+                RETURNING project_id
+            """),
+            project_row,
+        )
+        new_id = result.scalar_one()
+
+        # OPTIONAL: if you add adj_name column to projects, update it here:
+        # conn.execute(
+        #     text("""
+        #         UPDATE projects
+        #         SET adj_name = CONCAT(project_id::text, '. ', name)
+        #         WHERE project_id = :pid
+        #     """),
+        #     {"pid": new_id},
+        # )
+
+        return int(new_id)
+
+
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -694,20 +754,52 @@ def logout_button():
         st.rerun()
 
 # =============================
-# UI — Sidebar (page memory via URL + session)
+# UI — Sidebar Navigation
 # =============================
 def sidebar_nav():
     st.sidebar.title("Navigation")
 
-    # Show to all authenticated users
-    pages = ["Submit Visit", "My Submissions", "User Settings"]
+    user = st.session_state.get("user")
+    role = (user.get("role") if user else "").lower().strip()
 
+    # -----------------------------
+    # Base pages for ALL users
+    # -----------------------------
+    pages = [
+        "Submit Visit",
+        "My Submissions",
+        "User Settings"
+    ]
+
+    # -----------------------------
+    # Manager-only pages
+    # -----------------------------
+    if role == "manager":
+        pages += [
+            "Project Creation",
+            "Project View",
+            "Project Management",
+        ]
+
+    # -----------------------------
     # Admin-only pages
-    if st.session_state.user and st.session_state.user.get("role") == "admin":
-        pages += ["Admin: Import Lookups", "Admin: Data Browser", "Admin: Users"]
+    # -----------------------------
+    if role == "admin":
+        pages += [
+            "Project Creation",
+            "Project View",
+            "Project Management",
+            "Admin: Import Lookups",
+            "Admin: Data Browser",
+            "Admin: Users"
+        ]
 
+    # -----------------------------
+    # Resolve which page to show
+    # -----------------------------
     url_page = get_url_param("page")
     sess_page = st.session_state.get("_current_page")
+
     if url_page in pages:
         current = url_page
     elif sess_page in pages:
@@ -717,24 +809,30 @@ def sidebar_nav():
 
     idx = pages.index(current)
 
+    # -----------------------------
+    # Handle page switching
+    # -----------------------------
     def _on_change():
         old = st.session_state.get("_current_page")
         chosen = st.session_state["_nav_choice"]
+
         st.session_state["_current_page"] = chosen
         set_url_param("page", chosen)
 
-        # If we are leaving the submit page, clear its geo state
+        # Reset location state if leaving Submit Visit
         if old == "Submit Visit" and chosen != "Submit Visit":
             _reset_location_state_for_page("submit_visit")
 
+    st.sidebar.markdown("### Go to")
     choice = st.sidebar.radio(
-        "Go to",
+        "",
         pages,
         index=idx,
         key="_nav_choice",
         on_change=_on_change
     )
 
+    # Sync state → URL
     if st.session_state.get("_current_page") != choice:
         st.session_state["_current_page"] = choice
     if get_url_param("page") != choice:
@@ -1671,6 +1769,927 @@ def page_user_settings():
         except Exception as e:
             st.error("Could not update password.")
             st.caption(str(e))
+
+# =============================
+# Page — Create Project
+# =============================         
+def page_create_project():
+    st.title("📌 Create Project")
+
+    PAGE_NS = "create_project"
+    nonce_key    = f"_{PAGE_NS}_form_nonce"
+    saved_ok_key = f"_{PAGE_NS}_saved_ok"
+    busy_key     = f"_{PAGE_NS}_busy"
+    intent_key   = f"_{PAGE_NS}_submit_intent"
+
+    st.session_state.setdefault(nonce_key, 0)
+    st.session_state.setdefault(busy_key, False)
+    st.session_state.setdefault(intent_key, False)
+
+    def k(name: str) -> str:
+        return f"{PAGE_NS}/{name}_{st.session_state[nonce_key]}"
+
+    # ---- cascade clear helpers ----
+    def _on_region_change():
+        for n in ("city_sel", "sector_sel", "cust_sel"):
+            st.session_state.pop(k(n), None)
+
+    def _on_city_change():
+        for n in ("sector_sel", "cust_sel"):
+            st.session_state.pop(k(n), None)
+
+    def _on_sector_change():
+        for n in ("cust_sel",):
+            st.session_state.pop(k(n), None)
+
+    def _on_bu_change():
+        for n in ("cat_sel", "bl_sel", "prod_sel"):
+            st.session_state.pop(k(n), None)
+
+    def _on_line_change():
+        for n in ("prod_sel",):
+            st.session_state.pop(k(n), None)
+
+    # ---- Resolve logged-in user (manager) ---
+    u = st.session_state.get("user") or resolve_session_user()
+    if not u:
+        st.warning("Please sign in to continue.")
+        st.stop()
+
+    manager_id = int(u.get("user_id") or u.get("id"))
+    display_name  = u.get("name") or u.get("email") or f"User #{manager_id}"
+    display_role  = u.get("role") or "—"
+    display_region = u.get("region") or "—"
+
+    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
+
+    if st.session_state.pop(saved_ok_key, False):
+        st.success("Project created ✅")
+
+    # ---- Form fields ----
+    st.markdown(
+        '<div style="margin:.25rem 0 1rem 0;">'
+        'Fields marked with <span style="color:#d00000;font-weight:700">*</span> are required.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ---------------- Basic Info ----------------
+    name = st.text_input("Project Name *", key=k("name"))
+    description = st.text_area("Description (optional)", key=k("desc"))
+
+    # Assign to (Reps only)
+    reps_df = query_df("""
+        SELECT user_id, name, email
+        FROM users
+        WHERE is_active IS TRUE
+          AND role = 'rep'
+        ORDER BY name
+    """)
+    rep_labels = [""]
+    rep_map = {}
+    for r in reps_df.itertuples(index=False):
+        lbl = f"{r.name} ({r.email})" if getattr(r, "email", None) else r.name
+        rep_labels.append(lbl)
+        rep_map[lbl] = int(r.user_id)
+
+    assign_to_label = st.selectbox(
+        "Assign To (Rep) *",
+        rep_labels,
+        index=0,
+        key=k("rep_sel")
+    )
+    assigned_to_id = rep_map.get(assign_to_label)
+
+    # Dates
+    planned_start_date = st.date_input("Planned Start Date *", key=k("psd"))
+    planned_end_date   = st.date_input("Planned End Date *", key=k("ped"))
+
+    # ---------------- Region → City → Sector → Customer ----------------
+    reg_df = query_df("""
+        SELECT DISTINCT region
+        FROM customers
+        WHERE is_active IS TRUE
+          AND region IS NOT NULL AND trim(region) <> ''
+        ORDER BY region
+    """)
+    region_opts = [""] + reg_df["region"].tolist()
+    region_choice = st.selectbox(
+        "Region *",
+        region_opts,
+        index=0,
+        key=k("region_sel"),
+        on_change=_on_region_change
+    )
+
+    if region_choice:
+        city_df = query_df("""
+            SELECT DISTINCT city
+            FROM customers
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city IS NOT NULL AND trim(city) <> ''
+            ORDER BY city
+        """, {"r": region_choice})
+        city_opts = [""] + city_df["city"].tolist()
+    else:
+        city_df = pd.DataFrame(columns=["city"])
+        city_opts = [""]
+
+    city_choice = st.selectbox(
+        "City *",
+        city_opts,
+        index=0,
+        key=k("city_sel"),
+        disabled=(not region_choice),
+        on_change=_on_city_change,
+        help=None if region_choice else "Select a Region first",
+    )
+
+    if region_choice and city_choice:
+        sec_df = query_df("""
+            SELECT DISTINCT sector
+            FROM customers
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city   = :c
+              AND sector IS NOT NULL AND trim(sector) <> ''
+            ORDER BY sector
+        """, {"r": region_choice, "c": city_choice})
+        sector_opts = [""] + sec_df["sector"].tolist()
+    else:
+        sec_df = pd.DataFrame(columns=["sector"])
+        sector_opts = [""]
+
+    sector_choice = st.selectbox(
+        "Sector *",
+        sector_opts,
+        index=0,
+        key=k("sector_sel"),
+        disabled=(not (region_choice and city_choice)),
+        on_change=_on_sector_change,
+        help=None if (region_choice and city_choice) else "Select a City first",
+    )
+
+    # Customer
+    if region_choice and city_choice and sector_choice:
+        cust_df = query_df("""
+            SELECT customer_id, account_name
+            FROM customers
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city   = :c
+              AND sector = :s
+            ORDER BY account_name
+        """, {"r": region_choice, "c": city_choice, "s": sector_choice})
+        cust_opts = [""] + cust_df["account_name"].tolist()
+    else:
+        cust_df = pd.DataFrame(columns=["customer_id", "account_name"])
+        cust_opts = [""]
+
+    cust_choice = st.selectbox(
+        "Customer *",
+        cust_opts,
+        index=0,
+        key=k("cust_sel"),
+        disabled=(not (region_choice and city_choice and sector_choice)),
+        help=None if (region_choice and city_choice and sector_choice) else "Select Sector first",
+    )
+
+    customer_id = None
+    if cust_choice:
+        match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
+        customer_id = int(match.iloc[0]) if not match.empty else None
+
+    # ---------------- Business Unit → Category → Business Line → Article ----------------
+    bu_df = query_df("""
+        SELECT business_unit_id, name
+        FROM business_units
+        WHERE is_active IS TRUE
+        ORDER BY name
+    """)
+    bu_names = [""] + bu_df["name"].tolist()
+    bu_choice = st.selectbox("Business Unit *", bu_names, index=0, key=k("bu_sel"), on_change=_on_bu_change)
+    bu_id = None
+    if bu_choice:
+        match = bu_df.loc[bu_df["name"] == bu_choice, "business_unit_id"]
+        bu_id = int(match.iloc[0]) if not match.empty else None
+
+    # Category
+    if bu_id:
+        cat_df = query_df("""
+            SELECT DISTINCT category
+            FROM business_lines
+            WHERE is_active IS TRUE
+              AND business_unit_id = :bid
+              AND category IS NOT NULL
+              AND trim(category) <> ''
+            ORDER BY category
+        """, {"bid": bu_id})
+        cat_names = [""] + cat_df["category"].tolist()
+    else:
+        cat_df = pd.DataFrame(columns=["category"])
+        cat_names = [""]
+
+    cat_choice = st.selectbox(
+        "Category *",
+        cat_names,
+        index=0,
+        key=k("cat_sel"),
+        disabled=(bu_id is None),
+        help=None if bu_id else "Select a Business Unit first",
+    )
+
+    # Business Line
+    bl_df = pd.DataFrame()
+    bl_names = [""]; bl_choice = ""; business_line_id = None
+    if bu_id and cat_choice:
+        bl_df = query_df("""
+            SELECT business_line_id, name
+            FROM business_lines
+            WHERE is_active IS TRUE
+              AND business_unit_id = :bid
+              AND category = :cat
+            ORDER BY name
+        """, {"bid": bu_id, "cat": cat_choice})
+        bl_names = [""] + bl_df["name"].tolist()
+
+    bl_choice = st.selectbox(
+        "Business Line *",
+        bl_names,
+        index=0,
+        key=k("bl_sel"),
+        disabled=(bu_id is None or not cat_choice),
+        on_change=_on_line_change,
+        help=None if (bu_id and cat_choice) else "Select a Category first",
+    )
+    if bu_id and cat_choice and bl_choice:
+        match = bl_df.loc[bl_df["name"] == bl_choice, "business_line_id"]
+        business_line_id = int(match.iloc[0]) if not match.empty else None
+
+    # Article Number (optional)
+    prod_labels = [""]
+    prod_df = pd.DataFrame()
+    product_id = None
+    if business_line_id:
+        prod_df = query_df("""
+            SELECT product_id, article_number, description
+            FROM items
+            WHERE is_active IS TRUE
+              AND business_line_id = :blid
+            ORDER BY COALESCE(article_number, product_id)
+        """, {"blid": business_line_id})
+        for r in prod_df.itertuples(index=False):
+            label = (f"{(r.article_number or r.product_id)} — {r.description}"
+                     if pd.notna(r.description) and str(r.description).strip()
+                     else f"{(r.article_number or r.product_id)}")
+            prod_labels.append(label)
+
+    prod_choice = st.selectbox(
+        "Article Number (Product) — optional",
+        prod_labels,
+        index=0,
+        key=k("prod_sel"),
+        disabled=(business_line_id is None),
+        help=None if business_line_id else "Select Business Line first",
+    )
+    if business_line_id and prod_choice:
+        label_to_pid = {}
+        for r in prod_df.itertuples(index=False):
+            label = (f"{(r.article_number or r.product_id)} — {r.description}"
+                     if pd.notna(r.description) and str(r.description).strip()
+                     else f"{(r.article_number or r.product_id)}")
+            label_to_pid[label] = r.product_id
+        product_id = label_to_pid.get(prod_choice)  # may be None (optional)
+
+    # ---------------- Project Objective (from project_objectives) ----------------
+    pobj_df = query_df("""
+        SELECT project_objective_id, name
+        FROM project_objectives
+        ORDER BY name
+    """)
+    pobj_names = [""] + pobj_df["name"].tolist()
+    pobj_choice = st.selectbox(
+        "Project Objective *",
+        pobj_names,
+        index=0,
+        key=k("pobj_sel"),
+    )
+    project_objective_id = None
+    if pobj_choice:
+        match = pobj_df.loc[pobj_df["name"] == pobj_choice, "project_objective_id"]
+        project_objective_id = int(match.iloc[0]) if not match.empty else None
+
+    # ---------------- Submit button (sticky / dedupe) ----------------
+    inline_click = st.button(
+        "Create Project",
+        type="primary",
+        key=k("submit_btn"),
+        disabled=st.session_state[busy_key],
+        help="Saves immediately. You’ll see a spinner while saving."
+    )
+
+    if inline_click and not st.session_state[busy_key]:
+        st.session_state[intent_key] = True
+        st.session_state[busy_key]   = True
+        st.rerun()
+
+    if not st.session_state[intent_key]:
+        return
+
+    # ---------------- Validation + Save ----------------
+    errors = []
+
+    if not name.strip():
+        errors.append("Please enter a **Project Name**.")
+    if assigned_to_id is None:
+        errors.append("Please choose an **Assign To (Rep)**.")
+    if planned_end_date < planned_start_date:
+        errors.append("**Planned End Date** cannot be before **Planned Start Date**.")
+    if not region_choice:
+        errors.append("Please choose a **Region**.")
+    if not city_choice:
+        errors.append("Please choose a **City**.")
+    if not sector_choice:
+        errors.append("Please choose a **Sector**.")
+    if not customer_id:
+        errors.append("Please choose a **Customer**.")
+    if not bu_id:
+        errors.append("Please choose a **Business Unit**.")
+    if not cat_choice:
+        errors.append("Please choose a **Category**.")
+    if not business_line_id:
+        errors.append("Please choose a **Business Line**.")
+    if project_objective_id is None:
+        errors.append("Please choose a **Project Objective**.")
+
+    if errors:
+        for msg in errors:
+            st.error(msg)
+        st.session_state[busy_key] = False
+        st.session_state[intent_key] = False
+        return
+
+    with st.spinner("Creating project…"):
+        project_row = {
+            "name": name.strip(),
+            "description": (description.strip() if description else None),
+            "assigned_by_id": manager_id,
+            "assigned_to_id": assigned_to_id,
+            "business_line_id": int(business_line_id),
+            "product_id": product_id,  # can be None
+            "customer_id": int(customer_id),
+            "planned_start_date": planned_start_date,
+            "planned_end_date": planned_end_date,
+            "actual_end_date": None,
+            "status": "Not Started",
+            "project_objective_id": int(project_objective_id),
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+        }
+
+        try:
+            pid = insert_project(project_row)  # returns project_id
+            st.session_state[nonce_key] += 1
+            st.session_state[saved_ok_key] = True
+            st.session_state[intent_key] = False
+            st.session_state[busy_key] = False
+            st.success(f"Project #{pid} created successfully ✅")
+            st.rerun()
+        except Exception as e:
+            st.error("Could not create the project.")
+            st.caption(str(e))
+            st.session_state[intent_key] = False
+            st.session_state[busy_key] = False
+
+def page_project_view():
+    st.title("Project View")
+    # TODO: implement
+
+# =============================
+# Page — Project Management
+# =============================  
+import pandas as pd
+import streamlit as st
+from datetime import datetime
+from sqlalchemy import text
+
+# ---------------- Timezone: Riyadh local time ----------------
+try:
+    from zoneinfo import ZoneInfo
+    LOCAL_TZ = ZoneInfo("Asia/Riyadh")
+except Exception:
+    LOCAL_TZ = None  # fallback if zoneinfo not available
+
+def local_now():
+    """
+    Return a naive datetime representing Riyadh local time (Asia/Riyadh).
+    This is what will be saved into the DB for created_at/updated_at/changed_at.
+    """
+    if LOCAL_TZ is not None:
+        return datetime.now(LOCAL_TZ).replace(tzinfo=None)
+    return datetime.now()  # fallback, still local server time
+
+
+# ---------------- Constants + page namespace ----------------
+PROJECT_STATUSES = [
+    "Not Started",
+    "Open",
+    "Postponed",
+    "Completed",
+    "Cancelled",
+]
+
+PAGE_NS = "project_mgmt"
+st.session_state.setdefault(f"{PAGE_NS}_nonce", 0)
+
+def k(name: str) -> str:
+    """Key helper with nonce so fields reset when nonce increments."""
+    return f"{PAGE_NS}/{name}_{st.session_state[f'{PAGE_NS}_nonce']}"
+
+
+# ---------------- DB helpers ----------------
+def _fetch_projects_for_management(manager_user: dict) -> pd.DataFrame:
+    """
+    Projects visible to the current manager/admin.
+    Admin: all projects
+    Manager: only projects where they are assigned_by_id.
+    """
+    role = (manager_user.get("role") or "").lower().strip()
+    params = {}
+    where = "1=1"
+
+    if role == "manager":
+        where += " AND p.assigned_by_id = :uid"
+        params["uid"] = int(manager_user.get("user_id") or manager_user.get("id"))
+
+    sql = f"""
+        WITH visit_counts AS (
+            SELECT project_id, COUNT(*)::int AS total_visits
+            FROM visits
+            WHERE project_id IS NOT NULL
+            GROUP BY project_id
+        )
+        SELECT
+            p.project_id,
+            p.name,
+            (p.project_id::text || '. ' || p.name) AS adj_name,
+            p.description,
+            p.status,
+            p.planned_start_date,
+            p.planned_end_date,
+            p.actual_end_date,
+            u_to.name AS rep_name,
+            c.account_name AS customer_name,
+            bl.name AS business_line_name,
+            po.name AS objective_name,
+            COALESCE(vc.total_visits, 0) AS total_visits
+        FROM projects p
+        JOIN users u_to        ON u_to.user_id = p.assigned_to_id
+        JOIN customers c       ON c.customer_id = p.customer_id
+        JOIN business_lines bl ON bl.business_line_id = p.business_line_id
+        JOIN project_objectives po ON po.project_objective_id = p.project_objective_id
+        LEFT JOIN visit_counts vc  ON vc.project_id = p.project_id
+        WHERE {where}
+        ORDER BY p.project_id DESC
+    """
+    return query_df(sql, params)
+
+
+def _fetch_project_row(project_id: int):
+    df = query_df(
+        """
+        SELECT *
+        FROM projects
+        WHERE project_id = :pid
+        """,
+        {"pid": project_id},
+    )
+    if df.empty:
+        return None
+    return df.iloc[0].to_dict()
+
+
+def _fetch_project_history(project_id: int) -> pd.DataFrame:
+    """
+    Minimal change history for a project (most recent first).
+    """
+    sql = """
+        SELECT
+            e.event_id,
+            e.changed_at,
+            u.name AS changed_by_name,
+            e.note,
+            string_agg(
+                d.field_name || ': ' ||
+                COALESCE(d.old_value, 'NULL') || ' → ' ||
+                COALESCE(d.new_value, 'NULL'),
+                E'\n'
+                ORDER BY d.detail_id
+            ) AS changes_summary
+        FROM project_change_events e
+        JOIN users u ON u.user_id = e.changed_by_id
+        LEFT JOIN project_change_details d ON d.event_id = e.event_id
+        WHERE e.project_id = :pid
+        GROUP BY e.event_id, e.changed_at, u.name, e.note
+        ORDER BY e.changed_at DESC
+        LIMIT 50
+    """
+    return query_df(sql, {"pid": project_id})
+
+
+def _update_project_with_history(
+    project_id: int,
+    new_values: dict,
+    changed_by_id: int,
+    change_note: str,
+):
+    """
+    Compare existing row with new_values for:
+      - name
+      - description
+      - planned_start_date
+      - planned_end_date
+      - status
+      - actual_end_date
+
+    If anything changed:
+      1. Insert into project_change_events (with local Riyadh time)
+      2. Insert per-field rows into project_change_details
+      3. Update projects (with updated_at in local Riyadh time)
+    """
+    cur = _fetch_project_row(project_id)
+    if not cur:
+        raise ValueError("Project not found")
+
+    fields_to_track = [
+        "name",
+        "description",
+        "planned_start_date",
+        "planned_end_date",
+        "status",
+        "actual_end_date",
+    ]
+
+    def _norm(v):
+        if v is None:
+            return None
+        if hasattr(v, "isoformat"):
+            return v.isoformat()
+        return str(v)
+
+    changes = []
+    for fld in fields_to_track:
+        old_val = cur.get(fld)
+        new_val = new_values.get(fld)
+        old_val_str = _norm(old_val)
+        new_val_str = _norm(new_val)
+
+        if old_val_str != new_val_str:
+            changes.append(
+                {
+                    "field_name": fld,
+                    "old_value": old_val_str,
+                    "new_value": new_val_str,
+                }
+            )
+
+    if not changes:
+        # Nothing changed
+        return
+
+    if not change_note or not change_note.strip():
+        raise ValueError("Change note is required when modifying a project.")
+
+    now_local = local_now()
+
+    with engine.begin() as conn:
+        # 1) Insert event in local (Riyadh) time
+        res = conn.execute(
+            text(
+                """
+                INSERT INTO project_change_events (
+                    project_id,
+                    changed_by_id,
+                    changed_at,
+                    note
+                )
+                VALUES (:pid, :uid, :ts, :note)
+                RETURNING event_id
+                """
+            ),
+            {
+                "pid": project_id,
+                "uid": changed_by_id,
+                "ts": now_local,
+                "note": change_note.strip(),
+            },
+        )
+        event_id = res.scalar_one()
+
+        # 2) Insert details
+        for ch in changes:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO project_change_details (
+                        event_id,
+                        field_name,
+                        old_value,
+                        new_value
+                    )
+                    VALUES (:eid, :field_name, :old_value, :new_value)
+                    """
+                ),
+                {
+                    "eid": event_id,
+                    "field_name": ch["field_name"],
+                    "old_value": ch["old_value"],
+                    "new_value": ch["new_value"],
+                },
+            )
+
+        # 3) Update project row (with updated_at in local Riyadh time)
+        conn.execute(
+            text(
+                """
+                UPDATE projects
+                SET
+                    name               = :name,
+                    description        = :description,
+                    planned_start_date = :planned_start_date,
+                    planned_end_date   = :planned_end_date,
+                    actual_end_date    = :actual_end_date,
+                    status             = :status,
+                    updated_at         = :updated_at
+                WHERE project_id = :pid
+                """
+            ),
+            {
+                "pid": project_id,
+                "name": new_values["name"],
+                "description": new_values.get("description"),
+                "planned_start_date": new_values["planned_start_date"],
+                "planned_end_date": new_values["planned_end_date"],
+                "actual_end_date": new_values.get("actual_end_date"),
+                "status": new_values["status"],
+                "updated_at": now_local,
+            },
+        )
+
+
+# ---------------- Main Page: Project Management (Panel Style) ----------------
+def page_project_management():
+    st.title("🛠 Project Management")
+
+    # --- Auth & role check ---
+    u = st.session_state.get("user") or resolve_session_user()
+    if not u:
+        st.warning("Please sign in to continue.")
+        st.stop()
+
+    role = (u.get("role") or "").lower().strip()
+    if role not in ("manager", "admin"):
+        st.warning("You do not have access to this page.")
+        st.stop()
+
+    manager_id = int(u.get("user_id") or u.get("id"))
+
+    # --- Load projects for this manager/admin ---
+    df = _fetch_projects_for_management(u)
+    if df.empty:
+        st.info("No projects found.")
+        return
+
+    # ===================== Panel 1 — Select Project =====================
+    st.markdown("### 1️⃣ Select Project")
+
+    # Small filters just to help finding the project, not for analytics
+    with st.expander("Filter projects", expanded=False):
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            status_filter = st.multiselect(
+                "Status",
+                PROJECT_STATUSES,
+                default=[],
+                key="pm_status_filter",
+            )
+        with col_f2:
+            search_text = st.text_input(
+                "Search in project name / customer",
+                value="",
+                key="pm_search_text",
+                placeholder="Type part of the project or customer name…",
+            )
+
+        fdf = df.copy()
+        if status_filter:
+            fdf = fdf[fdf["status"].isin(status_filter)]
+        if search_text.strip():
+            s = search_text.strip().lower()
+            fdf = fdf[
+                fdf["name"].str.lower().str.contains(s)
+                | fdf["customer_name"].str.lower().str.contains(s)
+            ]
+    # If user never opened expander, still define fdf
+    if "fdf" not in locals():
+        fdf = df
+
+    if fdf.empty:
+        st.info("No projects match your current filters.")
+        return
+
+    proj_labels = []
+    id_list = []
+    for r in fdf.itertuples(index=False):
+        lbl = f"{r.adj_name} — {r.customer_name}"
+        proj_labels.append(lbl)
+        id_list.append(int(r.project_id))
+
+    options = [""] + proj_labels
+    label_to_id = {lbl: pid for lbl, pid in zip(proj_labels, id_list)}
+
+    sel_label = st.selectbox(
+        "Project",
+        options=options,
+        index=0,
+        key=k("project_sel"),
+        help="Choose a project to update its status and basic details.",
+    )
+
+    if not sel_label:
+        st.info("Select a project above to continue.")
+        return
+
+    selected_pid = label_to_id.get(sel_label)
+    if not selected_pid:
+        st.error("Could not resolve selected project.")
+        return
+
+    cur = _fetch_project_row(selected_pid)
+    if not cur:
+        st.error("Project not found.")
+        return
+
+    # Get extra display info from filtered df
+    row_match = fdf.loc[fdf["project_id"] == selected_pid]
+    row = row_match.iloc[0] if not row_match.empty else None
+
+    # ===================== Panel 2 — Project Summary (read-only) =====================
+    st.markdown("---")
+    st.markdown("### 2️⃣ Project Summary")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(
+            f"""
+            **Project Name:** {cur['name']}  
+            **Rep:** {row.rep_name if row is not None else '—'}  
+            **Customer:** {row.customer_name if row is not None else '—'}  
+            **Business Line:** {row.business_line_name if row is not None else '—'}  
+            **Objective:** {row.objective_name if row is not None else '—'}  
+            """
+        )
+    with c2:
+        ps = cur.get("planned_start_date")
+        pe = cur.get("planned_end_date")
+        ae = cur.get("actual_end_date")
+        st.markdown(
+            f"""
+            **Status:** `{cur.get('status')}`  
+            **Planned:** {ps} → {pe}  
+            **Actual End:** {ae if ae else '—'}  
+            **Total Visits:** {int(row.total_visits) if row is not None else 0}  
+            """
+        )
+
+    # ===================== Panel 3 — Edit Details (only allowed fields) =====================
+    st.markdown("---")
+    st.markdown("### 3️⃣ Edit Details & Status")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        new_name = st.text_input(
+            "Project Name *",
+            value=cur["name"],
+            key=k("name"),
+        )
+        new_desc = st.text_area(
+            "Description",
+            value=cur.get("description") or "",
+            key=k("desc"),
+        )
+        new_psd = st.date_input(
+            "Planned Start Date *",
+            value=cur["planned_start_date"],
+            key=k("psd"),
+        )
+        new_ped = st.date_input(
+            "Planned End Date *",
+            value=cur["planned_end_date"],
+            key=k("ped"),
+        )
+
+    with col2:
+        current_status = cur.get("status") or "Not Started"
+        status_index = (
+            PROJECT_STATUSES.index(current_status)
+            if current_status in PROJECT_STATUSES
+            else 0
+        )
+        new_status = st.selectbox(
+            "Status *",
+            options=PROJECT_STATUSES,
+            index=status_index,
+            key=k("status"),
+        )
+
+        # Actual End Date only relevant when Completed
+        if cur.get("actual_end_date"):
+            default_aed = cur["actual_end_date"]
+        else:
+            default_aed = local_now().date()  # local today
+
+        new_aed = None
+        if new_status == "Completed":
+            new_aed = st.date_input(
+                "Actual End Date *",
+                value=default_aed,
+                key=k("aed"),
+            )
+        else:
+            st.caption("Actual End Date stays empty while status is not **Completed**.")
+
+    st.markdown("### 4️⃣ Change Note")
+
+    change_note = st.text_area(
+        "Change Note *",
+        placeholder="Why are you changing this project? (Required for audit trail)",
+        key=k("note"),
+    )
+
+    # ===================== Save Button =====================
+    if st.button("💾 Save Changes", type="primary", key=k("save_btn")):
+        errs = []
+        if not new_name.strip():
+            errs.append("Please enter a **Project Name**.")
+        if new_ped < new_psd:
+            errs.append("**Planned End Date** cannot be before **Planned Start Date**.")
+        if new_status == "Completed" and not new_aed:
+            errs.append("Please choose an **Actual End Date** for a Completed project.")
+        if not change_note.strip():
+            errs.append("Please enter a **Change Note** (mandatory).")
+
+        if errs:
+            for e in errs:
+                st.error(e)
+            return
+
+        new_vals = {
+            "name": new_name.strip(),
+            "description": new_desc.strip() or None,
+            "planned_start_date": new_psd,
+            "planned_end_date": new_ped,
+            "status": new_status,
+            "actual_end_date": new_aed if new_status == "Completed" else None,
+        }
+
+        try:
+            _update_project_with_history(
+                selected_pid, new_vals, manager_id, change_note
+            )
+            st.success("Project updated and history recorded ✅ (time saved in Riyadh local time)")
+
+            # Reset all fields (including the selection) via nonce bump
+            st.session_state[f"{PAGE_NS}_nonce"] += 1
+            st.rerun()
+
+        except ValueError as ve:
+            st.error(str(ve))
+        except Exception as e:
+            st.error("Could not update project.")
+            st.caption(str(e))
+
+    # ===================== Panel 5 — Change History =====================
+    st.markdown("---")
+    with st.expander("📜 View Change History", expanded=False):
+        hist_df = _fetch_project_history(selected_pid)
+        if hist_df.empty:
+            st.info("No changes recorded yet for this project.")
+        else:
+            st.dataframe(
+                hist_df.rename(
+                    columns={
+                        "changed_at": "When (Riyadh local time)",
+                        "changed_by_name": "By",
+                        "note": "Note",
+                        "changes_summary": "Changes",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 # =============================
 # Page — Admin: Import Lookups (PostgreSQL + live progress)
@@ -3734,7 +4753,7 @@ def page_admin_users():
             bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
             bu_names = bu_df["name"].tolist()
             bu_sel = st.selectbox("Business Unit (optional)", [""] + bu_names, index=0)
-            role = st.selectbox("Role", ["rep", "admin"], index=0)
+            role = st.selectbox("Role", ["rep", "admin","manager"], index=0)
             pw = st.text_input("Temporary Password *", type="password",
                                value=st.session_state["create_user_tmp_pw"])
 
@@ -3877,7 +4896,7 @@ def page_admin_users():
                     index=(["", "C/R", "W/R", "E/R"].index(row["region"]) if row["region"] in ["", "C/R", "W/R", "E/R"] else 0)
                 )
                 new_bu_label = st.selectbox("Business Unit (optional)", bu_labels, index=bu_idx)
-                new_role = st.selectbox("Role", ["rep", "admin"], index=(0 if row["role"] == "rep" else 1))
+                new_role = st.selectbox("Role", ["rep", "admin","manager"], index=(0 if row["role"] == "rep" else 1))
                 save = st.form_submit_button("Save changes")
 
             if save:
@@ -3971,18 +4990,27 @@ def show_footer():
 # =============================
 # MAIN
 # =============================
-if not st.session_state.user:
+user = st.session_state.get("user")
+
+if not user:
     login_block()
     show_footer()
 else:
     logout_button()
     page = sidebar_nav()
+
     if page == "Submit Visit":
         page_submit_visit()
     elif page == "My Submissions":
         page_my_submissions()
     elif page == "User Settings":
         page_user_settings()
+    elif page == "Project Creation":
+        page_create_project()
+    elif page == "Project View":
+        page_project_view()          # you'll define this
+    elif page == "Project Management":
+        page_project_management()    # you'll define this
     elif page == "Admin: Import Lookups":
         page_admin_import()
     elif page == "Admin: Data Browser":
