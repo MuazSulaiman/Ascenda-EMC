@@ -767,9 +767,16 @@ def sidebar_nav():
     # -----------------------------
     pages = [
         "Submit Visit",
-        "My Submissions",
-        "User Settings"
+        "My Submissions"
     ]
+
+    # -----------------------------
+    # Rep-only pages
+    # -----------------------------
+    if role == "rep":
+        pages += [
+            "User Settings"
+        ]
 
     # -----------------------------
     # Manager-only pages
@@ -779,6 +786,7 @@ def sidebar_nav():
             "Project Creation",
             "Project View",
             "Project Management",
+            "User Settings"
         ]
 
     # -----------------------------
@@ -789,6 +797,7 @@ def sidebar_nav():
             "Project Creation",
             "Project View",
             "Project Management",
+            "User Settings",
             "Admin: Import Lookups",
             "Admin: Data Browser",
             "Admin: Users"
@@ -1661,8 +1670,25 @@ def page_my_submissions():
     if df.empty:
         st.info("No submissions yet.")
     else:
+        # --- Create Location hyperlink column ---
+        def make_map_link(lat, lon):
+            if lat is None or lon is None:
+                return ""
+            return f"[Location](https://www.google.com/maps/search/{lat},{lon}?sa=X&ved=1t:242&ictx=111)"
+
+        df["Location"] = df.apply(lambda r: make_map_link(r["latitude"], r["longitude"]), axis=1)
+
+        # Reorder columns: Location should appear before latitude
+        cols = df.columns.tolist()
+        # move "Location" before "latitude"
+        if "Location" in cols and "latitude" in cols:
+            cols.insert(cols.index("latitude"), cols.pop(cols.index("Location")))
+        df = df[cols]
+
+        # --- Display ---
         st.markdown(f"**Total: {len(df):,}**")
         st.dataframe(df, use_container_width=True, hide_index=True)
+
         st.download_button(
             "Download CSV",
             df.to_csv(index=False).encode("utf-8-sig"),
@@ -1775,6 +1801,7 @@ def page_user_settings():
 # =============================         
 def page_create_project():
     st.title("📌 Create Project")
+    set_current_page("create_project")
 
     PAGE_NS = "create_project"
     nonce_key    = f"_{PAGE_NS}_form_nonce"
@@ -2164,6 +2191,7 @@ def page_create_project():
 
 def page_project_view():
     st.title("Project View")
+    set_current_page("project_view")
     # TODO: implement
 
 # =============================
@@ -2441,6 +2469,7 @@ def _update_project_with_history(
 # ---------------- Main Page: Project Management (Panel Style) ----------------
 def page_project_management():
     st.title("🛠 Project Management")
+    set_current_page("project_management")
 
     # --- Auth & role check ---
     u = st.session_state.get("user") or resolve_session_user()
