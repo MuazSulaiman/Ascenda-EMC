@@ -1670,24 +1670,34 @@ def page_my_submissions():
     if df.empty:
         st.info("No submissions yet.")
     else:
-        # --- Create Location hyperlink column ---
-        def make_map_link(lat, lon):
-            if lat is None or lon is None:
-                return ""
-            return f"[Location](https://www.google.com/maps/search/{lat},{lon}?sa=X&ved=1t:242&ictx=111)"
+        # --- Create Google Maps URL column ---
+        df["location_url"] = df.apply(
+            lambda r: f"https://www.google.com/maps/search/{r['latitude']},{r['longitude']}?sa=X&ved=1t:242&ictx=111"
+            if r["latitude"] and r["longitude"] else "",
+            axis=1
+        )
 
-        df["Location"] = df.apply(lambda r: make_map_link(r["latitude"], r["longitude"]), axis=1)
-
-        # Reorder columns: Location should appear before latitude
+        # --- Reorder so Location is before latitude ---
         cols = df.columns.tolist()
-        # move "Location" before "latitude"
-        if "Location" in cols and "latitude" in cols:
-            cols.insert(cols.index("latitude"), cols.pop(cols.index("Location")))
+        # Insert location_url before latitude
+        if "location_url" in cols and "latitude" in cols:
+            cols.insert(cols.index("latitude"), cols.pop(cols.index("location_url")))
         df = df[cols]
 
-        # --- Display ---
+        # --- Display dataframe with LinkColumn ---
         st.markdown(f"**Total: {len(df):,}**")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "location_url": st.column_config.LinkColumn(
+                    "Location",
+                    help="Open location in Google Maps",
+                    display_text="Location"
+                )
+            }
+        )
 
         st.download_button(
             "Download CSV",
