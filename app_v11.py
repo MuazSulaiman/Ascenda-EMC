@@ -2501,13 +2501,14 @@ def page_project_management():
     if df.empty:
         st.info("No projects found.")
         return
-
+    
     # ===================== Panel 1 — Select Project =====================
     st.markdown("### 1️⃣ Select Project")
 
     # Small filters just to help finding the project, not for analytics
     with st.expander("Filter projects", expanded=False):
-        col_f1, col_f2 = st.columns(2)
+        col_f1, col_f2, col_f3 = st.columns(3)
+
         with col_f1:
             status_filter = st.multiselect(
                 "Status",
@@ -2515,17 +2516,29 @@ def page_project_management():
                 default=[],
                 key="pm_status_filter",
             )
+
         with col_f2:
-            search_text = st.text_input(
-                "Search in project name / customer",
-                value="",
-                key="pm_search_text",
-                placeholder="Type part of the project or customer name…",
+            rep_filter = st.multiselect(
+                "Frontline",
+                sorted(df["rep_name"].dropna().unique().tolist()),
+                default=[],
+                key="pm_rep_filter",
             )
 
+        with col_f3:
+            search_text = st.text_input(
+                "Search",
+                value="",
+                key="pm_search_text",
+                placeholder="Project or customer name…",
+            )
+
+        # Apply filters
         fdf = df.copy()
         if status_filter:
             fdf = fdf[fdf["status"].isin(status_filter)]
+        if rep_filter:
+            fdf = fdf[fdf["rep_name"].isin(rep_filter)]
         if search_text.strip():
             s = search_text.strip().lower()
             fdf = fdf[
