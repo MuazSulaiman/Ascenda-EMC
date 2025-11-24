@@ -2297,16 +2297,18 @@ def _fetch_projects_for_management(manager_user: dict) -> pd.DataFrame:
 def _fetch_project_row(project_id: int):
     df = query_df(
         """
-        SELECT *
-        FROM projects
-        WHERE project_id = :pid
+        SELECT 
+            p.*,
+            u.name AS assigned_by_name
+        FROM projects p
+        LEFT JOIN users u ON u.user_id = p.assigned_by_id
+        WHERE p.project_id = :pid
         """,
         {"pid": project_id},
     )
     if df.empty:
         return None
     return df.iloc[0].to_dict()
-
 
 def _fetch_project_history(project_id: int) -> pd.DataFrame:
     """
@@ -2530,6 +2532,7 @@ def page_project_management():
                 fdf["name"].str.lower().str.contains(s)
                 | fdf["customer_name"].str.lower().str.contains(s)
             ]
+
     # If user never opened expander, still define fdf
     if "fdf" not in locals():
         fdf = df
@@ -2583,10 +2586,10 @@ def page_project_management():
         st.markdown(
             f"""
             **Project Name:** {cur['name']}  
-            **Rep:** {row.rep_name if row is not None else '—'}  
+            **Manager:** {cur.get('assigned_by_name') or '—'}  
+            **Frontline:** {row.rep_name if row is not None else '—'}  
             **Customer:** {row.customer_name if row is not None else '—'}  
             **Business Line:** {row.business_line_name if row is not None else '—'}  
-            **Objective:** {row.objective_name if row is not None else '—'}  
             """
         )
     with c2:
@@ -2598,117 +2601,139 @@ def page_project_management():
             **Status:** `{cur.get('status')}`  
             **Planned:** {ps} → {pe}  
             **Actual End:** {ae if ae else '—'}  
+            **Objective:** {row.objective_name if row is not None else '—'}  
             **Total Visits:** {int(row.total_visits) if row is not None else 0}  
             """
         )
 
-    # ===================== Panel 3 — Edit Details (only allowed fields) =====================
-    st.markdown("---")
-    st.markdown("### 3️⃣ Edit Details & Status")
+    # Determine if this should be view-only (for managers)
+    current_status = cur.get("status") or "Not Started"
+    is_view_only = current_status in ("Completed", "Cancelled") and role != "admin"
 
-    col1, col2 = st.columns(2)
+    if is_view_only:
+        st.markdown("---")
+        st.info(
+            f"This project is **{current_status}** and is view-only. "
+            "If you need to change anything, please contact the admin."
+        )
+    else:
+        # ===================== Panel 3 — Edit Details & Status =====================
+        st.markdown("---")
+        st.markdown("### 3️⃣ Edit Details & Status")
 
-    with col1:
-        new_name = st.text_input(
-            "Project Name *",
-            value=cur["name"],
-            key=k("name"),
-        )
-        new_desc = st.text_area(
-            "Description",
-            value=cur.get("description") or "",
-            key=k("desc"),
-        )
-        new_psd = st.date_input(
-            "Planned Start Date *",
-            value=cur["planned_start_date"],
-            key=k("psd"),
-        )
-        new_ped = st.date_input(
-            "Planned End Date *",
-            value=cur["planned_end_date"],
-            key=k("ped"),
-        )
+        col1, col2 = st.columns(2)
 
-    with col2:
-        current_status = cur.get("status") or "Not Started"
-        status_index = (
-            PROJECT_STATUSES.index(current_status)
-            if current_status in PROJECT_STATUSES
-            else 0
-        )
-        new_status = st.selectbox(
-            "Status *",
-            options=PROJECT_STATUSES,
-            index=status_index,
-            key=k("status"),
-        )
-
-        # Actual End Date only relevant when Completed
-        if cur.get("actual_end_date"):
-            default_aed = cur["actual_end_date"]
-        else:
-            default_aed = local_now().date()  # local today
-
-        new_aed = None
-        if new_status == "Completed":
-            new_aed = st.date_input(
-                "Actual End Date *",
-                value=default_aed,
-                key=k("aed"),
+        with col1:
+            new_name = st.text_input(
+                "Project Name *",
+                value=cur["name"],
+                key=k("name"),
             )
-        else:
-            st.caption("Actual End Date stays empty while status is not **Completed**.")
-
-    st.markdown("### 4️⃣ Change Note")
-
-    change_note = st.text_area(
-        "Change Note *",
-        placeholder="Why are you changing this project? (Required for audit trail)",
-        key=k("note"),
-    )
-
-    # ===================== Save Button =====================
-    if st.button("💾 Save Changes", type="primary", key=k("save_btn")):
-        errs = []
-        if not new_name.strip():
-            errs.append("Please enter a **Project Name**.")
-        if new_ped < new_psd:
-            errs.append("**Planned End Date** cannot be before **Planned Start Date**.")
-        if new_status == "Completed" and not new_aed:
-            errs.append("Please choose an **Actual End Date** for a Completed project.")
-        if not change_note.strip():
-            errs.append("Please enter a **Change Note** (mandatory).")
-
-        if errs:
-            for e in errs:
-                st.error(e)
-            return
-
-        new_vals = {
-            "name": new_name.strip(),
-            "description": new_desc.strip() or None,
-            "planned_start_date": new_psd,
-            "planned_end_date": new_ped,
-            "status": new_status,
-            "actual_end_date": new_aed if new_status == "Completed" else None,
-        }
-
-        try:
-            _update_project_with_history(
-                selected_pid, new_vals, manager_id, change_note
+            new_desc = st.text_area(
+                "Description",
+                value=cur.get("description") or "",
+                key=k("desc"),
             )
-            st.success("Project updated and history recorded ✅ (time saved in Riyadh local time)")
+            new_psd = st.date_input(
+                "Planned Start Date *",
+                value=cur["planned_start_date"],
+                key=k("psd"),
+            )
+            new_ped = st.date_input(
+                "Planned End Date *",
+                value=cur["planned_end_date"],
+                key=k("ped"),
+            )
 
-            # Reset all fields (including the selection) via nonce bump
-            st.session_state[f"{PAGE_NS}_nonce"] += 1
-            st.rerun()
+        with col2:
+            status_index = (
+                PROJECT_STATUSES.index(current_status)
+                if current_status in PROJECT_STATUSES
+                else 0
+            )
+            new_status = st.selectbox(
+                "Status *",
+                options=PROJECT_STATUSES,
+                index=status_index,
+                key=k("status"),
+            )
 
-        except ValueError as ve:
-            st.error(str(ve))
-        except Exception as e:
-            st.error("Could not update project.")
-            st.caption(str(e))
+            # Actual End Date: always shown under status, disabled unless Completed
+            if cur.get("actual_end_date"):
+                default_aed = cur["actual_end_date"]
+            else:
+                default_aed = local_now().date()  # local today as default base
+
+            new_aed = None
+            if new_status == "Completed":
+                new_aed = st.date_input(
+                    "Actual End Date *",
+                    value=default_aed,
+                    key=k("aed"),
+                    help="Select the actual completion date.",
+                )
+            else:
+                # Greyed-out, non-editable field just for UI
+                st.date_input(
+                    "Actual End Date",
+                    value=cur.get("actual_end_date") or default_aed,
+                    key=k("aed_disabled"),
+                    disabled=True,
+                    help="Actual End Date can only be set when status is Completed.",
+                )
+
+        st.markdown("### 4️⃣ Change Note")
+
+        change_note = st.text_area(
+            "Change Note *",
+            placeholder="Why are you changing this project? (Required for audit trail)",
+            key=k("note"),
+        )
+
+        # ===================== Save Button =====================
+        if st.button("💾 Save Changes", type="primary", key=k("save_btn")):
+            errs = []
+            if not new_name.strip():
+                errs.append("Please enter a **Project Name**.")
+            if new_ped < new_psd:
+                errs.append("**Planned End Date** cannot be before **Planned Start Date**.")
+            if new_status == "Completed" and not new_aed:
+                errs.append("Please choose an **Actual End Date** for a Completed project.")
+            if not change_note.strip():
+                errs.append("Please enter a **Change Note** (mandatory).")
+
+            if errs:
+                for e in errs:
+                    st.error(e)
+                return
+
+            new_vals = {
+                "name": new_name.strip(),
+                "description": new_desc.strip() or None,
+                "planned_start_date": new_psd,
+                "planned_end_date": new_ped,
+                "status": new_status,
+                "actual_end_date": new_aed if new_status == "Completed" else None,
+            }
+
+            try:
+                _update_project_with_history(
+                    selected_pid, new_vals, manager_id, change_note
+                )
+                st.success(
+                    "Project updated and history recorded ✅ "
+                    "(time saved in Riyadh local time)"
+                )
+
+                # Reset all fields (including the selection) via nonce bump
+                st.session_state[f"{PAGE_NS}_nonce"] += 1
+                st.rerun()
+
+            except ValueError as ve:
+                st.error(str(ve))
+            except Exception as e:
+                st.error("Could not update project.")
+                st.caption(str(e))
 
     # ===================== Panel 5 — Change History =====================
     st.markdown("---")
