@@ -838,12 +838,15 @@ def sidebar_nav():
             display: none !important;
         }
 
-        /* 2) Base style for each menu item */
+        /* 2) Base style for each menu item (FULL WIDTH ROW) */
         div[role="radiogroup"] > label {
+            display: block !important;
+            width: 100% !important;
             padding: 6px 10px !important;
             margin: 2px 0 !important;
             border-radius: 6px;
             cursor: pointer;
+            box-sizing: border-box !important;
             transition: background-color 0.15s ease-in-out, color 0.15s ease-in-out;
         }
 
@@ -852,7 +855,7 @@ def sidebar_nav():
             background-color: #eceff4 !important;
         }
 
-        /* 4) Selected item — label that HAS a checked input inside it */
+        /* 4) Selected item — full-width highlight, consistent length */
         div[role="radiogroup"] > label:has(input:checked) {
             background-color: #1c4e8020 !important;
             border-left: 4px solid #1c4e80 !important;
