@@ -802,26 +802,72 @@ def logout_button():
 
 def sidebar_nav():
     # -----------------------------
-    # Sidebar CSS
+    # Sidebar CSS (tight layout + no circles + highlight selected)
     # -----------------------------
     st.sidebar.markdown(
         """
         <style>
-        /* Center the logo container only */
+
+        /* Reduce overall sidebar top padding */
+        section[data-testid="stSidebar"] > div:first-child {
+            padding-top: 0.5rem !important;
+        }
+
+        /* Center the logo with tighter spacing */
         .ascenda-logo-wrap {
             display: flex;
             justify-content: center;
             align-items: center;
-            margin-top: 0.75rem;
-            margin-bottom: 0.75rem;
+            margin-top: 0.25rem !important;
+            margin-bottom: 0.5rem !important;
         }
+
+        /* Tighter title spacing */
+        section[data-testid="stSidebar"] h1, 
+        section[data-testid="stSidebar"] h2, 
+        section[data-testid="stSidebar"] h3 {
+            margin-top: 0.2rem !important;
+            margin-bottom: 0.6rem !important;
+            padding: 0 !important;
+        }
+
+        /* Make radio look like modern menu */
+
+        /* 1) Remove the radio circle completely */
+        div[role="radiogroup"] > label > div:first-child {
+            display: none !important;
+        }
+
+        /* 2) Base style for each menu item */
+        div[role="radiogroup"] > label {
+            padding: 6px 10px !important;
+            margin: 2px 0 !important;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.15s ease-in-out, color 0.15s ease-in-out;
+        }
+
+        /* 3) Hover effect */
+        div[role="radiogroup"] > label:hover {
+            background-color: #eceff4 !important;
+        }
+
+        /* 4) Selected item — label that HAS a checked input inside it */
+        div[role="radiogroup"] > label:has(input:checked) {
+            background-color: #1c4e8020 !important;
+            border-left: 4px solid #1c4e80 !important;
+            font-weight: 600 !important;
+            padding-left: 6px !important;
+            color: #1c4e80 !important;
+        }
+
         </style>
         """,
         unsafe_allow_html=True,
     )
 
     # -----------------------------
-    # Logo from static/ as base64
+    # Logo from static (base64)
     # -----------------------------
     logo_b64 = get_logo_base64()
     if logo_b64:
@@ -830,19 +876,18 @@ def sidebar_nav():
             <div class="ascenda-logo-wrap">
                 <img src="data:image/png;base64,{logo_b64}"
                      alt="Ascenda"
-                     style="width:160px; height:auto;" />
+                     style="width:150px; height:auto;" />
             </div>
             """,
             unsafe_allow_html=True,
         )
     else:
-        st.sidebar.markdown("### Ascenda")  # fallback if file not found
+        st.sidebar.markdown("### Ascenda")
 
     # -----------------------------
-    # Navigation title
+    # Navigation title (tighter)
     # -----------------------------
-    st.sidebar.title("Navigation")
-    st.sidebar.markdown("#### Go to")
+    st.sidebar.markdown("### Navigation")
 
     user = st.session_state.get("user")
     role = (user.get("role") if user else "").lower().strip()
@@ -867,7 +912,9 @@ def sidebar_nav():
             "User Settings",
         ]
 
+    # -----------------------------
     # Resolve current page
+    # -----------------------------
     url_page = get_url_param("page")
     sess_page = st.session_state.get("_current_page")
 
@@ -880,6 +927,9 @@ def sidebar_nav():
 
     idx = pages.index(current)
 
+    # -----------------------------
+    # Navigation radio (styled as menu)
+    # -----------------------------
     def _on_change():
         old = st.session_state.get("_current_page")
         chosen = st.session_state["_nav_choice"]
@@ -891,7 +941,7 @@ def sidebar_nav():
             _reset_location_state_for_page("submit_visit")
 
     choice = st.sidebar.radio(
-        "Page",
+        "",
         pages,
         index=idx,
         key="_nav_choice",
@@ -1679,6 +1729,14 @@ def page_my_submissions():
     set_current_page("my_submissions")
     u = st.session_state.user
     uid = int(u.get("user_id")) if u.get("user_id") is not None else int(u["id"])
+    
+    # --- Defensive fallbacks ---
+    display_name = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
+    display_region = u.get("region") or "—"
+    display_role = u.get("role") or "—"
+
+    # --- Display info ---
+    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")   
 
     sql = """
         SELECT v.visit_id,
@@ -2550,6 +2608,14 @@ def page_project_management():
         st.stop()
 
     manager_id = int(u.get("user_id") or u.get("id"))
+    
+    # --- Defensive fallbacks ---
+    display_name = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
+    display_region = u.get("region") or "—"
+    display_role = u.get("role") or "—"
+
+    # --- Display info ---
+    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")   
 
     # --- Load projects for this manager/admin ---
     df = _fetch_projects_for_management(u)
