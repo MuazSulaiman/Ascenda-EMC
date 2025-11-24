@@ -179,6 +179,40 @@ def capture_client_fingerprints():
 # Call this once early (e.g., at the start of your main script, before any login UI)
 capture_client_fingerprints()
 
+def apply_role_based_layout():
+    """
+    Make layout 'wider' for manager/admin on larger screens
+    but keep default behavior on mobile.
+    """
+    u = st.session_state.get("user") or resolve_session_user()
+    if not u:
+        return
+
+    role = (u.get("role") or "").lower().strip()
+
+    # Later you can read this from DB / user settings instead of hard-coding
+    prefers_wide = role in ("manager", "admin")
+
+    if not prefers_wide:
+        return
+
+    # CSS: only apply on wider viewports (e.g. laptops/desktops)
+    st.markdown(
+        """
+        <style>
+        /* Only screens >= 900px width: act like "wide" mode */
+        @media (min-width: 900px) {
+          .block-container {
+            max-width: 1200px;   /* you can increase this if you want */
+            padding-left: 2rem;
+            padding-right: 2rem;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 # =============================
 # DB Utilities (PostgreSQL)
 # =============================
@@ -5089,6 +5123,9 @@ if not user:
     login_block()
     show_footer()
 else:
+    # ✅ Apply role-based layout once per request
+    apply_role_based_layout()
+    
     logout_button()
     page = sidebar_nav()
 
