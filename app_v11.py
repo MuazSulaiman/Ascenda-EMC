@@ -134,6 +134,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def get_logo_base64() -> str:
+    """
+    Read logo from your Git repo static folder and return it as base64 string.
+    Adjust the relative path if your app file is in a subfolder.
+    """
+    logo_path = Path(__file__).parent / "static" / "Login_Logo.png"
+    try:
+        with open(logo_path, "rb") as f:
+            data = f.read()
+        return base64.b64encode(data).decode("utf-8")
+    except Exception:
+        return ""
+
 # --- Client fingerprint capture ---
 import streamlit as st
 
@@ -787,59 +800,74 @@ def logout_button():
         set_url_param("page", None)
         st.rerun()
 
-# =============================
-# UI — Sidebar Navigation
-# =============================
 def sidebar_nav():
+    # -----------------------------
+    # Sidebar CSS
+    # -----------------------------
+    st.sidebar.markdown(
+        """
+        <style>
+        /* Center the logo container only */
+        .ascenda-logo-wrap {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # -----------------------------
+    # Logo from static/ as base64
+    # -----------------------------
+    logo_b64 = get_logo_base64()
+    if logo_b64:
+        st.sidebar.markdown(
+            f"""
+            <div class="ascenda-logo-wrap">
+                <img src="data:image/png;base64,{logo_b64}"
+                     alt="Ascenda"
+                     style="width:160px; height:auto;" />
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.sidebar.markdown("### Ascenda")  # fallback if file not found
+
+    # -----------------------------
+    # Navigation title
+    # -----------------------------
     st.sidebar.title("Navigation")
+    st.sidebar.markdown("#### Go to")
 
     user = st.session_state.get("user")
     role = (user.get("role") if user else "").lower().strip()
 
-    # -----------------------------
-    # Base pages for ALL users
-    # -----------------------------
-    pages = [
-        "Submit Visit",
-        "My Submissions"
-    ]
+    # Base pages
+    pages = ["Submit Visit", "My Submissions"]
 
-    # -----------------------------
-    # Rep-only pages
-    # -----------------------------
     if role == "rep":
-        pages += [
-            "User Settings"
-        ]
+        pages += ["User Settings"]
 
-    # -----------------------------
-    # Manager-only pages
-    # -----------------------------
     if role == "manager":
-        pages += [
-            "Project Creation",
-            "Project View",
-            "Project Management",
-            "User Settings"
-        ]
+        pages += ["Project Creation", "Project View", "Project Management", "User Settings"]
 
-    # -----------------------------
-    # Admin-only pages
-    # -----------------------------
     if role == "admin":
         pages += [
             "Project Creation",
             "Project View",
             "Project Management",
-            "User Settings",
             "Admin: Import Lookups",
             "Admin: Data Browser",
-            "Admin: Users"
+            "Admin: Users",
+            "User Settings",
         ]
 
-    # -----------------------------
-    # Resolve which page to show
-    # -----------------------------
+    # Resolve current page
     url_page = get_url_param("page")
     sess_page = st.session_state.get("_current_page")
 
@@ -852,9 +880,6 @@ def sidebar_nav():
 
     idx = pages.index(current)
 
-    # -----------------------------
-    # Handle page switching
-    # -----------------------------
     def _on_change():
         old = st.session_state.get("_current_page")
         chosen = st.session_state["_nav_choice"]
@@ -862,20 +887,19 @@ def sidebar_nav():
         st.session_state["_current_page"] = chosen
         set_url_param("page", chosen)
 
-        # Reset location state if leaving Submit Visit
         if old == "Submit Visit" and chosen != "Submit Visit":
             _reset_location_state_for_page("submit_visit")
 
-    st.sidebar.markdown("### Go to")
     choice = st.sidebar.radio(
-        "",
+        "Page",
         pages,
         index=idx,
         key="_nav_choice",
-        on_change=_on_change
+        on_change=_on_change,
+        label_visibility="collapsed",
     )
 
-    # Sync state → URL
+    # Sync state ↔ URL
     if st.session_state.get("_current_page") != choice:
         st.session_state["_current_page"] = choice
     if get_url_param("page") != choice:
@@ -886,9 +910,6 @@ def sidebar_nav():
 # =============================
 # Location block (auto-flow, minimal UI) – required
 # =============================
-# ---- imports (put near the top of your file) ----
-
-
 # Prefer JS geolocation (no tiny Leaflet button needed)
 try:
     from streamlit_js_eval import get_geolocation as _get_geo_js
@@ -5100,19 +5121,42 @@ def page_admin_users():
 # =============================
 # Footer
 # =============================
+def get_almadar_logo_base64() -> str:
+    """
+    Load Al Madar logo from /static and return as base64 string.
+    Adjust the path if app_v11.py is inside a subfolder.
+    """
+    logo_path = Path(__file__).parent / "static" / "Almadar-Logo-01.png"
+    try:
+        with open(logo_path, "rb") as f:
+            data = f.read()
+        return base64.b64encode(data).decode("utf-8")
+    except Exception as e:
+        print("Logo load error:", e)
+        return ""
+
 def show_footer():
-    st.markdown("""
-    <hr style="margin-top:2rem;margin-bottom:1rem;opacity:0.25;">
-    <div style="text-align:center; color:#6c757d;">
-        <img src="https://www.physioassist.com/wp-content/uploads/2023/06/Almadar-Logo-01.png"
-             style="height:45px;opacity:.85;margin-bottom:6px;"><br>
-        <span style="font-size:0.9rem;">
-            © 2025 <strong>Al Madar Medical Co.</strong><br>
-            Core System © <strong>Muaz Sulaiman</strong><br>
-            <span style="font-size:0.8rem;">Version 11 • All rights reserved.</span>
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
+    logo_b64 = get_almadar_logo_base64()
+
+    if logo_b64:
+        logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:45px;opacity:.85;margin-bottom:6px;" />'
+    else:
+        logo_html = '<strong>Al Madar Medical Co.</strong>'  # fallback text
+
+    st.markdown(
+        f"""
+        <hr style="margin-top:2rem;margin-bottom:1rem;opacity:0.25;">
+        <div style="text-align:center; color:#6c757d;">
+            {logo_html}<br>
+            <span style="font-size:0.9rem;">
+                © 2025 <strong>Al Madar Medical Co.</strong><br>
+                Core System © <strong>Muaz Sulaiman</strong><br>
+                <span style="font-size:0.8rem;">Version 11 • All rights reserved.</span>
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     
 # =============================
 # MAIN
