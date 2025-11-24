@@ -902,13 +902,13 @@ def sidebar_nav():
         pages += ["User Settings"]
 
     if role == "manager":
-        pages += ["Project Creation", "Project View", "Project Management", "User Settings"]
+        pages += ["Project Creation", "Project Management", "Projects View", "User Settings"]
 
     if role == "admin":
         pages += [
             "Project Creation",
-            "Project View",
             "Project Management",
+            "Projects View",
             "Admin: Import Lookups",
             "Admin: Data Browser",
             "Admin: Users",
@@ -1683,7 +1683,7 @@ def page_submit_visit():
         prod_disabled = True
 
     prod_choice = st.selectbox(
-        "Article Number (Product) — optional",
+        "Article Number/Product (optional)",
         prod_labels,
         index=prod_index,
         key=k("prod_sel"),
