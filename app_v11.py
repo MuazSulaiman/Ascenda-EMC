@@ -2573,7 +2573,7 @@ def page_create_project():
             st.session_state[busy_key] = False
 
 def page_project_view():
-    st.title("Project View")
+    st.title("Projects View")
     set_current_page("project_view")
     # TODO: implement
 
@@ -5507,7 +5507,7 @@ else:
         page_user_settings()
     elif page == "Project Creation":
         page_create_project()
-    elif page == "Project View":
+    elif page == "Projects View":
         page_project_view()          # you'll define this
     elif page == "Project Management":
         page_project_management()    # you'll define this
