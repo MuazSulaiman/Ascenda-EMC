@@ -1084,7 +1084,7 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
         return (flat, flon, facc)
 
 # =============================
-# Page — Submit Visit (sticky submit + dedupe guard)
+# Page — Submit Visit (sticky submit + dedupe guard + optional projects)
 # =============================
 try:
     # psycopg 3 error class (optional, for finer duplicate checks)
@@ -1096,21 +1096,24 @@ def page_submit_visit():
     st.title("📝 Submit Visit")
 
     # ---- tiny CSS for floating submit ----
-    st.markdown("""
-    <style>
-      .sticky-submit-wrap{position:fixed; right:16px; bottom:16px; z-index:1000;}
-      @media (max-width:640px){
-        .sticky-submit-wrap{left:16px; right:16px;}
-        .sticky-submit-wrap button{width:100%;}
-      }
-    </style>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        """
+        <style>
+          .sticky-submit-wrap{position:fixed; right:16px; bottom:16px; z-index:1000;}
+          @media (max-width:640px){
+            .sticky-submit-wrap{left:16px; right:16px;}
+            .sticky-submit-wrap button{width:100%;}
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
     # ---- Red asterisk legend ----
     st.markdown(
         '<div style="margin:.25rem 0 1rem 0;">'
         'Fields marked with <span style="color:#d00000;font-weight:700">*</span> are required.'
-        '</div>',
+        "</div>",
         unsafe_allow_html=True,
     )
 
@@ -1121,11 +1124,13 @@ def page_submit_visit():
     geo_captured_key = f"_{PAGE_NS}_geo_captured"
     busy_key         = f"_{PAGE_NS}_busy"
     intent_key       = f"_{PAGE_NS}_submit_intent"
+    prev_proj_key    = f"_{PAGE_NS}_prev_project_label"
 
     st.session_state.setdefault(nonce_key, 0)
     st.session_state.setdefault(geo_nonce_key, 0)
     st.session_state.setdefault(busy_key, False)
     st.session_state.setdefault(intent_key, False)
+    st.session_state.setdefault(prev_proj_key, "")
 
     def k(name: str) -> str:
         return f"{PAGE_NS}/{name}_{st.session_state[nonce_key]}"
@@ -1151,23 +1156,35 @@ def page_submit_visit():
         for n in ("prod_sel",):
             st.session_state.pop(k(n), None)
 
+    # ⬅️ KEY CHANGE: clear project-dependent fields by forcing them to ""
+    def _clear_project_dependent_fields():
+        for n in (
+            "region_sel", "city_sel", "sector_sel", "cust_sel", "aud_sel",
+            "bu_sel", "cat_sel", "bl_sel", "prod_sel"
+        ):
+            st.session_state[k(n)] = ""
+
     set_current_page(PAGE_NS)
-    u = st.session_state.user
-    uid = int(u["user_id"] if "user_id" in u else u["id"])
+
     # --- Resolve logged-in user safely ---
     u = st.session_state.get("user") or resolve_session_user()
     if not u:
         st.warning("Please sign in to continue.")
         st.stop()
 
+    uid  = int(u.get("user_id") or u.get("id"))
+    role = (u.get("role") or "").lower().strip()
+
     # --- Defensive fallbacks ---
-    display_name = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
+    display_name   = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
     display_region = u.get("region") or "—"
-    display_role = u.get("role") or "—"
+    display_role   = u.get("role") or "—"
 
     # --- Display info ---
-    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")    
-    
+    st.caption(
+        f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**"
+    )
+
     # ⬇️ Ensure location flow is reset when user or page changes
     _reset_geo_on_user_or_page_change(PAGE_NS, uid)
 
@@ -1190,27 +1207,153 @@ def page_submit_visit():
         return
 
     # =====================================================
+    # Optional Project (locks Customer + Product context)
+    # =====================================================
+    project_df          = pd.DataFrame()
+    selected_project    = None
+    selected_project_id = None
+
+    where_clauses: list[str] = ["p.status IN ('Not Started', 'Open')"]
+    params: dict[str, object] = {}
+
+    if role == "rep":
+        where_clauses.append("p.assigned_to_id = :uid")
+        params["uid"] = uid
+    elif role == "manager":
+        where_clauses.append("p.assigned_by_id = :uid")
+        params["uid"] = uid
+    elif role == "admin":
+        # no extra filter
+        pass
+
+    if role in ("rep", "manager", "admin"):
+        project_df = query_df(
+            f"""
+            SELECT
+                p.project_id,
+                p.name AS project_name,
+                p.customer_id,
+                c.account_name,
+                c.region,
+                c.city,
+                c.sector,
+                p.business_line_id,
+                bl.name AS business_line_name,
+                bl.business_unit_id AS business_unit_id,
+                bu.name AS business_unit_name,
+                bl.category,
+                p.product_id,
+                i.article_number,
+                i.description AS item_description
+            FROM projects p
+            JOIN customers      c  ON c.customer_id       = p.customer_id
+            JOIN business_lines bl ON bl.business_line_id = p.business_line_id
+            LEFT JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+            LEFT JOIN items      i  ON i.product_id        = p.product_id
+            WHERE {" AND ".join(where_clauses)}
+            ORDER BY p.project_id, p.name, c.account_name
+            """,
+            params,
+        )
+
+    proj_labels: list[str] = [""]
+    proj_label_to_id: dict[str, int] = {}
+
+    if not project_df.empty:
+        for r in project_df.itertuples(index=False):
+            # "12. Project Name — Customer — Business Line"
+            base = f"{r.project_id}. {r.project_name}"
+            parts = [base, str(r.account_name)]
+            if getattr(r, "business_line_name", None):
+                parts.append(str(r.business_line_name))
+            label = " — ".join(parts)
+            proj_labels.append(label)
+            proj_label_to_id[label] = int(r.project_id)
+
+    # ---- Project select ----
+    project_choice = st.selectbox(
+        "Project (optional)",
+        proj_labels,
+        index=0,
+        key=k("proj_sel"),
+        help="Link this visit to a project. Customer and product context will follow the project.",
+    )
+
+    # ---- Detect transitions: project selected / switched / cleared ----
+    prev_label = st.session_state.get(prev_proj_key, "")
+    curr_label = project_choice or ""
+
+    project_selected_prev = bool(prev_label)
+    project_selected_now  = bool(curr_label)
+
+    if curr_label != prev_label:
+        # Any change (None→something, something→other, something→None)
+        # → hard reset all dependent fields to ""
+        _clear_project_dependent_fields()
+
+    # Persist the new label for next run
+    st.session_state[prev_proj_key] = curr_label
+
+    # Now resolve selected project (if any)
+    if curr_label:
+        selected_project_id = proj_label_to_id.get(curr_label)
+        if selected_project_id is not None:
+            sel_rows = project_df[project_df["project_id"] == selected_project_id]
+            if not sel_rows.empty:
+                selected_project = sel_rows.iloc[0].to_dict()
+                proj_label = f"{selected_project['project_id']}. {selected_project.get('project_name', '')}"
+                st.info(
+                    f"🔒 Linked to project **{proj_label}**. "
+                    "Customer and product context are locked to the project."
+                )
+
+    project_locked = selected_project is not None
+
+    # Pre-extract project fields (used to seed state)
+    proj_region        = selected_project.get("region")             if project_locked else None
+    proj_city          = selected_project.get("city")               if project_locked else None
+    proj_sector        = selected_project.get("sector")             if project_locked else None
+    proj_customer_id   = int(selected_project["customer_id"])       if project_locked else None
+    proj_customer_name = selected_project.get("account_name")       if project_locked else None
+    proj_bu_id         = int(selected_project["business_unit_id"])  if project_locked and selected_project.get("business_unit_id") is not None else None
+    proj_bu_name       = selected_project.get("business_unit_name") if project_locked else None
+    proj_cat           = selected_project.get("category")           if project_locked else None
+    proj_bl_id         = int(selected_project["business_line_id"])  if project_locked and selected_project.get("business_line_id") is not None else None
+    proj_bl_name       = selected_project.get("business_line_name") if project_locked else None
+    proj_prod_id       = selected_project.get("product_id")         if project_locked else None
+
+    # =====================================================
     # Region → City → Sector → Customer (all REQUIRED)
     # =====================================================
 
-    # ---- Region (from customers.region) ----
-    reg_df = query_df("""
+    # ---- Region ----
+    reg_df = query_df(
+        """
         SELECT DISTINCT region
         FROM customers
         WHERE is_active IS TRUE
           AND region IS NOT NULL AND trim(region) <> ''
         ORDER BY region
-    """)
+        """
+    )
     region_opts = [""] + reg_df["region"].tolist()
+
+    # ⬅️ KEY CHANGE: if project_locked, force region = project region
+    if project_locked and proj_region:
+        st.session_state[k("region_sel")] = proj_region
+
     region_choice = st.selectbox(
         "Region *",
         region_opts,
         index=0,
         key=k("region_sel"),
-        on_change=_on_region_change
+        disabled=project_locked,
+        on_change=None if project_locked else _on_region_change,
     )
+    if project_locked:
+        region_choice = proj_region
 
-    # ---- City (depends on Region; from customers.city) ----
+    # ---- City ----
     if region_choice:
         city_df = query_df(
             """
@@ -1228,17 +1371,22 @@ def page_submit_visit():
         city_df = pd.DataFrame(columns=["city"])
         city_opts = [""]
 
+    if project_locked and proj_city:
+        st.session_state[k("city_sel")] = proj_city
+
     city_choice = st.selectbox(
         "City *",
         city_opts,
         index=0,
         key=k("city_sel"),
-        disabled=(not region_choice),
+        disabled=project_locked or not region_choice,
+        on_change=None if project_locked else _on_city_change,
         help=None if region_choice else "Select a Region first",
-        on_change=_on_city_change
     )
+    if project_locked:
+        city_choice = proj_city
 
-    # ---- Sector (depends on City; from customers.sector) ----
+    # ---- Sector ----
     if region_choice and city_choice:
         sec_df = query_df(
             """
@@ -1257,17 +1405,22 @@ def page_submit_visit():
         sec_df = pd.DataFrame(columns=["sector"])
         sector_opts = [""]
 
+    if project_locked and proj_sector:
+        st.session_state[k("sector_sel")] = proj_sector
+
     sector_choice = st.selectbox(
         "Sector *",
         sector_opts,
         index=0,
         key=k("sector_sel"),
-        disabled=(not (region_choice and city_choice)),
+        disabled=project_locked or not (region_choice and city_choice),
+        on_change=None if project_locked else _on_sector_change,
         help=None if (region_choice and city_choice) else "Select a City first",
-        on_change=_on_sector_change
     )
+    if project_locked:
+        sector_choice = proj_sector
 
-    # ---- Customer (depends on Region+City+Sector) ----
+    # ---- Customer ----
     if region_choice and city_choice and sector_choice:
         cust_df = query_df(
             """
@@ -1283,29 +1436,37 @@ def page_submit_visit():
         )
         cust_names = [""] + cust_df["account_name"].tolist()
     else:
-        cust_df = pd.DataFrame(columns=["customer_id","account_name"])
+        cust_df = pd.DataFrame(columns=["customer_id", "account_name"])
         cust_names = [""]
+
+    if project_locked and proj_customer_name:
+        st.session_state[k("cust_sel")] = proj_customer_name
 
     cust_choice = st.selectbox(
         "Customer *",
         cust_names,
         index=0,
         key=k("cust_sel"),
-        disabled=(not (region_choice and city_choice and sector_choice)),
+        disabled=project_locked or not (region_choice and city_choice and sector_choice),
         help=None if (region_choice and city_choice and sector_choice) else "Select Sector first",
     )
 
     customer_id = None
-    if cust_choice:
+    if project_locked and proj_customer_id:
+        customer_id = proj_customer_id
+        cust_choice = proj_customer_name
+    elif cust_choice:
         match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
         customer_id = int(match.iloc[0]) if not match.empty else None
 
-    # ---------------- Target Audience (REQUIRED; depends on Customer) ----------------
-    audience_id = None
+    # ---------------- Target Audience ----------------
+    audience_id      = None
     aud_choice_label = ""
-    aud_choice_name = None
+    aud_choice_name  = None
 
-    aud_labels = [""]; aud_rows = []
+    aud_labels = [""]
+    aud_rows   = []
+
     if customer_id:
         aud_df = query_df(
             """
@@ -1316,10 +1477,11 @@ def page_submit_visit():
             """,
             {"cid": customer_id},
         )
+
         def _fmt_audience(row) -> str:
             parts = []
             title = (str(row.title).strip() + " ") if pd.notna(row.title) and str(row.title).strip() else ""
-            name  = str(row.name).strip() if pd.notna(row.name) else ""
+            name  = str(row.name).strip()          if pd.notna(row.name)  else ""
             parts.append((title + name).strip())
             if pd.notna(row.department) and str(row.department).strip():
                 parts.append(str(row.department).strip())
@@ -1347,36 +1509,61 @@ def page_submit_visit():
     if customer_id and aud_choice_label:
         for lbl, aid, raw_name in aud_rows:
             if lbl == aud_choice_label:
-                audience_id = aid
+                audience_id     = aid
                 aud_choice_name = raw_name
                 break
 
-    # -------- Home Visit block (REQUIRED only if triggered) --------
-    is_home_visit = bool(aud_choice_label and aud_choice_label.strip().lower().startswith("home visit"))
-    patient_name = patient_phone = serial_no = None
+    # -------- Home Visit block --------
+    is_home_visit  = bool(aud_choice_label and aud_choice_label.strip().lower().startswith("home visit"))
+    patient_name   = None
+    patient_phone  = None
+    serial_no      = None
     if is_home_visit:
         with st.container():
             patient_name  = st.text_input("Patient Name *", key=k("pat_name"))
             patient_phone = st.text_input("Patient Phone # *", key=k("pat_phone"))
             serial_no     = st.text_input("Device Serial # *", key=k("serial_no"))
 
-    # ---------------- Business Unit (REQUIRED) ----------------
-    bu_df = query_df("""
+    # =====================================================
+    # Business Unit / Category / Business Line / Product
+    # =====================================================
+
+    # ---- Business Unit ----
+    bu_df = query_df(
+        """
         SELECT business_unit_id, name
         FROM business_units
         WHERE is_active IS TRUE
         ORDER BY name
-    """)
+        """
+    )
     bu_names = [""] + bu_df["name"].tolist()
-    bu_choice = st.selectbox("Business Unit *", bu_names, index=0, key=k("bu_sel"), on_change=_on_bu_change)
+
+    if project_locked and proj_bu_name:
+        st.session_state[k("bu_sel")] = proj_bu_name
+
+    bu_choice = st.selectbox(
+        "Business Unit *",
+        bu_names,
+        index=0,
+        key=k("bu_sel"),
+        disabled=project_locked,
+        on_change=None if project_locked else _on_bu_change,
+    )
+
     bu_id = None
-    if bu_choice:
+    if project_locked and proj_bu_id:
+        bu_id     = proj_bu_id
+        bu_choice = proj_bu_name
+    elif bu_choice:
         match = bu_df.loc[bu_df["name"] == bu_choice, "business_unit_id"]
         bu_id = int(match.iloc[0]) if not match.empty else None
 
-    # ---------------- Category (REQUIRED; depends on BU) ----------------
-    cat_df = pd.DataFrame()
-    cat_names = [""]; cat_choice = ""
+    # ---- Category ----
+    cat_df    = pd.DataFrame()
+    cat_names = [""]
+    cat_choice = ""
+
     if bu_id:
         cat_df = query_df(
             """
@@ -1392,18 +1579,24 @@ def page_submit_visit():
         )
         cat_names = [""] + cat_df["category"].tolist()
 
+    if project_locked and proj_cat:
+        st.session_state[k("cat_sel")] = proj_cat
+
     cat_choice = st.selectbox(
         "Category *",
         cat_names,
         index=0,
         key=k("cat_sel"),
-        disabled=(bu_id is None),
+        disabled=project_locked or bu_id is None,
         help=None if bu_id else "Select a Business Unit first",
     )
+    if project_locked:
+        cat_choice = proj_cat
 
-    # ---------------- Business Line (REQUIRED; depends on BU + Category) ----------------
-    bl_df = pd.DataFrame()
-    bl_names = [""]; bl_choice = ""
+    # ---- Business Line ----
+    bl_df   = pd.DataFrame()
+    bl_names = [""]
+    bl_choice = ""
     business_line_id = None
 
     if bu_id and cat_choice:
@@ -1420,22 +1613,32 @@ def page_submit_visit():
         )
         bl_names = [""] + bl_df["name"].tolist()
 
+    if project_locked and proj_bl_name:
+        st.session_state[k("bl_sel")] = proj_bl_name
+
     bl_choice = st.selectbox(
         "Business Line *",
         bl_names,
         index=0,
         key=k("bl_sel"),
-        disabled=(bu_id is None or not cat_choice),
-        on_change=_on_line_change,
+        disabled=project_locked or bu_id is None or not cat_choice,
+        on_change=None if project_locked else _on_line_change,
         help=None if (bu_id and cat_choice) else "Select a Category first",
     )
-    if bu_id and cat_choice and bl_choice:
+
+    if project_locked and proj_bl_id:
+        business_line_id = proj_bl_id
+        bl_choice        = proj_bl_name
+    elif bu_id and cat_choice and bl_choice:
         match = bl_df.loc[bl_df["name"] == bl_choice, "business_line_id"]
         business_line_id = int(match.iloc[0]) if not match.empty else None
 
-    # ---------------- Article Number / Product (OPTIONAL) ----------------
-    prod_labels, prod_df = [""], pd.DataFrame()
-    product_id = None; prod_choice = ""
+    # ---- Product (Article Number) ----
+    prod_labels: list[str] = [""]
+    prod_df = pd.DataFrame()
+    product_id  = None
+    prod_choice = ""
+    prod_disabled = False
 
     if business_line_id:
         prod_df = query_df(
@@ -1448,44 +1651,79 @@ def page_submit_visit():
             """,
             {"blid": business_line_id},
         )
-        prod_labels = [""] + [
-            (f"{(r.article_number or r.product_id)} — {r.description}" if pd.notna(r.description) and str(r.description).strip()
-             else f"{(r.article_number or r.product_id)}")
+        prod_labels = [
+            ""
+        ] + [
+            (
+                f"{(r.article_number or r.product_id)} — {r.description}"
+                if pd.notna(r.description) and str(r.description).strip()
+                else f"{(r.article_number or r.product_id)}"
+            )
             for r in prod_df.itertuples(index=False)
         ]
+
+    # Seed fixed product if project has one
+    prod_index = 0
+    if project_locked and proj_prod_id and not prod_df.empty:
+        label_to_pid = {}
+        for r in prod_df.itertuples(index=False):
+            label = (
+                f"{(r.article_number or r.product_id)} — {r.description}"
+                if pd.notna(r.description) and str(r.description).strip()
+                else f"{(r.article_number or r.product_id)}"
+            )
+            label_to_pid[label] = r.product_id
+
+        for lbl, pid in label_to_pid.items():
+            if str(pid) == str(proj_prod_id) and lbl in prod_labels:
+                prod_index = prod_labels.index(lbl)
+                st.session_state[k("prod_sel")] = lbl
+                break
+
+        prod_disabled = True
 
     prod_choice = st.selectbox(
         "Article Number (Product) — optional",
         prod_labels,
-        index=0,
+        index=prod_index,
         key=k("prod_sel"),
-        disabled=(business_line_id is None),
+        disabled=(business_line_id is None) or prod_disabled,
         help=None if business_line_id else "Select Business Line first",
     )
+
     if business_line_id and prod_choice:
         label_to_pid = {}
         for r in prod_df.itertuples(index=False):
-            label = (f"{(r.article_number or r.product_id)} — {r.description}" if pd.notna(r.description) and str(r.description).strip()
-                     else f"{(r.article_number or r.product_id)}")
+            label = (
+                f"{(r.article_number or r.product_id)} — {r.description}"
+                if pd.notna(r.description) and str(r.description).strip()
+                else f"{(r.article_number or r.product_id)}"
+            )
             label_to_pid[label] = r.product_id
         product_id = label_to_pid.get(prod_choice)
 
-    # ---------------- Objective (REQUIRED) + Evaluation (REQUIRED) + Notes (OPTIONAL) ----------------
-    obj_df = query_df("""
+    if project_locked and proj_prod_id and not product_id:
+        product_id = proj_prod_id
+
+    # ---------------- Objective / Evaluation / Notes ----------------
+    obj_df = query_df(
+        """
         SELECT objective_id, name
         FROM objectives
         WHERE COALESCE(is_active, TRUE) IS TRUE
         ORDER BY name
-    """)
-    obj_names = [""] + obj_df["name"].tolist()
+        """
+    )
+    obj_names  = [""] + obj_df["name"].tolist()
     obj_choice = st.selectbox("Business Objective *", obj_names, index=0, key=k("obj_sel"))
+
     objective_id = None
     if obj_choice:
         match = obj_df.loc[obj_df["name"] == obj_choice, "objective_id"]
         objective_id = int(match.iloc[0]) if not match.empty else None
 
-    is_shelf_movement = bool(obj_choice) and ("shelf movement" in obj_choice.strip().lower())
-    notes = st.text_area("Notes (optional)", key=k("notes"))
+    is_shelf_movement = bool(obj_choice and ("shelf movement" in obj_choice.strip().lower()))
+    notes             = st.text_area("Notes (optional)", key=k("notes"))
 
     allowed_evals = {"Positive", "Negative", "Neutral", "I Don't Know"}
     evaluation_choice = st.selectbox(
@@ -1496,8 +1734,9 @@ def page_submit_visit():
     )
     evaluation_val = evaluation_choice if evaluation_choice in allowed_evals else None
 
-    # ---------------- Shelf Movement grid (when objective is Shelf Movement) ----------------
-    shelf_df = pd.DataFrame(); shelf_editor = None
+    # ---------------- Shelf Movement grid ----------------
+    shelf_df    = pd.DataFrame()
+    shelf_editor = None
     if is_shelf_movement:
         st.subheader("🧾 Shelf Movement — Quantities Checked")
         if not bu_id:
@@ -1531,14 +1770,14 @@ def page_submit_visit():
                     hide_index=True,
                     num_rows="fixed",
                     column_config={
-                        "product_id": st.column_config.TextColumn("Product ID", disabled=True),
-                        "article_number": st.column_config.TextColumn("Article #", disabled=True),
-                        "description": st.column_config.TextColumn("Description", disabled=True),
-                        "qty_checked": st.column_config.NumberColumn(
+                        "product_id":     st.column_config.TextColumn("Product ID", disabled=True),
+                        "article_number": st.column_config.TextColumn("Article #",  disabled=True),
+                        "description":    st.column_config.TextColumn("Description", disabled=True),
+                        "qty_checked":    st.column_config.NumberColumn(
                             "Qty Checked",
                             help="Leave blank if not checked. Enter 0 if none on shelf.",
                             min_value=0,
-                            step=1
+                            step=1,
                         ),
                     },
                 )
@@ -1547,7 +1786,9 @@ def page_submit_visit():
     if customer_id:
         mins = recent_visit_minutes(uid, customer_id)
         if mins is not None and mins < DUP_MINUTES:
-            st.info(f"You submitted for **{cust_choice}** {mins} minutes ago — potential duplicate.")
+            st.info(
+                f"You submitted for **{cust_choice}** {mins} minutes ago — potential duplicate."
+            )
 
     # ---------------- Submit button ----------------
     inline_click = st.button(
@@ -1555,10 +1796,10 @@ def page_submit_visit():
         type="primary",
         key=k("submit_btn_inline"),
         disabled=st.session_state[busy_key],
-        help="Saves immediately. You’ll see a spinner while saving."
+        help="Saves immediately. You’ll see a spinner while saving.",
     )
 
-    if (inline_click) and not st.session_state[busy_key]:
+    if inline_click and not st.session_state[busy_key]:
         st.session_state[intent_key] = True
         st.session_state[busy_key]   = True
         st.rerun()
@@ -1566,11 +1807,10 @@ def page_submit_visit():
     if not st.session_state[intent_key]:
         return
 
-    # ---------------- Process submission with a global spinner ----------------
+    # ---------------- Process submission ----------------
     with st.spinner("Saving your visit…"):
-        errors = []
+        errors: list[str] = []
 
-        # REQUIRED in page order (new cascade first)
         if not region_choice:
             errors.append("Please choose a **Region**.")
         if not city_choice:
@@ -1590,8 +1830,8 @@ def page_submit_visit():
             elif not re.fullmatch(r"(?:\+966|00966|0)?5\d{8}", patient_phone.strip()):
                 errors.append("**Patient Phone #** looks invalid (expected KSA mobile like 05XXXXXXXX).")
             if not serial_no:
-                errors.append("For **Home Visit**, please enter **Serial #**.")          
-        
+                errors.append("For **Home Visit**, please enter **Serial #**.")
+
         if not bu_id:
             errors.append("Please choose a **Business Unit**.")
         if not cat_choice:
@@ -1606,7 +1846,7 @@ def page_submit_visit():
 
         # Shelf Movement validations
         shelf_lines_payload = None
-        filled_rows = None
+        filled_rows         = None
         if is_shelf_movement:
             if shelf_editor is None or shelf_editor.empty:
                 errors.append("**Shelf Movement** grid is empty. Load items by selecting Business Unit and Category.")
@@ -1617,7 +1857,9 @@ def page_submit_visit():
                     errors.append("Quantities in **Shelf Movement** cannot be negative.")
                 filled_rows = edited[edited["qty_checked"].notna()]
                 if filled_rows is not None and filled_rows.empty:
-                    errors.append("Enter at least **one** quantity in the **Shelf Movement** grid (blank = not checked; 0 is allowed).")
+                    errors.append(
+                        "Enter at least **one** quantity in the **Shelf Movement** grid (blank = not checked; 0 is allowed)."
+                    )
                 if filled_rows is not None and not filled_rows.empty:
                     shelf_lines_payload = [
                         {"product_id": r["product_id"], "qty_checked": float(r["qty_checked"])}
@@ -1627,33 +1869,34 @@ def page_submit_visit():
         if errors:
             for msg in errors:
                 st.error(msg)
-            st.session_state[busy_key] = False
+            st.session_state[busy_key]   = False
             st.session_state[intent_key] = False
             return
 
         # ----- All validations passed → persist -----
         visit_row = {
-            "user_id": uid,
-            "submitted_at_utc": _utcnow(),
-            "submitted_at_local": _local_now_str(),
-            "latitude": lat,
-            "longitude": lon,
-            "accuracy_m": acc,
-            "customer_id": int(customer_id),
-            "audience_id": int(audience_id) if audience_id else None,
-            "business_line_id": int(business_line_id),
-            "product_id": (None if is_shelf_movement else product_id),
-            "objective_id": int(objective_id),
-            "notes": (notes.strip() if notes else None),
-            "evaluation": evaluation_val,
+            "user_id":             uid,
+            "submitted_at_utc":    _utcnow(),
+            "submitted_at_local":  _local_now_str(),
+            "latitude":            lat,
+            "longitude":           lon,
+            "accuracy_m":          acc,
+            "customer_id":         int(customer_id),
+            "audience_id":         int(audience_id) if audience_id else None,
+            "business_line_id":    int(business_line_id),
+            "product_id":          (None if is_shelf_movement else product_id),
+            "objective_id":        int(objective_id),
+            "notes":               (notes.strip() if notes else None),
+            "evaluation":          evaluation_val,
+            "project_id":          int(selected_project_id) if selected_project_id else None,
         }
 
         home_payload = None
         if is_home_visit:
             home_payload = {
-                "patient_name": patient_name,
+                "patient_name":  patient_name,
                 "patient_phone": patient_phone,
-                "serial_no": serial_no,
+                "serial_no":     serial_no,
             }
 
         try:
@@ -1661,37 +1904,44 @@ def page_submit_visit():
 
             # Power BI row
             def _article_from_label(lbl: str | None) -> str:
-                if not lbl: return ""
+                if not lbl:
+                    return ""
                 return str(lbl).split(" — ", 1)[0].strip()
 
             shelf_lines_count = int(len(filled_rows)) if (is_shelf_movement and filled_rows is not None) else 0
             shelf_total_qty   = int(filled_rows["qty_checked"].sum()) if (is_shelf_movement and filled_rows is not None) else 0
 
             pbi_row = {
-                "submitted_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "submitted_at_utc":   datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "submitted_at_local": datetime.now().isoformat(),
-                "user_name": str(u.get("name") or ""),
-                "user_region": str(u.get("region") or ""),
-                "customer_name": str(cust_choice or ""),
-                "audience_name": ("Home Visit" if is_home_visit else str(aud_choice_label or "")),
-                "business_unit": str(bu_choice or ""),
-                "category": str(cat_choice or ""),
-                "business_line": str(bl_choice or ""),
-                "article_number": ("" if is_shelf_movement else _article_from_label(prod_choice if (business_line_id and prod_choice) else None)),
-                "objective": str(obj_choice or ""),
-                "evaluation": str(evaluation_val or ""),
-                "latitude": float(lat) if lat is not None else 0.0,
-                "longitude": float(lon) if lon is not None else 0.0,
-                "accuracy_m": (f"{acc:.1f}" if isinstance(acc, (int, float)) else (str(acc) if acc is not None else "")),
-                "notes": (notes.strip() if notes else ""),
-                "shelf_lines_count": shelf_lines_count,
-                "shelf_total_qty": shelf_total_qty,
+                "user_name":          str(u.get("name") or ""),
+                "user_region":        str(u.get("region") or ""),
+                "customer_name":      str(cust_choice or ""),
+                "audience_name":      ("Home Visit" if is_home_visit else str(aud_choice_label or "")),
+                "business_unit":      str(bu_choice or ""),
+                "category":           str(cat_choice or ""),
+                "business_line":      str(bl_choice or ""),
+                "article_number": (
+                    "" if is_shelf_movement else _article_from_label(
+                        prod_choice if (business_line_id and prod_choice) else None
+                    )
+                ),
+                "objective":          str(obj_choice or ""),
+                "evaluation":         str(evaluation_val or ""),
+                "latitude":           float(lat) if lat is not None else 0.0,
+                "longitude":          float(lon) if lon is not None else 0.0,
+                "accuracy_m": (
+                    f"{acc:.1f}" if isinstance(acc, (int, float)) else (str(acc) if acc is not None else "")
+                ),
+                "notes":              (notes.strip() if notes else ""),
+                "shelf_lines_count":  shelf_lines_count,
+                "shelf_total_qty":    shelf_total_qty,
             }
             if is_home_visit:
                 pbi_row.update({
-                    "patient_name": patient_name.strip(),
+                    "patient_name":  patient_name.strip(),
                     "patient_phone": patient_phone.strip(),
-                    "serial_no": serial_no.strip().upper(),
+                    "serial_no":     serial_no.strip().upper(),
                 })
 
             ok, err = push_visit_to_pbi(pbi_row)
@@ -1700,29 +1950,36 @@ def page_submit_visit():
             else:
                 st.toast("Pushed to Power BI ✅", icon="✅")
 
-            # reset
-            st.session_state[nonce_key] += 1
-            st.session_state[geo_nonce_key] += 1
+            # reset form
+            st.session_state[nonce_key]        += 1
+            st.session_state[geo_nonce_key]    += 1
             st.session_state.pop(geo_captured_key, None)
-            st.session_state[saved_ok_key] = True
-            st.session_state[intent_key] = False
-            st.session_state[busy_key] = False
+            st.session_state[saved_ok_key]      = True
+            st.session_state[intent_key]        = False
+            st.session_state[busy_key]          = False
+            st.session_state[prev_proj_key]     = ""  # reset project tracker after successful submit
             st.rerun()
 
         except IntegrityError as e:
             emsg = str(e).lower()
-            if (UniqueViolation and isinstance(e.orig, UniqueViolation)) or ("duplicate key value violates unique constraint" in emsg) or ("unique constraint" in emsg and "home_visits_serial_no" in emsg):
+            if (
+                UniqueViolation and isinstance(e.orig, UniqueViolation)
+            ) or (
+                "duplicate key value violates unique constraint" in emsg
+            ) or (
+                "unique constraint" in emsg and "home_visits_serial_no" in emsg
+            ):
                 st.error("Serial # already exists. Please verify and try again.")
             else:
                 st.error("Could not save your submission.")
                 st.caption(str(e))
             st.session_state[intent_key] = False
-            st.session_state[busy_key] = False
+            st.session_state[busy_key]   = False
         except Exception as e:
             st.error("Could not save your submission.")
             st.caption(str(e))
             st.session_state[intent_key] = False
-            st.session_state[busy_key] = False
+            st.session_state[busy_key]   = False
 
 # =============================
 # Page — My Submissions
