@@ -2693,12 +2693,28 @@ def page_project_management():
         # ===================== Save Button =====================
         if st.button("💾 Save Changes", type="primary", key=k("save_btn")):
             errs = []
+
             if not new_name.strip():
                 errs.append("Please enter a **Project Name**.")
+
+            # Planned date validation
             if new_ped < new_psd:
                 errs.append("**Planned End Date** cannot be before **Planned Start Date**.")
+
+            # Required Actual End Date when completed
             if new_status == "Completed" and not new_aed:
                 errs.append("Please choose an **Actual End Date** for a Completed project.")
+
+            # Actual End Date cannot be before planned start
+            if new_status == "Completed" and new_aed and new_aed < new_psd:
+                errs.append("**Actual End Date** cannot be before the **Planned Start Date**.")
+
+            # Actual End Date cannot be after today
+            today = local_now().date()
+            if new_status == "Completed" and new_aed and new_aed > today:
+                errs.append("**Actual End Date** cannot be in the future.")
+
+            # Change note required
             if not change_note.strip():
                 errs.append("Please enter a **Change Note** (mandatory).")
 
