@@ -900,7 +900,7 @@ def sidebar_nav():
     pages = ["Submit Visit", "My Submissions"]
 
     if role == "rep":
-        pages += ["User Settings"]
+        pages += ["Projects View", "User Settings"]
 
     if role == "manager":
         pages += ["Project Creation", "Project Management", "Projects View", "User Settings"]
@@ -2759,7 +2759,7 @@ def page_project_view():
     )
 
     if projects_df.empty:
-        st.info("No projects found for your role yet.")
+        st.info("No projects assigned.")
         return
 
     # Normalize datetime/date columns for display
