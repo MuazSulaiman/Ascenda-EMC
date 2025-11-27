@@ -1767,7 +1767,7 @@ def page_submit_visit():
                 shelf_editor = st.data_editor(
                     shelf_df,
                     key=k("sm_editor"),
-                    use_container_width=True,
+                    width='stretch',
                     hide_index=True,
                     num_rows="fixed",
                     column_config={
@@ -2072,7 +2072,7 @@ def page_my_submissions():
         st.markdown(f"**Total: {len(df):,}**")
         st.dataframe(
             df_display,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             column_config={
                 "location_url": st.column_config.LinkColumn(
@@ -2831,7 +2831,7 @@ def page_project_view():
 
         st.dataframe(
             table,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
 
@@ -2995,7 +2995,7 @@ def page_project_view():
 
     st.dataframe(
         visits_display,
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         column_config={
             "Location": st.column_config.LinkColumn(
@@ -3569,7 +3569,7 @@ def page_project_management():
                         "changes_summary": "Changes",
                     }
                 ),
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
             )
 
