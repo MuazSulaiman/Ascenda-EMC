@@ -1157,7 +1157,7 @@ def page_submit_visit():
         for n in ("prod_sel",):
             st.session_state.pop(k(n), None)
 
-    # ⬅️ KEY CHANGE: clear project-dependent fields by forcing them to ""
+    # Clear project-dependent fields by forcing them to ""
     def _clear_project_dependent_fields():
         for n in (
             "region_sel", "city_sel", "sector_sel", "cust_sel", "aud_sel",
@@ -1186,7 +1186,7 @@ def page_submit_visit():
         f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**"
     )
 
-    # ⬇️ Ensure location flow is reset when user or page changes
+    # Ensure location flow is reset when user or page changes
     _reset_geo_on_user_or_page_change(PAGE_NS, uid)
 
     if st.session_state.pop(saved_ok_key, False):
@@ -1201,15 +1201,20 @@ def page_submit_visit():
         height=0,
     )
 
-    # ---------------- Location (REQUIRED) ----------------
+    # =====================================================
+    # SECTION 1 — Visit Location (REQUIRED)
+    # =====================================================
+    st.markdown("### 1️⃣ Visit Location")
     lat, lon, acc = get_location_block(k)
     if lat is None or lon is None:
         st.info("📍 Location is required before you can submit.")
         return
 
     # =====================================================
-    # Optional Project (locks Customer + Product context)
+    # SECTION 2 — Project (optional)
     # =====================================================
+    st.markdown("### 2️⃣ Project (optional)")
+
     project_df          = pd.DataFrame()
     selected_project    = None
     selected_project_id = None
@@ -1257,12 +1262,11 @@ def page_submit_visit():
             params,
         )
 
-    proj_labels: list[str] = [""]
+    proj_labels: list[str] = [""]  # first = no project
     proj_label_to_id: dict[str, int] = {}
 
     if not project_df.empty:
         for r in project_df.itertuples(index=False):
-            # "12. Project Name — Customer — Business Line"
             base = f"{r.project_id}. {r.project_name}"
             parts = [base, str(r.account_name)]
             if getattr(r, "business_line_name", None):
@@ -1271,7 +1275,6 @@ def page_submit_visit():
             proj_labels.append(label)
             proj_label_to_id[label] = int(r.project_id)
 
-    # ---- Project select ----
     project_choice = st.selectbox(
         "Project (optional)",
         proj_labels,
@@ -1280,22 +1283,18 @@ def page_submit_visit():
         help="Link this visit to a project. Customer and product context will follow the project.",
     )
 
-    # ---- Detect transitions: project selected / switched / cleared ----
+    # Detect transitions: project selected / switched / cleared
     prev_label = st.session_state.get(prev_proj_key, "")
     curr_label = project_choice or ""
 
-    project_selected_prev = bool(prev_label)
-    project_selected_now  = bool(curr_label)
-
     if curr_label != prev_label:
         # Any change (None→something, something→other, something→None)
-        # → hard reset all dependent fields to ""
         _clear_project_dependent_fields()
 
     # Persist the new label for next run
     st.session_state[prev_proj_key] = curr_label
 
-    # Now resolve selected project (if any)
+    # Resolve selected project (if any)
     if curr_label:
         selected_project_id = proj_label_to_id.get(curr_label)
         if selected_project_id is not None:
@@ -1324,8 +1323,20 @@ def page_submit_visit():
     proj_prod_id       = selected_project.get("product_id")         if project_locked else None
 
     # =====================================================
-    # Region → City → Sector → Customer (all REQUIRED)
+    # SECTION 3 — Customer & Target Audience
     # =====================================================
+    st.markdown("### 3️⃣ Customer & Target Audience")
+
+    # helper: keep "Other"/"OTHER"/"other" at the very end
+    def _order_with_other_last(values: list[str]) -> list[str]:
+        normal_vals = []
+        other_vals  = []
+        for v in values:
+            if isinstance(v, str) and v.strip().lower() == "other":
+                other_vals.append(v)   # keep original casing
+            else:
+                normal_vals.append(v)
+        return normal_vals + other_vals
 
     # ---- Region ----
     reg_df = query_df(
@@ -1337,9 +1348,12 @@ def page_submit_visit():
         ORDER BY region
         """
     )
-    region_opts = [""] + reg_df["region"].tolist()
 
-    # ⬅️ KEY CHANGE: if project_locked, force region = project region
+    region_list = reg_df["region"].tolist()
+    region_list = _order_with_other_last(region_list)
+    region_opts = [""] + region_list
+
+    # if project-locked, force region = project region
     if project_locked and proj_region:
         st.session_state[k("region_sel")] = proj_region
 
@@ -1367,7 +1381,9 @@ def page_submit_visit():
             """,
             {"r": region_choice},
         )
-        city_opts = [""] + city_df["city"].tolist()
+        city_list = city_df["city"].tolist()
+        city_list = _order_with_other_last(city_list)
+        city_opts = [""] + city_list
     else:
         city_df = pd.DataFrame(columns=["city"])
         city_opts = [""]
@@ -1401,7 +1417,9 @@ def page_submit_visit():
             """,
             {"r": region_choice, "c": city_choice},
         )
-        sector_opts = [""] + sec_df["sector"].tolist()
+        sector_list = sec_df["sector"].tolist()
+        sector_list = _order_with_other_last(sector_list)
+        sector_opts = [""] + sector_list
     else:
         sec_df = pd.DataFrame(columns=["sector"])
         sector_opts = [""]
@@ -1435,7 +1453,9 @@ def page_submit_visit():
             """,
             {"r": region_choice, "c": city_choice, "s": sector_choice},
         )
-        cust_names = [""] + cust_df["account_name"].tolist()
+        cust_list = cust_df["account_name"].tolist()
+        cust_list = _order_with_other_last(cust_list)
+        cust_names = [""] + cust_list
     else:
         cust_df = pd.DataFrame(columns=["customer_id", "account_name"])
         cust_names = [""]
@@ -1460,14 +1480,48 @@ def page_submit_visit():
         match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
         customer_id = int(match.iloc[0]) if not match.empty else None
 
-    # ---------------- Target Audience ----------------
+    # ---------------- Target Audience (with “Other”) ----------------
     audience_id      = None
     aud_choice_label = ""
     aud_choice_name  = None
 
-    aud_labels = [""]
+    aud_labels: list[str] = [""]
     aud_rows   = []
 
+    # extra fields when TA = Other
+    other_ta_name       = None
+    other_ta_department = None
+    other_ta_position   = None
+
+    # 🔹 Global department & position lists from ALL target_audiences
+    dept_choices_base: list[str] = []
+    pos_choices_base:  list[str] = []
+
+    dept_df = query_df(
+        """
+        SELECT DISTINCT department
+        FROM target_audiences
+        WHERE department IS NOT NULL
+          AND trim(department) <> ''
+        ORDER BY department
+        """
+    )
+    if not dept_df.empty:
+        dept_choices_base = dept_df["department"].astype(str).str.strip().tolist()
+
+    pos_df = query_df(
+        """
+        SELECT DISTINCT position
+        FROM target_audiences
+        WHERE position IS NOT NULL
+          AND trim(position) <> ''
+        ORDER BY position
+        """
+    )
+    if not pos_df.empty:
+        pos_choices_base = pos_df["position"].astype(str).str.strip().tolist()
+
+    # 🔹 Customer-specific target audiences for the main dropdown
     if customer_id:
         aud_df = query_df(
             """
@@ -1496,8 +1550,12 @@ def page_submit_visit():
             aud_rows.append((label, int(r.audience_id), str(r.name).strip() if pd.notna(r.name) else ""))
 
         aud_labels = [""] + [x[0] for x in aud_rows]
+
         if len(aud_labels) == 1:
             st.warning("This customer has no Target Audiences.")
+
+        # Always add "Other" at the end
+        aud_labels.append("Other")
 
     aud_choice_label = st.selectbox(
         "Target Audience *",
@@ -1507,12 +1565,42 @@ def page_submit_visit():
         disabled=(customer_id is None),
         help=None if customer_id else "Select a Customer first",
     )
-    if customer_id and aud_choice_label:
+
+    if customer_id and aud_choice_label and aud_choice_label not in ("", "Other"):
         for lbl, aid, raw_name in aud_rows:
             if lbl == aud_choice_label:
                 audience_id     = aid
                 aud_choice_name = raw_name
                 break
+
+    # If "Other" is selected → capture full new TA details (ALL required)
+    if customer_id and aud_choice_label == "Other":
+        st.markdown("##### ➕ New Target Audience Details")
+
+        other_ta_name = st.text_input(
+            "Target Audience Name *",
+            key=k("other_ta_name"),
+            help="Name of the person you are meeting.",
+        )
+
+        dept_opts = [""] + dept_choices_base + ["Other"]
+        pos_opts  = [""] + pos_choices_base  + ["Other"]
+
+        other_ta_department = st.selectbox(
+            "Department *",
+            dept_opts,
+            index=0,
+            key=k("other_ta_dept_sel"),
+            help="Select the department or choose 'Other'.",
+        )
+
+        other_ta_position = st.selectbox(
+            "Position *",
+            pos_opts,
+            index=0,
+            key=k("other_ta_pos_sel"),
+            help="Select the position or choose 'Other'.",
+        )
 
     # -------- Home Visit block --------
     is_home_visit  = bool(aud_choice_label and aud_choice_label.strip().lower().startswith("home visit"))
@@ -1526,8 +1614,9 @@ def page_submit_visit():
             serial_no     = st.text_input("Device Serial # *", key=k("serial_no"))
 
     # =====================================================
-    # Business Unit / Category / Business Line / Product
+    # SECTION 4 — Product & Business Line
     # =====================================================
+    st.markdown("### 4️⃣ Product & Business Line")
 
     # ---- Business Unit ----
     bu_df = query_df(
@@ -1563,7 +1652,6 @@ def page_submit_visit():
     # ---- Category ----
     cat_df    = pd.DataFrame()
     cat_names = [""]
-    cat_choice = ""
 
     if bu_id:
         cat_df = query_df(
@@ -1597,6 +1685,7 @@ def page_submit_visit():
     # ---- Business Line ----
     bl_df   = pd.DataFrame()
     bl_names = [""]
+
     bl_choice = ""
     business_line_id = None
 
@@ -1706,7 +1795,11 @@ def page_submit_visit():
     if project_locked and proj_prod_id and not product_id:
         product_id = proj_prod_id
 
-    # ---------------- Objective / Evaluation / Notes ----------------
+    # =====================================================
+    # SECTION 5 — Visit Details & Outcome
+    # =====================================================
+    st.markdown("### 5️⃣ Visit Details & Outcome")
+
     obj_df = query_df(
         """
         SELECT objective_id, name
@@ -1820,8 +1913,19 @@ def page_submit_visit():
             errors.append("Please choose a **Sector**.")
         if not customer_id:
             errors.append("Please choose a **Customer**.")
-        if not audience_id:
+
+        # Target audience validation
+        if not aud_choice_label:
             errors.append("Please choose a **Target Audience** for the selected customer.")
+        elif aud_choice_label == "Other":
+            if not other_ta_name or not other_ta_name.strip():
+                errors.append("For **Other Target Audience**, please enter **Target Audience Name**.")
+            if not other_ta_department:
+                errors.append("For **Other Target Audience**, please select a **Department**.")
+            if not other_ta_position:
+                errors.append("For **Other Target Audience**, please select a **Position**.")
+        elif not audience_id:
+            errors.append("Please choose a valid **Target Audience** for the selected customer.")
 
         if is_home_visit:
             if not patient_name:
@@ -1890,6 +1994,10 @@ def page_submit_visit():
             "notes":               (notes.strip() if notes else None),
             "evaluation":          evaluation_val,
             "project_id":          int(selected_project_id) if selected_project_id else None,
+            # New fields for "Other" Target Audience
+            "other_audience_name":       other_ta_name.strip() if other_ta_name else None,
+            "other_audience_department": other_ta_department.strip() if other_ta_department else None,
+            "other_audience_position":   other_ta_position.strip() if other_ta_position else None,
         }
 
         home_payload = None
