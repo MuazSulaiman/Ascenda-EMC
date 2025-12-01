@@ -1616,7 +1616,7 @@ def page_submit_visit():
     # =====================================================
     # SECTION 4 — Product & Business Line
     # =====================================================
-    st.markdown("### 4️⃣ Product & Business Line")
+    st.markdown("### 4️⃣ Product Details")
 
     # ---- Business Unit ----
     bu_df = query_df(
