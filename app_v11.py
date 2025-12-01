@@ -1819,7 +1819,7 @@ def page_submit_visit():
     is_shelf_movement = bool(obj_choice and ("shelf movement" in obj_choice.strip().lower()))
     notes             = st.text_area("Notes (optional)", key=k("notes"))
 
-    allowed_evals = {"Positive", "Negative", "Neutral", "I Don't Know"}
+    allowed_evals = {"Positive", "Negative", "Neutral"}
     evaluation_choice = st.selectbox(
         "Evaluation *",
         [""] + sorted(list(allowed_evals)),
