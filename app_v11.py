@@ -913,6 +913,7 @@ def sidebar_nav():
             "Admin: Import Lookups",
             "Admin: Data Browser",
             "Admin: Users",
+            "Review Target Audiences",
             "User Settings",
         ]
 
@@ -7593,6 +7594,530 @@ def page_admin_users():
                 st.caption(str(e))
 
 # =============================
+# Review / Cleanup Target Audiences Page
+# =============================            
+def page_review_target_audiences():
+    """
+    Admin / manager page to review visits that used 'Other' Target Audience.
+    - Shows all visits where audience_id IS NULL but other_audience_* is filled.
+    - Suggests closest matches from existing target_audiences using generic similarity.
+    - Allows linking visit to an existing TA or creating a new TA from the 'Other' fields.
+    """
+    import pandas as pd
+    from difflib import SequenceMatcher
+    from datetime import datetime
+
+    PAGE_NS = "review_ta"
+    set_current_page(PAGE_NS)
+
+    # ------------- Auth -------------
+    u = st.session_state.get("user") or resolve_session_user()
+    if not u:
+        st.warning("Please sign in to continue.")
+        st.stop()
+
+    role = (u.get("role") or "").lower().strip()
+    if role not in ("admin", "manager"):
+        st.warning("You do not have access to this page.")
+        st.stop()
+
+    uid = int(u.get("user_id") or u.get("id"))
+    display_name   = u.get("name") or u.get("email") or f"User #{uid}"
+    display_region = u.get("region") or "—"
+    display_role   = u.get("role") or "—"
+
+    st.title("🎯 Review Target Audiences (Other)")
+    st.caption(
+        f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**"
+    )
+
+    # ------------- Similarity helpers (generic) -------------
+    SIM_THRESHOLD = 0.78  # you can tune this
+
+    def normalize_name(s: str) -> str:
+        """
+        Generic normalization for any name:
+        - lowercase
+        - remove titles (Dr, Mr, Ms, etc.)
+        - keep only letters + spaces
+        - collapse extra spaces
+        """
+        if not s:
+            return ""
+        s = str(s).strip().lower()
+
+        # Strip common titles (generic)
+        titles = ["dr.", "dr", "mr.", "mr", "mrs.", "mrs", "ms.", "ms", "prof.", "prof"]
+        for t in titles:
+            if s.startswith(t + " "):
+                s = s[len(t) + 1:]
+
+        # Keep only letters + spaces
+        s = "".join(ch if (ch.isalpha() or ch.isspace()) else " " for ch in s)
+
+        # Collapse multi-spaces
+        s = " ".join(s.split())
+        return s
+
+    def string_similarity(a: str, b: str) -> float:
+        """
+        Generic similarity:
+        - full normalized name similarity
+        - consonant-only similarity (handles Tarek/Tariq/Tareq, Ahmed/Ahmad, etc.)
+        """
+        a_norm, b_norm = normalize_name(a), normalize_name(b)
+        if not a_norm or not b_norm:
+            return 0.0
+
+        # full normalized
+        s1 = SequenceMatcher(None, a_norm, b_norm).ratio()
+
+        # consonant-only (remove vowels)
+        def only_cons(s: str) -> str:
+            return "".join(ch for ch in s if ch not in "aeiou ")
+
+        cons_a = only_cons(a_norm)
+        cons_b = only_cons(b_norm)
+
+        if cons_a and cons_b:
+            s2 = SequenceMatcher(None, cons_a, cons_b).ratio()
+        else:
+            s2 = 0.0
+
+        # Weighted combo
+        return 0.6 * s1 + 0.4 * s2
+
+    def audience_similarity(other_row: pd.Series, ta_row: pd.Series | dict) -> float:
+        """
+        other_row: Series from visits, with other_audience_* fields
+        ta_row:    Series/dict from target_audiences with name/department/position
+        """
+        name_other = (other_row.get("other_audience_name") or "").strip()
+        name_ta    = (ta_row.get("name") or "").strip()
+        name_score = string_similarity(name_other, name_ta)
+
+        dept_other = (other_row.get("other_audience_department") or "").strip().lower()
+        dept_ta    = (ta_row.get("department") or "").strip().lower()
+        pos_other  = (other_row.get("other_audience_position") or "").strip().lower()
+        pos_ta     = (ta_row.get("position") or "").strip().lower()
+
+        dept_score = 1.0 if dept_other and dept_other == dept_ta else 0.0
+        pos_score  = 1.0 if pos_other and pos_other == pos_ta else 0.0
+
+        return 0.7 * name_score + 0.15 * dept_score + 0.15 * pos_score
+
+    def format_ta_label(row) -> str:
+        """
+        Safe formatter for target_audiences row.
+        Works with itertuples() rows OR Series.
+        """
+        if isinstance(row, pd.Series):
+            title = (row.get("title") or "").strip()
+            name  = (row.get("name") or "").strip()
+            dept  = (row.get("department") or "").strip()
+            pos   = (row.get("position") or "").strip()
+        else:
+            # namedtuple from itertuples
+            title = (getattr(row, "title", "") or "").strip()
+            name  = (getattr(row, "name", "") or "").strip()
+            dept  = (getattr(row, "department", "") or "").strip()
+            pos   = (getattr(row, "position", "") or "").strip()
+
+        parts = []
+        if name:
+            full_name = f"{title} {name}".strip() if title else name
+            parts.append(full_name)
+        if dept:
+            parts.append(dept)
+        if pos:
+            parts.append(pos)
+        return " || ".join(parts) if parts else "(unnamed)"
+
+    # ------------- Load unresolved "Other" visits -------------
+    unresolved_df = query_df(
+        """
+        SELECT
+            v.visit_id,
+            v.customer_id,
+            c.account_name         AS customer_name,
+            v.submitted_at_local,
+            v.other_audience_name,
+            v.other_audience_department,
+            v.other_audience_position,
+            v.user_id,
+            u.name                 AS rep_name,
+            u.email                AS rep_email
+        FROM visits v
+        JOIN customers c ON c.customer_id = v.customer_id
+        JOIN users     u ON u.user_id     = v.user_id
+        WHERE v.audience_id IS NULL
+          AND v.other_audience_name IS NOT NULL
+          AND trim(v.other_audience_name) <> ''
+        ORDER BY v.submitted_at_local DESC, v.visit_id DESC
+        """
+    )
+
+    if unresolved_df.empty:
+        st.success("✅ No visits pending review for 'Other' Target Audience.")
+        return
+
+    # Format date
+    unresolved_df["submitted_at_local"] = pd.to_datetime(
+        unresolved_df["submitted_at_local"], errors="coerce"
+    ).dt.strftime("%d/%m/%Y %H:%M")
+
+    st.markdown("### 1️⃣ Visits with 'Other' Target Audience")
+    st.caption("These visits have no audience_id but contain Other Target Audience details.")
+
+    unresolved_display = unresolved_df.rename(
+        columns={
+            "customer_name": "Customer",
+            "submitted_at_local": "Visit Date/Time",
+            "other_audience_name": "Other TA Name",
+            "other_audience_department": "Other TA Dept",
+            "other_audience_position": "Other TA Position",
+            "rep_name": "Submitted By",
+            "rep_email": "Email",
+        }
+    )
+
+    st.dataframe(
+        unresolved_display[
+            [
+                "visit_id",
+                "Customer",
+                "Visit Date/Time",
+                "Other TA Name",
+                "Other TA Dept",
+                "Other TA Position",
+                "Submitted By",
+                "Email",
+            ]
+        ],
+        width='stretch',
+        hide_index=True,
+    )
+
+    # ------------- Pick a visit to review -------------
+    st.markdown("---")
+    st.markdown("### 2️⃣ Review & Resolve One Visit")
+
+    visit_labels = []
+    visit_id_map = {}
+    for _, row in unresolved_df.iterrows():
+        label = (
+            f"{int(row['visit_id'])} — {row['customer_name']} — "
+            f"{row['other_audience_name']} ({row['submitted_at_local']})"
+        )
+        visit_labels.append(label)
+        visit_id_map[label] = int(row["visit_id"])
+
+    selected_visit_label = st.selectbox(
+        "Select a visit to review",
+        options=visit_labels,
+        index=0,
+        key=f"{PAGE_NS}_visit_sel",
+    )
+    selected_visit_id = visit_id_map[selected_visit_label]
+
+    visit_row = unresolved_df.loc[unresolved_df["visit_id"] == selected_visit_id].iloc[0]
+
+    st.info(
+        f"**Visit #{selected_visit_id}** — Customer: **{visit_row['customer_name']}**  "
+        f"· Other Name: **{visit_row['other_audience_name']}**  "
+        f"· Dept: **{visit_row['other_audience_department'] or '—'}**, "
+        f"Position: **{visit_row['other_audience_position'] or '—'}**  \n"
+        f"Submitted by: **{visit_row['rep_name']}** ({visit_row['rep_email']})"
+    )
+
+    # ------------- Load all existing TAs for that customer -------------
+    ta_df = query_df(
+        """
+        SELECT
+            audience_id,
+            title,
+            name,
+            department,
+            position
+        FROM target_audiences
+        WHERE customer_id = :cid
+          AND COALESCE(is_active, TRUE) IS TRUE
+        ORDER BY name
+        """,
+        {"cid": int(visit_row["customer_id"])},
+    )
+
+    if ta_df.empty:
+        st.warning("This customer has no existing Target Audiences. You can only create a new one.")
+        existing_options = []
+    else:
+        # Compute similarity for each TA vs this Other record
+        ta_df["similarity"] = ta_df.apply(
+            lambda r: audience_similarity(
+                visit_row,
+                {
+                    "name": r["name"],
+                    "department": r["department"],
+                    "position": r["position"],
+                },
+            ),
+            axis=1,
+        )
+        ta_df = ta_df.sort_values(by="similarity", ascending=False)
+
+        st.markdown("#### Suggested Matches")
+        st.caption("Sorted by similarity (generic name similarity + department + position).")
+
+        ta_display = ta_df.copy()
+        ta_display["Label"] = ta_display.apply(format_ta_label, axis=1)
+        ta_display["Similarity"] = ta_display["similarity"].map(lambda x: f"{x:.2f}")
+
+        st.dataframe(
+            ta_display[
+                ["audience_id", "Label", "Similarity", "department", "position"]
+            ].rename(
+                columns={
+                    "audience_id": "ID",
+                    "department": "Dept",
+                    "position": "Position",
+                }
+            ),
+            width='stretch',
+            hide_index=True,
+        )
+
+        existing_options = [
+            f"{int(r.audience_id)} — {format_ta_label(r)}"
+            for r in ta_df.itertuples(index=False)
+        ]
+
+    # ------------- Global dept/position lists for dropdowns -------------
+    dept_choices_base: list[str] = []
+    pos_choices_base:  list[str] = []
+
+    dept_df = query_df(
+        """
+        SELECT DISTINCT department
+        FROM target_audiences
+        WHERE department IS NOT NULL
+          AND trim(department) <> ''
+        ORDER BY department
+        """
+    )
+    if not dept_df.empty:
+        dept_choices_base = dept_df["department"].astype(str).str.strip().tolist()
+
+    pos_df = query_df(
+        """
+        SELECT DISTINCT position
+        FROM target_audiences
+        WHERE position IS NOT NULL
+          AND trim(position) <> ''
+        ORDER BY position
+        """
+    )
+    if not pos_df.empty:
+        pos_choices_base = pos_df["position"].astype(str).str.strip().tolist()
+
+    # ------------- Actions: Link existing / Create new -------------
+    col_link, col_new = st.columns(2)
+
+    # --- Link to existing TA ---
+    with col_link:
+        st.markdown("#### 🔗 Link to Existing Target Audience")
+
+        existing_sel = st.selectbox(
+            "Existing Target Audience",
+            options=[""] + existing_options,
+            index=0,
+            key=f"{PAGE_NS}_existing_ta_sel",
+            help="Pick an existing TA for this customer, then click 'Link to Selected'.",
+        )
+
+        if st.button("✅ Link to Selected", key=f"{PAGE_NS}_link_btn"):
+            if not existing_sel:
+                st.error("Please select an existing Target Audience first.")
+            else:
+                # extract audience_id from "123 — label..."
+                sel_id_str = existing_sel.split("—", 1)[0].strip()
+                try:
+                    audience_id = int(sel_id_str)
+                except ValueError:
+                    st.error("Could not parse selected Target Audience ID.")
+                    st.stop()
+
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text(
+                                """
+                                UPDATE visits
+                                SET audience_id = :aid
+                                WHERE visit_id = :vid
+                                """
+                            ),
+                            {"aid": audience_id, "vid": selected_visit_id},
+                        )
+                    st.success(
+                        f"Linked visit #{selected_visit_id} to existing Target Audience ID {audience_id} ✅"
+                    )
+                    st.rerun()
+                except Exception as e:
+                    st.error("Failed to link visit to existing Target Audience.")
+                    st.caption(str(e))
+
+    # --- Create new TA ---
+    with col_new:
+        st.markdown("#### 🆕 Create New Target Audience")
+
+        st.caption(
+            "This will create a new Target Audience using the details below "
+            "(you can adjust them first) and link this visit to it. "
+            "The original 'Other' fields in the visit will remain stored."
+        )
+
+        # Name is still a free text field, prefilled
+        new_name = st.text_input(
+            "Target Audience Name *",
+            value=visit_row["other_audience_name"] or "",
+            key=f"{PAGE_NS}_new_ta_name",
+        )
+
+        # Department dropdown (+ 'Other' + custom text)
+        raw_dept = (visit_row["other_audience_department"] or "").strip()
+        dept_opts = [""] + dept_choices_base + ["Other"]
+
+        if raw_dept and raw_dept in dept_choices_base:
+            dept_index = 1 + dept_choices_base.index(raw_dept)
+        elif raw_dept:
+            # not in list → default to "Other"
+            dept_index = len(dept_opts) - 1
+        else:
+            dept_index = 0
+
+        selected_dept = st.selectbox(
+            "Department *",
+            dept_opts,
+            index=dept_index,
+            key=f"{PAGE_NS}_new_ta_dept_sel",
+        )
+
+        dept_custom = None
+        if selected_dept == "Other":
+            dept_custom = st.text_input(
+                "Custom Department *",
+                value=raw_dept,
+                key=f"{PAGE_NS}_new_ta_dept_custom",
+            )
+
+        # Position dropdown (+ 'Other' + custom text)
+        raw_pos = (visit_row["other_audience_position"] or "").strip()
+        pos_opts = [""] + pos_choices_base + ["Other"]
+
+        if raw_pos and raw_pos in pos_choices_base:
+            pos_index = 1 + pos_choices_base.index(raw_pos)
+        elif raw_pos:
+            pos_index = len(pos_opts) - 1
+        else:
+            pos_index = 0
+
+        selected_pos = st.selectbox(
+            "Position *",
+            pos_opts,
+            index=pos_index,
+            key=f"{PAGE_NS}_new_ta_pos_sel",
+        )
+
+        pos_custom = None
+        if selected_pos == "Other":
+            pos_custom = st.text_input(
+                "Custom Position *",
+                value=raw_pos,
+                key=f"{PAGE_NS}_new_ta_pos_custom",
+            )
+
+        confirm_new = st.checkbox(
+            "I confirm this is a **new** Target Audience (not already in the list).",
+            key=f"{PAGE_NS}_confirm_new",
+        )
+
+        if st.button("➕ Create New & Link", key=f"{PAGE_NS}_create_btn"):
+            if not confirm_new:
+                st.error("Please confirm that this is a new Target Audience.")
+            else:
+                name = (new_name or "").strip()
+
+                # Resolve Department value (required)
+                if not selected_dept:
+                    st.error("Please select a **Department** or choose **Other** and type a value.")
+                    return
+                if selected_dept == "Other":
+                    dept_to_save = (dept_custom or "").strip()
+                    if not dept_to_save:
+                        st.error("Please enter a **Custom Department**.")
+                        return
+                else:
+                    dept_to_save = selected_dept
+
+                # Resolve Position value (required)
+                if not selected_pos:
+                    st.error("Please select a **Position** or choose **Other** and type a value.")
+                    return
+                if selected_pos == "Other":
+                    pos_to_save = (pos_custom or "").strip()
+                    if not pos_to_save:
+                        st.error("Please enter a **Custom Position**.")
+                        return
+                else:
+                    pos_to_save = selected_pos
+
+                if not name:
+                    st.error("Cannot create a new Target Audience without a name.")
+                else:
+                    try:
+                        with engine.begin() as conn:
+                            # Create new TA
+                            res = conn.execute(
+                                text(
+                                    """
+                                    INSERT INTO target_audiences
+                                        (customer_id, title, name, department, position, is_active)
+                                    VALUES
+                                        (:cid, NULL, :name, :dept, :pos, TRUE)
+                                    RETURNING audience_id
+                                    """
+                                ),
+                                {
+                                    "cid": int(visit_row["customer_id"]),
+                                    "name": name,
+                                    "dept": dept_to_save,
+                                    "pos":  pos_to_save,
+                                },
+                            )
+                            new_aid = res.scalar_one()
+
+                            # Link visit to new TA
+                            conn.execute(
+                                text(
+                                    """
+                                    UPDATE visits
+                                    SET audience_id = :aid
+                                    WHERE visit_id  = :vid
+                                    """
+                                ),
+                                {"aid": new_aid, "vid": selected_visit_id},
+                            )
+
+                        st.success(
+                            f"Created new Target Audience (ID {new_aid}) and linked visit #{selected_visit_id} ✅"
+                        )
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error("Failed to create new Target Audience and link visit.")
+                        st.caption(str(e))
+
+# =============================
 # Footer
 # =============================
 def get_almadar_logo_base64() -> str:
@@ -7665,5 +8190,7 @@ else:
         page_admin_data()
     elif page == "Admin: Users":
         page_admin_users()
+    elif page == "Review Target Audiences":
+        page_review_target_audiences()
 
     show_footer()
