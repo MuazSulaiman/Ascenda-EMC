@@ -7812,8 +7812,8 @@ def page_review_target_audiences():
     st.info(
         f"**Visit #{selected_visit_id}** — Customer: **{visit_row['customer_name']}**  "
         f"· Other Name: **{visit_row['other_audience_name']}**  "
-        f"· Dept: **{visit_row['other_audience_department'] or '—'}**, "
-        f"Position: **{visit_row['other_audience_position'] or '—'}**  \n"
+        f"· Dept: **{visit_row['other_audience_department'] or '—'}**  "
+        f"· Position: **{visit_row['other_audience_position'] or '—'}**  \n"
         f"Submitted by: **{visit_row['rep_name']}** ({visit_row['rep_email']})"
     )
 
