@@ -7632,7 +7632,7 @@ def page_review_target_audiences():
     )
 
     # ------------- Similarity helpers (generic) -------------
-    SIM_THRESHOLD = 0.78  # you can tune this
+    SIM_THRESHOLD = 0.78  # (kept for tuning if needed later)
 
     def normalize_name(s: str) -> str:
         """
@@ -7812,12 +7812,19 @@ def page_review_target_audiences():
         visit_labels.append(label)
         visit_id_map[label] = int(row["visit_id"])
 
+    visit_select_options = [""] + visit_labels
+
     selected_visit_label = st.selectbox(
         "Select a visit to review",
-        options=visit_labels,
+        options=visit_select_options,
         index=0,
         key=f"{PAGE_NS}_visit_sel",
     )
+
+    if not selected_visit_label:
+        st.info("Please select a visit from the list above to start reviewing.")
+        return
+
     selected_visit_id = visit_id_map[selected_visit_label]
 
     visit_row = unresolved_df.loc[unresolved_df["visit_id"] == selected_visit_id].iloc[0]
@@ -7976,22 +7983,29 @@ def page_review_target_audiences():
             "The original 'Other' fields in the visit will remain stored."
         )
 
-        # Name is still a free text field, prefilled
+        # Use visit_id-specific keys so switching visit resets to that visit's details
+        name_key       = f"{PAGE_NS}_new_ta_name_{selected_visit_id}"
+        dept_sel_key   = f"{PAGE_NS}_new_ta_dept_sel_{selected_visit_id}"
+        dept_custom_key = f"{PAGE_NS}_new_ta_dept_custom_{selected_visit_id}"
+        pos_sel_key    = f"{PAGE_NS}_new_ta_pos_sel_{selected_visit_id}"
+        pos_custom_key = f"{PAGE_NS}_new_ta_pos_custom_{selected_visit_id}"
+        confirm_key    = f"{PAGE_NS}_confirm_new_{selected_visit_id}"
+
+        # Name is free text, prefilled from visit
         new_name = st.text_input(
             "Target Audience Name *",
             value=visit_row["other_audience_name"] or "",
-            key=f"{PAGE_NS}_new_ta_name",
+            key=name_key,
         )
 
-        # Department dropdown (+ 'Other' + custom text)
+        # Department dropdown (+ 'Other' + custom text) – prefilled from visit
         raw_dept = (visit_row["other_audience_department"] or "").strip()
         dept_opts = [""] + dept_choices_base + ["Other"]
 
         if raw_dept and raw_dept in dept_choices_base:
             dept_index = 1 + dept_choices_base.index(raw_dept)
         elif raw_dept:
-            # not in list → default to "Other"
-            dept_index = len(dept_opts) - 1
+            dept_index = len(dept_opts) - 1  # "Other"
         else:
             dept_index = 0
 
@@ -7999,7 +8013,7 @@ def page_review_target_audiences():
             "Department *",
             dept_opts,
             index=dept_index,
-            key=f"{PAGE_NS}_new_ta_dept_sel",
+            key=dept_sel_key,
         )
 
         dept_custom = None
@@ -8007,17 +8021,17 @@ def page_review_target_audiences():
             dept_custom = st.text_input(
                 "Custom Department *",
                 value=raw_dept,
-                key=f"{PAGE_NS}_new_ta_dept_custom",
+                key=dept_custom_key,
             )
 
-        # Position dropdown (+ 'Other' + custom text)
+        # Position dropdown (+ 'Other' + custom text) – prefilled from visit
         raw_pos = (visit_row["other_audience_position"] or "").strip()
         pos_opts = [""] + pos_choices_base + ["Other"]
 
         if raw_pos and raw_pos in pos_choices_base:
             pos_index = 1 + pos_choices_base.index(raw_pos)
         elif raw_pos:
-            pos_index = len(pos_opts) - 1
+            pos_index = len(pos_opts) - 1  # "Other"
         else:
             pos_index = 0
 
@@ -8025,7 +8039,7 @@ def page_review_target_audiences():
             "Position *",
             pos_opts,
             index=pos_index,
-            key=f"{PAGE_NS}_new_ta_pos_sel",
+            key=pos_sel_key,
         )
 
         pos_custom = None
@@ -8033,12 +8047,12 @@ def page_review_target_audiences():
             pos_custom = st.text_input(
                 "Custom Position *",
                 value=raw_pos,
-                key=f"{PAGE_NS}_new_ta_pos_custom",
+                key=pos_custom_key,
             )
 
         confirm_new = st.checkbox(
             "I confirm this is a **new** Target Audience (not already in the list).",
-            key=f"{PAGE_NS}_confirm_new",
+            key=confirm_key,
         )
 
         if st.button("➕ Create New & Link", key=f"{PAGE_NS}_create_btn"):
@@ -8047,7 +8061,7 @@ def page_review_target_audiences():
             else:
                 name = (new_name or "").strip()
 
-                # Resolve Department value (required)
+                # Resolve Department (required)
                 if not selected_dept:
                     st.error("Please select a **Department** or choose **Other** and type a value.")
                     return
@@ -8059,7 +8073,7 @@ def page_review_target_audiences():
                 else:
                     dept_to_save = selected_dept
 
-                # Resolve Position value (required)
+                # Resolve Position (required)
                 if not selected_pos:
                     st.error("Please select a **Position** or choose **Other** and type a value.")
                     return
