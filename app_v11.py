@@ -7610,6 +7610,10 @@ def page_review_target_audiences():
     PAGE_NS = "review_ta"
     set_current_page(PAGE_NS)
 
+    success_key = f"{PAGE_NS}_last_success"
+    if success_key not in st.session_state:
+        st.session_state[success_key] = ""
+
     # ------------- Auth -------------
     u = st.session_state.get("user") or resolve_session_user()
     if not u:
@@ -7631,67 +7635,46 @@ def page_review_target_audiences():
         f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**"
     )
 
+    # Show any success message from last rerun
+    last_msg = st.session_state.get(success_key) or ""
+    if last_msg:
+        st.success(last_msg)
+        st.session_state[success_key] = ""
+
     # ------------- Similarity helpers (generic) -------------
-    SIM_THRESHOLD = 0.78  # (kept for tuning if needed later)
+    SIM_THRESHOLD = 0.78  # left here in case you want to use it later
 
     def normalize_name(s: str) -> str:
-        """
-        Generic normalization for any name:
-        - lowercase
-        - remove titles (Dr, Mr, Ms, etc.)
-        - keep only letters + spaces
-        - collapse extra spaces
-        """
         if not s:
             return ""
         s = str(s).strip().lower()
 
-        # Strip common titles (generic)
         titles = ["dr.", "dr", "mr.", "mr", "mrs.", "mrs", "ms.", "ms", "prof.", "prof"]
         for t in titles:
             if s.startswith(t + " "):
                 s = s[len(t) + 1:]
 
-        # Keep only letters + spaces
         s = "".join(ch if (ch.isalpha() or ch.isspace()) else " " for ch in s)
-
-        # Collapse multi-spaces
         s = " ".join(s.split())
         return s
 
     def string_similarity(a: str, b: str) -> float:
-        """
-        Generic similarity:
-        - full normalized name similarity
-        - consonant-only similarity (handles Tarek/Tariq/Tareq, Ahmed/Ahmad, etc.)
-        """
         a_norm, b_norm = normalize_name(a), normalize_name(b)
         if not a_norm or not b_norm:
             return 0.0
 
-        # full normalized
         s1 = SequenceMatcher(None, a_norm, b_norm).ratio()
 
-        # consonant-only (remove vowels)
         def only_cons(s: str) -> str:
             return "".join(ch for ch in s if ch not in "aeiou ")
 
         cons_a = only_cons(a_norm)
         cons_b = only_cons(b_norm)
+        s2 = SequenceMatcher(None, cons_a, cons_b).ratio() if (cons_a and cons_b) else 0.0
 
-        if cons_a and cons_b:
-            s2 = SequenceMatcher(None, cons_a, cons_b).ratio()
-        else:
-            s2 = 0.0
-
-        # Weighted combo
         return 0.6 * s1 + 0.4 * s2
 
     def audience_similarity(other_row: pd.Series, ta_row: pd.Series | dict) -> float:
-        """
-        other_row: Series from visits, with other_audience_* fields
-        ta_row:    Series/dict from target_audiences with name/department/position
-        """
         name_other = (other_row.get("other_audience_name") or "").strip()
         name_ta    = (ta_row.get("name") or "").strip()
         name_score = string_similarity(name_other, name_ta)
@@ -7707,17 +7690,12 @@ def page_review_target_audiences():
         return 0.7 * name_score + 0.15 * dept_score + 0.15 * pos_score
 
     def format_ta_label(row) -> str:
-        """
-        Safe formatter for target_audiences row.
-        Works with itertuples() rows OR Series.
-        """
         if isinstance(row, pd.Series):
             title = (row.get("title") or "").strip()
             name  = (row.get("name") or "").strip()
             dept  = (row.get("department") or "").strip()
             pos   = (row.get("position") or "").strip()
         else:
-            # namedtuple from itertuples
             title = (getattr(row, "title", "") or "").strip()
             name  = (getattr(row, "name", "") or "").strip()
             dept  = (getattr(row, "department", "") or "").strip()
@@ -7744,6 +7722,7 @@ def page_review_target_audiences():
             v.other_audience_name,
             v.other_audience_department,
             v.other_audience_position,
+            v.notes                AS visit_notes,
             v.user_id,
             u.name                 AS rep_name,
             u.email                AS rep_email
@@ -7761,7 +7740,6 @@ def page_review_target_audiences():
         st.success("✅ No visits pending review for 'Other' Target Audience.")
         return
 
-    # Format date
     unresolved_df["submitted_at_local"] = pd.to_datetime(
         unresolved_df["submitted_at_local"], errors="coerce"
     ).dt.strftime("%d/%m/%Y %H:%M")
@@ -7776,6 +7754,7 @@ def page_review_target_audiences():
             "other_audience_name": "Other TA Name",
             "other_audience_department": "Other TA Dept",
             "other_audience_position": "Other TA Position",
+            "visit_notes": "Notes",
             "rep_name": "Submitted By",
             "rep_email": "Email",
         }
@@ -7790,6 +7769,7 @@ def page_review_target_audiences():
                 "Other TA Name",
                 "Other TA Dept",
                 "Other TA Position",
+                "Notes",
                 "Submitted By",
                 "Email",
             ]
@@ -7858,7 +7838,6 @@ def page_review_target_audiences():
         st.warning("This customer has no existing Target Audiences. You can only create a new one.")
         existing_options = []
     else:
-        # Compute similarity for each TA vs this Other record
         ta_df["similarity"] = ta_df.apply(
             lambda r: audience_similarity(
                 visit_row,
@@ -7945,12 +7924,11 @@ def page_review_target_audiences():
             if not existing_sel:
                 st.error("Please select an existing Target Audience first.")
             else:
-                # extract audience_id from "123 — label..."
                 sel_id_str = existing_sel.split("—", 1)[0].strip()
                 try:
                     audience_id = int(sel_id_str)
                 except ValueError:
-                    st.error("Could not parse selected Target Audience ID.")
+                    st.error("Could	not parse selected Target Audience ID.")
                     st.stop()
 
                 try:
@@ -7965,7 +7943,7 @@ def page_review_target_audiences():
                             ),
                             {"aid": audience_id, "vid": selected_visit_id},
                         )
-                    st.success(
+                    st.session_state[success_key] = (
                         f"Linked visit #{selected_visit_id} to existing Target Audience ID {audience_id} ✅"
                     )
                     st.rerun()
@@ -7983,29 +7961,27 @@ def page_review_target_audiences():
             "The original 'Other' fields in the visit will remain stored."
         )
 
-        # Use visit_id-specific keys so switching visit resets to that visit's details
-        name_key       = f"{PAGE_NS}_new_ta_name_{selected_visit_id}"
-        dept_sel_key   = f"{PAGE_NS}_new_ta_dept_sel_{selected_visit_id}"
+        name_key        = f"{PAGE_NS}_new_ta_name_{selected_visit_id}"
+        dept_sel_key    = f"{PAGE_NS}_new_ta_dept_sel_{selected_visit_id}"
         dept_custom_key = f"{PAGE_NS}_new_ta_dept_custom_{selected_visit_id}"
-        pos_sel_key    = f"{PAGE_NS}_new_ta_pos_sel_{selected_visit_id}"
-        pos_custom_key = f"{PAGE_NS}_new_ta_pos_custom_{selected_visit_id}"
-        confirm_key    = f"{PAGE_NS}_confirm_new_{selected_visit_id}"
+        pos_sel_key     = f"{PAGE_NS}_new_ta_pos_sel_{selected_visit_id}"
+        pos_custom_key  = f"{PAGE_NS}_new_ta_pos_custom_{selected_visit_id}"
+        confirm_key     = f"{PAGE_NS}_confirm_new_{selected_visit_id}"
 
-        # Name is free text, prefilled from visit
+        raw_name = (visit_row["other_audience_name"] or "")
         new_name = st.text_input(
             "Target Audience Name *",
-            value=visit_row["other_audience_name"] or "",
+            value=raw_name.upper(),  # show as ALL CAPS
             key=name_key,
         )
 
-        # Department dropdown (+ 'Other' + custom text) – prefilled from visit
         raw_dept = (visit_row["other_audience_department"] or "").strip()
         dept_opts = [""] + dept_choices_base + ["Other"]
 
         if raw_dept and raw_dept in dept_choices_base:
             dept_index = 1 + dept_choices_base.index(raw_dept)
         elif raw_dept:
-            dept_index = len(dept_opts) - 1  # "Other"
+            dept_index = len(dept_opts) - 1
         else:
             dept_index = 0
 
@@ -8024,14 +8000,13 @@ def page_review_target_audiences():
                 key=dept_custom_key,
             )
 
-        # Position dropdown (+ 'Other' + custom text) – prefilled from visit
         raw_pos = (visit_row["other_audience_position"] or "").strip()
         pos_opts = [""] + pos_choices_base + ["Other"]
 
         if raw_pos and raw_pos in pos_choices_base:
             pos_index = 1 + pos_choices_base.index(raw_pos)
         elif raw_pos:
-            pos_index = len(pos_opts) - 1  # "Other"
+            pos_index = len(pos_opts) - 1
         else:
             pos_index = 0
 
@@ -8058,78 +8033,76 @@ def page_review_target_audiences():
         if st.button("➕ Create New & Link", key=f"{PAGE_NS}_create_btn"):
             if not confirm_new:
                 st.error("Please confirm that this is a new Target Audience.")
+                return
+
+            name = (new_name or "").strip().upper()
+
+            if not selected_dept:
+                st.error("Please select a **Department** or choose **Other** and type a value.")
+                return
+            if selected_dept == "Other":
+                dept_to_save = (dept_custom or "").strip()
+                if not dept_to_save:
+                    st.error("Please enter a **Custom Department**.")
+                    return
             else:
-                name = (new_name or "").strip()
+                dept_to_save = selected_dept
 
-                # Resolve Department (required)
-                if not selected_dept:
-                    st.error("Please select a **Department** or choose **Other** and type a value.")
+            if not selected_pos:
+                st.error("Please select a **Position** or choose **Other** and type a value.")
+                return
+            if selected_pos == "Other":
+                pos_to_save = (pos_custom or "").strip()
+                if not pos_to_save:
+                    st.error("Please enter a **Custom Position**.")
                     return
-                if selected_dept == "Other":
-                    dept_to_save = (dept_custom or "").strip()
-                    if not dept_to_save:
-                        st.error("Please enter a **Custom Department**.")
-                        return
-                else:
-                    dept_to_save = selected_dept
+            else:
+                pos_to_save = selected_pos
 
-                # Resolve Position (required)
-                if not selected_pos:
-                    st.error("Please select a **Position** or choose **Other** and type a value.")
-                    return
-                if selected_pos == "Other":
-                    pos_to_save = (pos_custom or "").strip()
-                    if not pos_to_save:
-                        st.error("Please enter a **Custom Position**.")
-                        return
-                else:
-                    pos_to_save = selected_pos
+            if not name:
+                st.error("Cannot create a new Target Audience without a name.")
+                return
 
-                if not name:
-                    st.error("Cannot create a new Target Audience without a name.")
-                else:
-                    try:
-                        with engine.begin() as conn:
-                            # Create new TA
-                            res = conn.execute(
-                                text(
-                                    """
-                                    INSERT INTO target_audiences
-                                        (customer_id, title, name, department, position, is_active)
-                                    VALUES
-                                        (:cid, NULL, :name, :dept, :pos, TRUE)
-                                    RETURNING audience_id
-                                    """
-                                ),
-                                {
-                                    "cid": int(visit_row["customer_id"]),
-                                    "name": name,
-                                    "dept": dept_to_save,
-                                    "pos":  pos_to_save,
-                                },
-                            )
-                            new_aid = res.scalar_one()
+            try:
+                with engine.begin() as conn:
+                    res = conn.execute(
+                        text(
+                            """
+                            INSERT INTO target_audiences
+                                (customer_id, title, name, department, position, is_active)
+                            VALUES
+                                (:cid, NULL, :name, :dept, :pos, TRUE)
+                            RETURNING audience_id
+                            """
+                        ),
+                        {
+                            "cid": int(visit_row["customer_id"]),
+                            "name": name,
+                            "dept": dept_to_save,
+                            "pos":  pos_to_save,
+                        },
+                    )
+                    new_aid = res.scalar_one()
 
-                            # Link visit to new TA
-                            conn.execute(
-                                text(
-                                    """
-                                    UPDATE visits
-                                    SET audience_id = :aid
-                                    WHERE visit_id  = :vid
-                                    """
-                                ),
-                                {"aid": new_aid, "vid": selected_visit_id},
-                            )
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE visits
+                            SET audience_id = :aid
+                            WHERE visit_id  = :vid
+                            """
+                        ),
+                        {"aid": new_aid, "vid": selected_visit_id},
+                    )
 
-                        st.success(
-                            f"Created new Target Audience (ID {new_aid}) and linked visit #{selected_visit_id} ✅"
-                        )
-                        st.rerun()
+                st.session_state[success_key] = (
+                    f"Created new Target Audience (ID {new_aid}) and linked visit #{selected_visit_id} ✅"
+                )
+                st.rerun()
 
-                    except Exception as e:
-                        st.error("Failed to create new Target Audience and link visit.")
-                        st.caption(str(e))
+            except Exception as e:
+                st.error("Failed to create new Target Audience and link visit.")
+                st.caption(str(e))
 
 # =============================
 # Footer
