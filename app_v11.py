@@ -4167,8 +4167,9 @@ def page_admin_import():
                     sec_key = base_key + "_sector_opt"
                     sec_other_key = base_key + "_sector_other"
 
+                    existing_sec = (row["sector"] or "").strip() if row["sector"] else ""
+
                     if sec_key not in st.session_state:
-                        existing_sec = (row["sector"] or "").strip() if row["sector"] else ""
                         if existing_sec and existing_sec in sector_options:
                             st.session_state[sec_key] = existing_sec
                         elif existing_sec:
@@ -4177,15 +4178,14 @@ def page_admin_import():
                         else:
                             st.session_state[sec_key] = ""
 
+                    # keep state valid against current options
                     if st.session_state[sec_key] not in sector_options:
                         st.session_state[sec_key] = ""
 
-                    sec_idx_edit = sector_options.index(st.session_state[sec_key])
                     sector_sel_edit = st.selectbox(
                         "Sector",
                         sector_options,
-                        index=sec_idx_edit,
-                        key=sec_key,
+                        key=sec_key,   # ❗ no index here
                     )
                     if sector_sel_edit == "OTHER":
                         sector_other_edit = st.text_input("Other sector", key=sec_other_key)
@@ -4196,8 +4196,9 @@ def page_admin_import():
                     reg_key = base_key + "_region_opt"
                     reg_other_key = base_key + "_region_other"
 
+                    existing_reg = (row["region"] or "").strip() if row["region"] else ""
+
                     if reg_key not in st.session_state:
-                        existing_reg = (row["region"] or "").strip() if row["region"] else ""
                         if existing_reg and existing_reg in region_options:
                             st.session_state[reg_key] = existing_reg
                         elif existing_reg:
@@ -4209,12 +4210,10 @@ def page_admin_import():
                     if st.session_state[reg_key] not in region_options:
                         st.session_state[reg_key] = ""
 
-                    reg_idx_edit = region_options.index(st.session_state[reg_key])
                     region_sel_edit = st.selectbox(
                         "Region",
                         region_options,
-                        index=reg_idx_edit,
-                        key=reg_key,
+                        key=reg_key,   # ❗ no index here
                     )
                     if region_sel_edit == "OTHER":
                         region_other_edit = st.text_input("Other region", key=reg_other_key)
@@ -4231,7 +4230,7 @@ def page_admin_import():
                             SELECT DISTINCT city
                             FROM customers
                             WHERE region = :r
-                            AND city IS NOT NULL AND city <> ''
+                              AND city IS NOT NULL AND city <> ''
                             ORDER BY city
                             """,
                             {"r": region_sel_edit},
@@ -4241,8 +4240,9 @@ def page_admin_import():
                     else:
                         city_options_edit = ["", "OTHER"]
 
+                    existing_city = (row["city"] or "").strip() if row["city"] else ""
+
                     if city_key not in st.session_state:
-                        existing_city = (row["city"] or "").strip() if row["city"] else ""
                         if existing_city and existing_city in city_options_edit:
                             st.session_state[city_key] = existing_city
                         elif existing_city:
@@ -4254,12 +4254,10 @@ def page_admin_import():
                     if st.session_state[city_key] not in city_options_edit:
                         st.session_state[city_key] = ""
 
-                    city_idx_edit = city_options_edit.index(st.session_state[city_key])
                     city_sel_edit = st.selectbox(
                         "City",
                         city_options_edit,
-                        index=city_idx_edit,
-                        key=city_key,
+                        key=city_key,   # ❗ no index here
                     )
                     if city_sel_edit == "OTHER":
                         city_other_edit = st.text_input("Other city", key=city_other_key)
@@ -4309,7 +4307,7 @@ def page_admin_import():
                                 SELECT 1
                                 FROM customers
                                 WHERE lower(account_name)=lower(:n)
-                                AND customer_id<>:id
+                                  AND customer_id<>:id
                                 """,
                                 {"n": acc_clean, "id": cid},
                             )
@@ -4370,6 +4368,7 @@ def page_admin_import():
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
+
 
     # =====================================================================
     # 2) TARGET AUDIENCES
