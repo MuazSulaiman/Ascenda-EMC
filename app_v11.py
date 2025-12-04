@@ -2035,9 +2035,6 @@ def page_submit_visit():
                     if qty < 0:
                         negative_qty_found = True
                         continue
-                    if qty > MAX_QTY:
-                        invalid_qty_found = True
-                        continue
 
                     any_qty = True
                     shelf_lines_payload.append(
