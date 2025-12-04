@@ -7655,11 +7655,14 @@ def page_review_target_audiences():
     - Allows linking visit to an existing TA or creating a new TA from the 'Other' fields.
     """
     import pandas as pd
+    import re
     from difflib import SequenceMatcher
     from datetime import datetime
 
     PAGE_NS = "review_ta"
     set_current_page(PAGE_NS)
+    
+    TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
 
     success_key = f"{PAGE_NS}_last_success"
     if success_key not in st.session_state:
@@ -7770,9 +7773,12 @@ def page_review_target_audiences():
             v.customer_id,
             c.account_name         AS customer_name,
             v.submitted_at_local,
+            v.other_audience_title,
             v.other_audience_name,
             v.other_audience_department,
             v.other_audience_position,
+            v.other_audience_phone,
+            v.other_audience_email,
             v.notes                AS visit_notes,
             v.user_id,
             u.name                 AS rep_name,
@@ -7802,9 +7808,12 @@ def page_review_target_audiences():
         columns={
             "customer_name": "Customer",
             "submitted_at_local": "Visit Date/Time",
+            "other_audience_title": "Other TA Title",
             "other_audience_name": "Other TA Name",
             "other_audience_department": "Other TA Dept",
             "other_audience_position": "Other TA Position",
+            "other_audience_phone": "Other TA Phone",
+            "other_audience_email": "Other TA Email",
             "visit_notes": "Notes",
             "rep_name": "Submitted By",
             "rep_email": "Email",
@@ -7817,9 +7826,12 @@ def page_review_target_audiences():
                 "visit_id",
                 "Customer",
                 "Visit Date/Time",
+                "Other TA Title",
                 "Other TA Name",
                 "Other TA Dept",
                 "Other TA Position",
+                "Other TA Phone",
+                "Other TA Email",
                 "Notes",
                 "Submitted By",
                 "Email",
@@ -7861,10 +7873,13 @@ def page_review_target_audiences():
     visit_row = unresolved_df.loc[unresolved_df["visit_id"] == selected_visit_id].iloc[0]
 
     st.info(
-        f"**Visit #{selected_visit_id}** — Customer: **{visit_row['customer_name']}**  "
-        f"· Other Name: **{visit_row['other_audience_name']}**  "
-        f"· Dept: **{visit_row['other_audience_department'] or '—'}**  "
-        f"· Position: **{visit_row['other_audience_position'] or '—'}**  \n"
+        f"**Visit #{selected_visit_id}** — Customer: **{visit_row['customer_name']}**  \n"
+        f"Title: **{visit_row['other_audience_title'] or '—'}**  · "
+        f"Name: **{visit_row['other_audience_name']}**  · "
+        f"Dept: **{visit_row['other_audience_department'] or '—'}**  · "
+        f"Position: **{visit_row['other_audience_position'] or '—'}**  \n"
+        f"Phone: **{visit_row['other_audience_phone'] or '—'}**  · "
+        f"Email: **{visit_row['other_audience_email'] or '—'}**  \n"
         f"Submitted by: **{visit_row['rep_name']}** ({visit_row['rep_email']})"
     )
 
@@ -7876,7 +7891,9 @@ def page_review_target_audiences():
             title,
             name,
             department,
-            position
+            position,
+            mobile,
+            email
         FROM target_audiences
         WHERE customer_id = :cid
           AND COALESCE(is_active, TRUE) IS TRUE
@@ -7911,12 +7928,14 @@ def page_review_target_audiences():
 
         st.dataframe(
             ta_display[
-                ["audience_id", "Label", "Similarity", "department", "position"]
+                ["audience_id", "Label", "Similarity", "department", "position", "mobile", "email"]
             ].rename(
                 columns={
                     "audience_id": "ID",
                     "department": "Dept",
                     "position": "Position",
+                    "mobile": "Mobile",
+                    "email": "Email",
                 }
             ),
             width='stretch',
@@ -7979,7 +7998,7 @@ def page_review_target_audiences():
                 try:
                     audience_id = int(sel_id_str)
                 except ValueError:
-                    st.error("Could	not parse selected Target Audience ID.")
+                    st.error("Could not parse selected Target Audience ID.")
                     st.stop()
 
                 try:
@@ -8013,22 +8032,45 @@ def page_review_target_audiences():
         )
 
         name_key        = f"{PAGE_NS}_new_ta_name_{selected_visit_id}"
+        title_sel_key   = f"{PAGE_NS}_new_ta_title_sel_{selected_visit_id}"
+        mobile_key      = f"{PAGE_NS}_new_ta_mobile_{selected_visit_id}"
+        email_key       = f"{PAGE_NS}_new_ta_email_{selected_visit_id}"
         dept_sel_key    = f"{PAGE_NS}_new_ta_dept_sel_{selected_visit_id}"
         dept_custom_key = f"{PAGE_NS}_new_ta_dept_custom_{selected_visit_id}"
         pos_sel_key     = f"{PAGE_NS}_new_ta_pos_sel_{selected_visit_id}"
         pos_custom_key  = f"{PAGE_NS}_new_ta_pos_custom_{selected_visit_id}"
         confirm_key     = f"{PAGE_NS}_confirm_new_{selected_visit_id}"
 
-        raw_name = (visit_row["other_audience_name"] or "")
+        # Prefill from visit (title/name/dept/pos/phone/email)
+        raw_title  = (visit_row.get("other_audience_title") or "").strip()
+        raw_name   = (visit_row.get("other_audience_name") or "")
+        raw_dept   = (visit_row.get("other_audience_department") or "").strip()
+        raw_pos    = (visit_row.get("other_audience_position") or "").strip()
+        raw_mobile = (visit_row.get("other_audience_phone") or "").strip()
+        raw_email  = (visit_row.get("other_audience_email") or "").strip()
+
+        # Title (optional) — TITLE_OPTIONS defined globally
+        if raw_title and raw_title in TITLE_OPTIONS:
+            title_index = TITLE_OPTIONS.index(raw_title)
+        else:
+            title_index = 0
+
+        selected_title = st.selectbox(
+            "Title (optional)",
+            TITLE_OPTIONS,
+            index=title_index,
+            key=title_sel_key,
+        )
+
+        # Name (required)
         new_name = st.text_input(
             "Target Audience Name *",
             value=raw_name.upper(),  # show as ALL CAPS
             key=name_key,
         )
 
-        raw_dept = (visit_row["other_audience_department"] or "").strip()
+        # Department
         dept_opts = [""] + dept_choices_base + ["Other"]
-
         if raw_dept and raw_dept in dept_choices_base:
             dept_index = 1 + dept_choices_base.index(raw_dept)
         elif raw_dept:
@@ -8051,9 +8093,8 @@ def page_review_target_audiences():
                 key=dept_custom_key,
             )
 
-        raw_pos = (visit_row["other_audience_position"] or "").strip()
+        # Position
         pos_opts = [""] + pos_choices_base + ["Other"]
-
         if raw_pos and raw_pos in pos_choices_base:
             pos_index = 1 + pos_choices_base.index(raw_pos)
         elif raw_pos:
@@ -8075,6 +8116,22 @@ def page_review_target_audiences():
                 value=raw_pos,
                 key=pos_custom_key,
             )
+
+        # Mobile (optional)
+        new_mobile = st.text_input(
+            "Mobile # (optional)",
+            value=raw_mobile,
+            key=mobile_key,
+            help="Optional – KSA mobile like 05XXXXXXXX.",
+        )
+
+        # Email (optional)
+        new_email = st.text_input(
+            "Email (optional)",
+            value=raw_email,
+            key=email_key,
+            help="Optional – must be a valid email address.",
+        )
 
         confirm_new = st.checkbox(
             "I confirm this is a **new** Target Audience (not already in the list).",
@@ -8114,27 +8171,50 @@ def page_review_target_audiences():
                 st.error("Cannot create a new Target Audience without a name.")
                 return
 
+            # Optional mobile validation (KSA)
+            mobile_to_save = (new_mobile or "").strip()
+            if mobile_to_save:
+                if not re.fullmatch(r"(?:\+966|00966|0)?5\d{8}", mobile_to_save):
+                    st.error(
+                        "**Mobile #** looks invalid (expected KSA mobile like 05XXXXXXXX)."
+                    )
+                    return
+
+            # Optional email validation
+            email_to_save = (new_email or "").strip()
+            if email_to_save:
+                if not re.fullmatch(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email_to_save):
+                    st.error("**Email** looks invalid.")
+                    return
+
+            title_to_save = selected_title or None
+
             try:
                 with engine.begin() as conn:
+                    # Insert new TA with title + mobile + email
                     res = conn.execute(
                         text(
                             """
                             INSERT INTO target_audiences
-                                (customer_id, title, name, department, position, is_active)
+                                (customer_id, title, name, department, position, mobile, email, is_active)
                             VALUES
-                                (:cid, NULL, :name, :dept, :pos, TRUE)
+                                (:cid, :title, :name, :dept, :pos, :mobile, :email, TRUE)
                             RETURNING audience_id
                             """
                         ),
                         {
-                            "cid": int(visit_row["customer_id"]),
-                            "name": name,
-                            "dept": dept_to_save,
-                            "pos":  pos_to_save,
+                            "cid":    int(visit_row["customer_id"]),
+                            "title":  title_to_save,
+                            "name":   name,
+                            "dept":   dept_to_save,
+                            "pos":    pos_to_save,
+                            "mobile": mobile_to_save or None,
+                            "email":  email_to_save or None,
                         },
                     )
                     new_aid = res.scalar_one()
 
+                    # Link visit to this new TA
                     conn.execute(
                         text(
                             """
