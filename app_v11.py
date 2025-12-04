@@ -7872,7 +7872,7 @@ def page_review_target_audiences():
     visit_row = unresolved_df.loc[unresolved_df["visit_id"] == selected_visit_id].iloc[0]
 
     st.info(
-        f"**Visit #{selected_visit_id}** — Customer: **{visit_row['customer_name']}**  \n"
+        f"**Visit #{selected_visit_id}** — Customer: **{visit_row['customer_name']}**  · \n"
         f"Title: **{visit_row['other_audience_title'] or '—'}**  · "
         f"Name: **{visit_row['other_audience_name']}**  · "
         f"Dept: **{visit_row['other_audience_department'] or '—'}**  · "
