@@ -2007,16 +2007,37 @@ def page_submit_visit():
                     "**Shelf Movement** grid is empty. Load items by selecting Business Unit and Category."
                 )
             else:
-                # --- DEBUG: see exactly what Streamlit is sending back ---
-                st.write("🔎 DEBUG – raw shelf_editor:")
-                st.write(shelf_editor)
-
                 edited = shelf_editor.copy()
 
-                st.write("🔎 DEBUG – dtypes before numeric:")
-                st.write(edited.dtypes)
+                # --- DEBUG: see raw values once more if needed ---
+                st.write("🔎 DEBUG – raw shelf_editor:")
+                st.write(edited)
 
-                # Convert entries to numeric; invalid entries -> NaN
+                # ---- 1) Normalize qty_checked as text ----
+                col = edited["qty_checked"]
+
+                # Keep real Nones separate
+                import numpy as np
+                mask_not_null = col.notna()
+
+                # Work only on non-null entries as strings
+                col_str = col[mask_not_null].astype(str).str.strip()
+
+                # Map Arabic-Indic digits → Western digits
+                digit_map = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+                col_str = col_str.apply(
+                    lambda x: x.translate(digit_map) if isinstance(x, str) else x
+                )
+
+                # Put normalized strings back into the column
+                col_norm = pd.Series(index=col.index, dtype="object")
+                col_norm.loc[mask_not_null] = col_str
+                edited["qty_checked"] = col_norm
+
+                st.write("🔎 DEBUG – qty_checked after normalization:")
+                st.write(edited["qty_checked"])
+
+                # ---- 2) Convert to numeric ----
                 edited["qty_checked"] = pd.to_numeric(
                     edited["qty_checked"], errors="coerce"
                 )
@@ -2025,7 +2046,6 @@ def page_submit_visit():
                 st.write(edited["qty_checked"])
                 st.write("dtype:", edited["qty_checked"].dtype)
 
-                # Drop NA values for negative check
                 non_null = edited["qty_checked"].dropna()
                 st.write("🔎 DEBUG – non_null values:")
                 st.write(non_null)
@@ -2034,20 +2054,16 @@ def page_submit_visit():
                 if (non_null < 0).any():
                     errors.append("Quantities in **Shelf Movement** cannot be negative.")
 
-                # Keep only rows where qty_checked is NOT blank (0 is allowed)
-                valid_mask = edited["qty_checked"].notna()
-                filled_rows = edited[valid_mask]
-
+                # Keep rows with actual numbers (0 is allowed)
+                filled_rows = edited[edited["qty_checked"].notna()]
                 st.write("🔎 DEBUG – filled_rows shape:", filled_rows.shape)
 
-                # If *all* rows are blank -> error
                 if filled_rows.empty:
                     errors.append(
                         "Enter at least **one** quantity in the **Shelf Movement** grid "
                         "(blank = not checked; 0 is allowed)."
                     )
                 else:
-                    # Prepare payload for DB
                     shelf_lines_payload = [
                         {
                             "product_id": int(r["product_id"]),
@@ -2055,7 +2071,6 @@ def page_submit_visit():
                         }
                         for _, r in filled_rows.iterrows()
                     ]
-
                     st.write("🔎 DEBUG – shelf_lines_payload:")
                     st.write(shelf_lines_payload)
 
