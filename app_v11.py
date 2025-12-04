@@ -1999,25 +1999,50 @@ def page_submit_visit():
 
         # Shelf Movement validations
         shelf_lines_payload = None
-        filled_rows         = None
+        filled_rows = None
+
         if is_shelf_movement:
             if shelf_editor is None or shelf_editor.empty:
-                errors.append("**Shelf Movement** grid is empty. Load items by selecting Business Unit and Category.")
+                errors.append(
+                    "**Shelf Movement** grid is empty. Load items by selecting Business Unit and Category."
+                )
             else:
                 edited = shelf_editor.copy()
-                edited["qty_checked"] = pd.to_numeric(edited["qty_checked"], errors="coerce")
-                if (edited["qty_checked"].dropna() < 0).any():
+
+                # Convert entries to numeric; invalid entries -> NaN
+                edited["qty_checked"] = pd.to_numeric(
+                    edited["qty_checked"], errors="coerce"
+                )
+
+                # Optional debugging (uncomment to test)
+                # st.write("DEBUG qty_checked:", edited["qty_checked"])
+
+                # Drop NA for negative check
+                non_null = edited["qty_checked"].dropna()
+
+                # Block negative numbers
+                if (non_null < 0).any():
                     errors.append("Quantities in **Shelf Movement** cannot be negative.")
+
+                # Keep only rows where qty_checked is NOT blank
                 filled_rows = edited[edited["qty_checked"].notna()]
-                if filled_rows is not None and filled_rows.empty:
+
+                # If all rows are blank → error
+                if filled_rows.empty:
                     errors.append(
-                        "Enter at least **one** quantity in the **Shelf Movement** grid (blank = not checked; 0 is allowed)."
+                        "Enter at least **one** quantity in the **Shelf Movement** grid "
+                        "(blank = not checked; 0 is allowed)."
                     )
-                if filled_rows is not None and not filled_rows.empty:
+                else:
+                    # Prepare payload for DB
                     shelf_lines_payload = [
-                        {"product_id": r["product_id"], "qty_checked": float(r["qty_checked"])}
+                        {
+                            "product_id": int(r["product_id"]),
+                            "qty_checked": float(r["qty_checked"]),
+                        }
                         for _, r in filled_rows.iterrows()
                     ]
+
 
         if errors:
             for msg in errors:
