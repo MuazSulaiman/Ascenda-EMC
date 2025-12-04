@@ -2007,7 +2007,6 @@ def page_submit_visit():
                     "**Shelf Movement** grid is empty. Load items by selecting Business Unit and Category."
                 )
             else:
-                # Optional: small debug
                 st.write("🔎 DEBUG – raw shelf_editor:")
                 st.write(shelf_editor)
 
@@ -2016,38 +2015,39 @@ def page_submit_visit():
                 invalid_qty_found = False
                 negative_qty_found = False
 
-                # Map Arabic-Indic digits to Western if they ever appear
+                # Arabic-Indic → Western digits map (just in case)
                 digit_map = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 
                 for _, row in shelf_editor.iterrows():
                     raw = row.get("qty_checked", None)
 
-                    # 1) Treat None / blank as "not checked"
+                    # 1) treat None / blank as "not checked"
                     if raw is None:
                         continue
-                    if isinstance(raw, str):
-                        txt = raw.strip()
-                        if txt == "" or txt.lower() == "none":
-                            continue
-                    else:
-                        txt = str(raw).strip()
 
-                    # 2) Normalize digits (handle Arabic-Indic just in case)
+                    txt = str(raw).strip()
+                    if txt == "" or txt.lower() == "none":
+                        continue
+
+                    # 2) normalize digits and strip weird characters
                     txt = txt.translate(digit_map)
 
-                    # 3) Try to parse as float
-                    try:
-                        qty = float(txt)
-                    except ValueError:
+                    # keep only ASCII digits (ignore any invisible chars)
+                    digits_only = "".join(ch for ch in txt if ch in "0123456789")
+
+                    if digits_only == "":
+                        # there was something but no real digits
                         invalid_qty_found = True
                         continue
 
-                    # 4) Negative check
+                    # 3) parse as integer quantity
+                    qty = int(digits_only)
+
+                    # 4) negative check (just in case)
                     if qty < 0:
                         negative_qty_found = True
                         continue
 
-                    # 5) Valid quantity (0 or more)
                     any_qty = True
                     shelf_lines_payload.append(
                         {
@@ -2056,8 +2056,7 @@ def page_submit_visit():
                         }
                     )
 
-                # Build a tiny DataFrame just for info/debug (optional)
-                filled_rows = pd.DataFrame(shelf_lines_payload)
+                # for debug / visibility
                 st.write("🔎 DEBUG – shelf_lines_payload:", shelf_lines_payload)
 
                 if negative_qty_found:
