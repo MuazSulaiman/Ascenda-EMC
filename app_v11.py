@@ -1128,6 +1128,8 @@ def page_submit_visit():
     intent_key       = f"_{PAGE_NS}_submit_intent"
     prev_proj_key    = f"_{PAGE_NS}_prev_project_label"
 
+    TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
+    
     st.session_state.setdefault(nonce_key, 0)
     st.session_state.setdefault(geo_nonce_key, 0)
     st.session_state.setdefault(busy_key, False)
@@ -1486,13 +1488,16 @@ def page_submit_visit():
     aud_choice_label = ""
     aud_choice_name  = None
 
-    aud_labels: list[str] = [""]
-    aud_rows   = []
+    aud_labels: list[str] = [""]  # main dropdown labels
+    aud_rows   = []              # (label, id, raw_name)
 
     # extra fields when TA = Other
+    other_ta_title      = None
     other_ta_name       = None
     other_ta_department = None
     other_ta_position   = None
+    other_ta_phone      = None
+    other_ta_email      = None
 
     # 🔹 Global department & position lists from ALL target_audiences
     dept_choices_base: list[str] = []
@@ -1574,10 +1579,19 @@ def page_submit_visit():
                 aud_choice_name = raw_name
                 break
 
-    # If "Other" is selected → capture full new TA details (ALL required)
+    # If "Other" is selected → capture full new TA details
     if customer_id and aud_choice_label == "Other":
         st.markdown("##### ➕ New Target Audience Details")
 
+        # Title (optional)
+        other_ta_title = st.selectbox(
+            "Title (optional)",
+            TITLE_OPTIONS,   # ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
+            index=0,
+            key=k("other_ta_title"),
+        )
+
+        # Name (required)
         other_ta_name = st.text_input(
             "Target Audience Name *",
             key=k("other_ta_name"),
@@ -1587,6 +1601,7 @@ def page_submit_visit():
         dept_opts = [""] + dept_choices_base + ["Other"]
         pos_opts  = [""] + pos_choices_base  + ["Other"]
 
+        # Department (required)
         other_ta_department = st.selectbox(
             "Department *",
             dept_opts,
@@ -1595,12 +1610,27 @@ def page_submit_visit():
             help="Select the department or choose 'Other'.",
         )
 
+        # Position (required)
         other_ta_position = st.selectbox(
             "Position *",
             pos_opts,
             index=0,
             key=k("other_ta_pos_sel"),
             help="Select the position or choose 'Other'.",
+        )
+
+        # Phone (optional)
+        other_ta_phone = st.text_input(
+            "Phone # (optional)",
+            key=k("other_ta_phone"),
+            help="Optional – KSA mobile like 05XXXXXXXX.",
+        )
+
+        # Email (optional)
+        other_ta_email = st.text_input(
+            "Email (optional)",
+            key=k("other_ta_email"),
+            help="Optional – must be a valid email address.",
         )
 
     # -------- Home Visit block --------
@@ -1919,12 +1949,29 @@ def page_submit_visit():
         if not aud_choice_label:
             errors.append("Please choose a **Target Audience** for the selected customer.")
         elif aud_choice_label == "Other":
+            # Required fields
             if not other_ta_name or not other_ta_name.strip():
                 errors.append("For **Other Target Audience**, please enter **Target Audience Name**.")
             if not other_ta_department:
                 errors.append("For **Other Target Audience**, please select a **Department**.")
             if not other_ta_position:
                 errors.append("For **Other Target Audience**, please select a **Position**.")
+
+            # Optional phone validation (KSA format)
+            if other_ta_phone and other_ta_phone.strip():
+                phone_clean = other_ta_phone.strip()
+                if not re.fullmatch(r"(?:\+966|00966|0)?5\d{8}", phone_clean):
+                    errors.append(
+                        "For **Other Target Audience**, **Phone #** looks invalid "
+                        "(expected KSA mobile like 05XXXXXXXX)."
+                    )
+
+            # Optional email validation
+            if other_ta_email and other_ta_email.strip():
+                email_clean = other_ta_email.strip()
+                # simple email structure check
+                if not re.fullmatch(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email_clean):
+                    errors.append("For **Other Target Audience**, **Email** looks invalid.")
         elif not audience_id:
             errors.append("Please choose a valid **Target Audience** for the selected customer.")
 
@@ -1995,10 +2042,14 @@ def page_submit_visit():
             "notes":               (notes.strip() if notes else None),
             "evaluation":          evaluation_val,
             "project_id":          int(selected_project_id) if selected_project_id else None,
+
             # New fields for "Other" Target Audience
-            "other_audience_name":       other_ta_name.strip() if other_ta_name else None,
-            "other_audience_department": other_ta_department.strip() if other_ta_department else None,
-            "other_audience_position":   other_ta_position.strip() if other_ta_position else None,
+            "other_audience_title":      (other_ta_title.strip() if other_ta_title else None) or None,
+            "other_audience_name":       (other_ta_name.strip() if other_ta_name else None),
+            "other_audience_department": (other_ta_department.strip() if other_ta_department else None),
+            "other_audience_position":   (other_ta_position.strip() if other_ta_position else None),
+            "other_audience_phone":      (other_ta_phone.strip() if other_ta_phone else None) or None,
+            "other_audience_email":      (other_ta_email.strip() if other_ta_email else None) or None,
         }
 
         home_payload = None
