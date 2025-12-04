@@ -2007,72 +2007,73 @@ def page_submit_visit():
                     "**Shelf Movement** grid is empty. Load items by selecting Business Unit and Category."
                 )
             else:
-                edited = shelf_editor.copy()
-
-                # --- DEBUG: see raw values once more if needed ---
+                # Optional: small debug
                 st.write("🔎 DEBUG – raw shelf_editor:")
-                st.write(edited)
+                st.write(shelf_editor)
 
-                # ---- 1) Normalize qty_checked as text ----
-                col = edited["qty_checked"]
+                shelf_lines_payload = []
+                any_qty = False
+                invalid_qty_found = False
+                negative_qty_found = False
 
-                # Keep real Nones separate
-                import numpy as np
-                mask_not_null = col.notna()
-
-                # Work only on non-null entries as strings
-                col_str = col[mask_not_null].astype(str).str.strip()
-
-                # Map Arabic-Indic digits → Western digits
+                # Map Arabic-Indic digits to Western if they ever appear
                 digit_map = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
-                col_str = col_str.apply(
-                    lambda x: x.translate(digit_map) if isinstance(x, str) else x
-                )
 
-                # Put normalized strings back into the column
-                col_norm = pd.Series(index=col.index, dtype="object")
-                col_norm.loc[mask_not_null] = col_str
-                edited["qty_checked"] = col_norm
+                for _, row in shelf_editor.iterrows():
+                    raw = row.get("qty_checked", None)
 
-                st.write("🔎 DEBUG – qty_checked after normalization:")
-                st.write(edited["qty_checked"])
+                    # 1) Treat None / blank as "not checked"
+                    if raw is None:
+                        continue
+                    if isinstance(raw, str):
+                        txt = raw.strip()
+                        if txt == "" or txt.lower() == "none":
+                            continue
+                    else:
+                        txt = str(raw).strip()
 
-                # ---- 2) Convert to numeric ----
-                edited["qty_checked"] = pd.to_numeric(
-                    edited["qty_checked"], errors="coerce"
-                )
+                    # 2) Normalize digits (handle Arabic-Indic just in case)
+                    txt = txt.translate(digit_map)
 
-                st.write("🔎 DEBUG – qty_checked after numeric:")
-                st.write(edited["qty_checked"])
-                st.write("dtype:", edited["qty_checked"].dtype)
+                    # 3) Try to parse as float
+                    try:
+                        qty = float(txt)
+                    except ValueError:
+                        invalid_qty_found = True
+                        continue
 
-                non_null = edited["qty_checked"].dropna()
-                st.write("🔎 DEBUG – non_null values:")
-                st.write(non_null)
+                    # 4) Negative check
+                    if qty < 0:
+                        negative_qty_found = True
+                        continue
 
-                # Block negative numbers
-                if (non_null < 0).any():
+                    # 5) Valid quantity (0 or more)
+                    any_qty = True
+                    shelf_lines_payload.append(
+                        {
+                            "product_id": int(row["product_id"]),
+                            "qty_checked": float(qty),
+                        }
+                    )
+
+                # Build a tiny DataFrame just for info/debug (optional)
+                filled_rows = pd.DataFrame(shelf_lines_payload)
+                st.write("🔎 DEBUG – shelf_lines_payload:", shelf_lines_payload)
+
+                if negative_qty_found:
                     errors.append("Quantities in **Shelf Movement** cannot be negative.")
 
-                # Keep rows with actual numbers (0 is allowed)
-                filled_rows = edited[edited["qty_checked"].notna()]
-                st.write("🔎 DEBUG – filled_rows shape:", filled_rows.shape)
+                if invalid_qty_found:
+                    errors.append(
+                        "Some values in **Shelf Movement** are not numeric. "
+                        "Please enter only numbers or leave blank."
+                    )
 
-                if filled_rows.empty:
+                if not any_qty and not invalid_qty_found and not negative_qty_found:
                     errors.append(
                         "Enter at least **one** quantity in the **Shelf Movement** grid "
                         "(blank = not checked; 0 is allowed)."
                     )
-                else:
-                    shelf_lines_payload = [
-                        {
-                            "product_id": int(r["product_id"]),
-                            "qty_checked": float(r["qty_checked"]),
-                        }
-                        for _, r in filled_rows.iterrows()
-                    ]
-                    st.write("🔎 DEBUG – shelf_lines_payload:")
-                    st.write(shelf_lines_payload)
 
         if errors:
             for msg in errors:
