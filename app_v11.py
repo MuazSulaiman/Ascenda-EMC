@@ -2007,27 +2007,40 @@ def page_submit_visit():
                     "**Shelf Movement** grid is empty. Load items by selecting Business Unit and Category."
                 )
             else:
+                # --- DEBUG: see exactly what Streamlit is sending back ---
+                st.write("🔎 DEBUG – raw shelf_editor:")
+                st.write(shelf_editor)
+
                 edited = shelf_editor.copy()
+
+                st.write("🔎 DEBUG – dtypes before numeric:")
+                st.write(edited.dtypes)
 
                 # Convert entries to numeric; invalid entries -> NaN
                 edited["qty_checked"] = pd.to_numeric(
                     edited["qty_checked"], errors="coerce"
                 )
 
-                # Optional debug if still acting weird:
-                # st.write("DEBUG qty_checked:", edited["qty_checked"])
+                st.write("🔎 DEBUG – qty_checked after numeric:")
+                st.write(edited["qty_checked"])
+                st.write("dtype:", edited["qty_checked"].dtype)
 
                 # Drop NA values for negative check
                 non_null = edited["qty_checked"].dropna()
+                st.write("🔎 DEBUG – non_null values:")
+                st.write(non_null)
 
                 # Block negative numbers
                 if (non_null < 0).any():
                     errors.append("Quantities in **Shelf Movement** cannot be negative.")
 
                 # Keep only rows where qty_checked is NOT blank (0 is allowed)
-                filled_rows = edited[edited["qty_checked"].notna()]
+                valid_mask = edited["qty_checked"].notna()
+                filled_rows = edited[valid_mask]
 
-                # If all rows are blank -> error
+                st.write("🔎 DEBUG – filled_rows shape:", filled_rows.shape)
+
+                # If *all* rows are blank -> error
                 if filled_rows.empty:
                     errors.append(
                         "Enter at least **one** quantity in the **Shelf Movement** grid "
@@ -2042,6 +2055,9 @@ def page_submit_visit():
                         }
                         for _, r in filled_rows.iterrows()
                     ]
+
+                    st.write("🔎 DEBUG – shelf_lines_payload:")
+                    st.write(shelf_lines_payload)
 
         if errors:
             for msg in errors:
