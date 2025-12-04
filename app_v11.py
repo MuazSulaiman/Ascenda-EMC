@@ -2014,20 +2014,20 @@ def page_submit_visit():
                     edited["qty_checked"], errors="coerce"
                 )
 
-                # Optional debugging (uncomment to test)
+                # Optional debug if still acting weird:
                 # st.write("DEBUG qty_checked:", edited["qty_checked"])
 
-                # Drop NA for negative check
+                # Drop NA values for negative check
                 non_null = edited["qty_checked"].dropna()
 
                 # Block negative numbers
                 if (non_null < 0).any():
                     errors.append("Quantities in **Shelf Movement** cannot be negative.")
 
-                # Keep only rows where qty_checked is NOT blank
+                # Keep only rows where qty_checked is NOT blank (0 is allowed)
                 filled_rows = edited[edited["qty_checked"].notna()]
 
-                # If all rows are blank → error
+                # If all rows are blank -> error
                 if filled_rows.empty:
                     errors.append(
                         "Enter at least **one** quantity in the **Shelf Movement** grid "
