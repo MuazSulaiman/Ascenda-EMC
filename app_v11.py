@@ -2007,21 +2007,15 @@ def page_submit_visit():
                     "**Shelf Movement** grid is empty. Load items by selecting Business Unit and Category."
                 )
             else:
-                st.write("🔎 DEBUG – raw shelf_editor:")
-                st.write(shelf_editor)
-
                 shelf_lines_payload = []
                 any_qty = False
                 invalid_qty_found = False
                 negative_qty_found = False
 
-                # Arabic-Indic → Western digits map (just in case)
                 digit_map = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 
                 for _, row in shelf_editor.iterrows():
                     raw = row.get("qty_checked", None)
-
-                    # 1) treat None / blank as "not checked"
                     if raw is None:
                         continue
 
@@ -2029,23 +2023,20 @@ def page_submit_visit():
                     if txt == "" or txt.lower() == "none":
                         continue
 
-                    # 2) normalize digits and strip weird characters
                     txt = txt.translate(digit_map)
-
-                    # keep only ASCII digits (ignore any invisible chars)
                     digits_only = "".join(ch for ch in txt if ch in "0123456789")
 
                     if digits_only == "":
-                        # there was something but no real digits
                         invalid_qty_found = True
                         continue
 
-                    # 3) parse as integer quantity
                     qty = int(digits_only)
 
-                    # 4) negative check (just in case)
                     if qty < 0:
                         negative_qty_found = True
+                        continue
+                    if qty > MAX_QTY:
+                        invalid_qty_found = True
                         continue
 
                     any_qty = True
@@ -2056,16 +2047,15 @@ def page_submit_visit():
                         }
                     )
 
-                # for debug / visibility
-                st.write("🔎 DEBUG – shelf_lines_payload:", shelf_lines_payload)
+                filled_rows = pd.DataFrame(shelf_lines_payload)
 
                 if negative_qty_found:
                     errors.append("Quantities in **Shelf Movement** cannot be negative.")
 
                 if invalid_qty_found:
                     errors.append(
-                        "Some values in **Shelf Movement** are not numeric. "
-                        "Please enter only numbers or leave blank."
+                        "Some values in **Shelf Movement** are not numeric or are out of range. "
+                        "Please enter only valid numbers or leave blank."
                     )
 
                 if not any_qty and not invalid_qty_found and not negative_qty_found:
