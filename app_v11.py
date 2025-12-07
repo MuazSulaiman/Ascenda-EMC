@@ -4409,11 +4409,16 @@ def page_admin_import():
                             try:
                                 exec_sql("DELETE FROM customers WHERE customer_id=:id", {"id": cid})
                                 st.success("Customer deleted ✅")
-                                st.session_state["mg_cust_sel"] = ""
+
+                                # reset customer selection safely
+                                st.session_state.pop("mg_cust_sel", None)
+
+                                # optional: refresh UI so the deleted customer disappears from lists
+                                st.rerun()
+
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
-
 
     # =====================================================================
     # 2) TARGET AUDIENCES
@@ -5115,7 +5120,12 @@ def page_admin_import():
                                             {"id": aid},
                                         )
                                         st.success("Target audience deleted ✅")
-                                        st.session_state["mg_aud_sel"] = ""
+                                        # reset the selection by removing the widget state
+                                        for key in ("mg_aud_sel",):
+                                            st.session_state.pop(key, None)
+
+                                        # optional but nice: force UI refresh
+                                        st.rerun()
                                     except Exception as e:
                                         st.error("Delete failed.")
                                         st.caption(str(e))
@@ -5167,7 +5177,8 @@ def page_admin_import():
                             )
                         if (res.rowcount or 0) > 0:
                             st.success("Business Unit added ✅")
-                            st.session_state["bu_add_name"] = ""
+                            # reset widget state safely
+                            st.session_state.pop("bu_add_name", None)
                         else:
                             st.info("That Business Unit already exists — nothing added.")
                     except Exception as e:
@@ -5393,7 +5404,13 @@ def page_admin_import():
                                     {"id": buid},
                                 )
                                 st.success("Business Unit deleted ✅")
-                                st.session_state["mg_bu_sel"] = ""
+
+                                # reset selection safely
+                                st.session_state.pop("mg_bu_sel", None)
+
+                                # optional: refresh UI so deleted BU disappears immediately
+                                st.rerun()
+
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
@@ -5603,15 +5620,18 @@ def page_admin_import():
 
                                 if (res.rowcount or 0) > 0:
                                     st.success("Business Line added ✅")
-                                    # reset
-                                    st.session_state["bl_add_bu"] = ""
-                                    st.session_state["bl_add_name"] = ""
-                                    st.session_state["bl_add_supplier_opt"] = ""
-                                    st.session_state["bl_add_supplier_other"] = ""
-                                    st.session_state["bl_add_category_opt"] = ""
-                                    st.session_state["bl_add_category_other"] = ""
-                                    st.session_state["bl_add_pg_opt"] = ""
-                                    st.session_state["bl_add_pg_other"] = ""
+                                    for key in (
+                                        "bl_add_bu",
+                                        "bl_add_name",
+                                        "bl_add_supplier_opt",
+                                        "bl_add_supplier_other",
+                                        "bl_add_category_opt",
+                                        "bl_add_category_other",
+                                        "bl_add_pg_opt",
+                                        "bl_add_pg_other",
+                                    ):
+                                        st.session_state.pop(key, None)
+                                    st.rerun()     # optional but nice
                                 else:
                                     st.info("That Business Unit + Business Line Name already exists — nothing added.")
                         except Exception as e:
@@ -6013,7 +6033,8 @@ def page_admin_import():
                             try:
                                 exec_sql("DELETE FROM business_lines WHERE business_line_id=:id", {"id": blid})
                                 st.success("Business Line deleted ✅")
-                                st.session_state["mg_bl_sel"] = ""
+                                st.session_state.pop("mg_bl_sel", None)
+                                st.rerun()
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
@@ -6129,11 +6150,16 @@ def page_admin_import():
                                 )
                             if (res.rowcount or 0) > 0:
                                 st.success("Item added ✅")
-                                st.session_state["item_add_pid"] = ""
-                                st.session_state["item_add_article"] = ""
-                                st.session_state["item_add_desc"] = ""
-                                st.session_state["item_add_bu_idx"] = 0
-                                st.session_state["item_add_bl_idx"] = 0
+                                # reset widget-backed keys by removing them from session_state
+                                for key in (
+                                    "item_add_pid",
+                                    "item_add_article",
+                                    "item_add_desc",
+                                    "item_add_bu_idx",
+                                    "item_add_bl_idx",
+                                ):
+                                    st.session_state.pop(key, None)
+                                st.rerun()
                             else:
                                 st.error("That Product ID already exists.")
                         except Exception as e:
@@ -6604,9 +6630,14 @@ def page_admin_import():
 
                         if (res.rowcount or 0) > 0:
                             st.success("Objective added ✅")
-                            st.session_state["obj_add_name"] = ""
-                            st.session_state["obj_add_cat_opt"] = ""
-                            st.session_state["obj_add_cat_other"] = ""
+                            # Reset widget-backed keys safely
+                            for key in (
+                                "obj_add_name",
+                                "obj_add_cat_opt",
+                                "obj_add_cat_other",
+                            ):
+                                st.session_state.pop(key, None)
+                            st.rerun()
                         else:
                             st.info("This objective already exists — nothing added.")
                     except Exception as e:
@@ -6822,7 +6853,8 @@ def page_admin_import():
                             try:
                                 exec_sql("DELETE FROM objectives WHERE objective_id=:id", {"id": oid})
                                 st.success("Objective deleted ✅")
-                                st.session_state["mg_obj_sel"] = ""
+                                st.session_state.pop("mg_obj_sel", None)
+                                st.rerun()
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
