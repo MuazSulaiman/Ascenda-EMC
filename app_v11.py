@@ -470,15 +470,45 @@ def get_user_by_id(uid: int) -> Optional[Dict[str, Any]]:
         ).mappings().first()
         return dict(row) if row else None
 
-def create_session(user_id: int) -> str:
+def create_session(user_id: int, role: str | None = None) -> str:
+    """
+    Create a new app session for the given user.
+
+    - Normal users: TTL = SESSION_TTL_MIN
+    - Admins: TTL = 12 hours (720 minutes)
+    """
     sid = uuid.uuid4().hex
     now = _utcnow()
-    exp = now + timedelta(minutes=SESSION_TTL_MIN)
+
+    # ----- Role-based TTL -----
+    if role and str(role).lower().strip() == "admin":
+        ttl_minutes = 720  # 12 hours for admins
+    else:
+        ttl_minutes = SESSION_TTL_MIN  # default for others
+
+    exp = now + timedelta(minutes=ttl_minutes)
+
     with engine.begin() as conn:
         conn.execute(
             text("""
-                INSERT INTO app_sessions(session_id, user_id, created_at_utc, expires_at_utc, last_seen_utc, ip, user_agent)
-                VALUES (:sid, :uid, :created, :expires, :last_seen, :ip, :ua)
+                INSERT INTO app_sessions(
+                    session_id,
+                    user_id,
+                    created_at_utc,
+                    expires_at_utc,
+                    last_seen_utc,
+                    ip,
+                    user_agent
+                )
+                VALUES (
+                    :sid,
+                    :uid,
+                    :created,
+                    :expires,
+                    :last_seen,
+                    :ip,
+                    :ua
+                )
             """),
             {
                 "sid": sid,
@@ -490,7 +520,9 @@ def create_session(user_id: int) -> str:
                 "ua": _user_agent(),
             },
         )
-        _log_event(conn, sid, "created", {"ttl_min": SESSION_TTL_MIN})
+        # Log with the actual TTL used
+        _log_event(conn, sid, "created", {"ttl_min": ttl_minutes})
+
     return sid
 
 def purge_expired_sessions() -> None:
@@ -776,7 +808,7 @@ def login_block():
             return
 
         st.session_state.user = u
-        sid = create_session(int(u["user_id"]))
+        sid = create_session(int(u["user_id"]), u.get("role"))
         set_url_session_param(sid)
 
         st.session_state["_current_page"] = "Submit Visit"
