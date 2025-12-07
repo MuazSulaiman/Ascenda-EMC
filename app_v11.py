@@ -4042,13 +4042,16 @@ def page_admin_import():
                         if (res.rowcount or 0) > 0:
                             st.success("Customer added ✅")
                             # reset form
-                            st.session_state["cust_add_acc"] = ""
-                            st.session_state["cust_add_sector_opt"] = ""
-                            st.session_state["cust_add_sector_other"] = ""
-                            st.session_state["cust_add_region_opt"] = ""
-                            st.session_state["cust_add_region_other"] = ""
-                            st.session_state["cust_add_city_opt"] = ""
-                            st.session_state["cust_add_city_other"] = ""
+                            for key in (
+                                "cust_add_acc",
+                                "cust_add_sector_opt",
+                                "cust_add_sector_other",
+                                "cust_add_region_opt",
+                                "cust_add_region_other",
+                                "cust_add_city_opt",
+                                "cust_add_city_other",
+                            ):
+                                st.session_state.pop(key, None)
                         else:
                             st.info(
                                 "A customer with the same **Name + Sector + Region + City** already exists — nothing added."
