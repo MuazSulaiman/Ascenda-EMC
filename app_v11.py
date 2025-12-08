@@ -7853,19 +7853,20 @@ def page_review_target_audiences():
 
     def format_ta_label(row) -> str:
         if isinstance(row, pd.Series):
-            title = (row.get("title") or "").strip()
+            #title = (row.get("title") or "").strip()
             name  = (row.get("name") or "").strip()
             dept  = (row.get("department") or "").strip()
             pos   = (row.get("position") or "").strip()
         else:
-            title = (getattr(row, "title", "") or "").strip()
+            #title = (getattr(row, "title", "") or "").strip()
             name  = (getattr(row, "name", "") or "").strip()
             dept  = (getattr(row, "department", "") or "").strip()
             pos   = (getattr(row, "position", "") or "").strip()
 
         parts = []
         if name:
-            full_name = f"{title} {name}".strip() if title else name
+            #full_name = f"{title} {name}".strip() if title else name
+            full_name = f"{name}".strip()
             parts.append(full_name)
         if dept:
             parts.append(dept)
