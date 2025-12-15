@@ -6983,7 +6983,20 @@ def page_admin_data():
 
     # ---------- Target Audiences ----------
     with tab4:
-        df = query_df("SELECT * FROM target_audiences ORDER BY audience_id DESC")
+        df = query_df("""
+            SELECT
+                ta.audience_id,
+                ta.customer_id,
+                c.account_name,
+                ta.name,
+                ta.department,
+                ta.position,
+                ta.is_active
+            FROM target_audiences ta
+            LEFT JOIN customers c
+                ON c.customer_id = ta.customer_id
+            ORDER BY ta.audience_id DESC
+        """)
         st.markdown(f"**Total: {len(df):,}**")
         st.dataframe(df, width="stretch", hide_index=True)
         if not df.empty:
