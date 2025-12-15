@@ -7965,6 +7965,7 @@ def page_review_target_audiences():
                 "Notes",
                 "Submitted By",
                 "Email",
+                "Business Unit"
             ]
         ],
         width='stretch',
