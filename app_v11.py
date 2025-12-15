@@ -8011,7 +8011,8 @@ def page_review_target_audiences():
         f"Position: **{visit_row['other_audience_position'] or '—'}**  \n"
         f"Phone: **{visit_row['other_audience_phone'] or '—'}**  · "
         f"Email: **{visit_row['other_audience_email'] or '—'}**  \n"
-        f"Submitted by: **{visit_row['rep_name']}** ({visit_row['rep_email']})"
+        f"Submitted by: **{visit_row['rep_name']}** ({visit_row['rep_email']})  · "
+        f"Business Unit: **{visit_row.get('business_unit_name') or '-'}**"
     )
 
     # ------------- Load all existing TAs for that customer -------------
