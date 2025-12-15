@@ -7893,7 +7893,7 @@ def page_review_target_audiences():
         SELECT
             v.visit_id,
             v.customer_id,
-            c.account_name         AS customer_name,
+            c.account_name               AS customer_name,
             v.submitted_at_local,
             v.other_audience_title,
             v.other_audience_name,
@@ -7901,16 +7901,23 @@ def page_review_target_audiences():
             v.other_audience_position,
             v.other_audience_phone,
             v.other_audience_email,
-            v.notes                AS visit_notes,
+            v.notes                      AS visit_notes,
             v.user_id,
-            u.name                 AS rep_name,
-            u.email                AS rep_email
+            u.name                       AS rep_name,
+            u.email                      AS rep_email,
+            bu.name                      AS business_unit_name
         FROM visits v
-        JOIN customers c ON c.customer_id = v.customer_id
-        JOIN users     u ON u.user_id     = v.user_id
+        JOIN customers c 
+            ON c.customer_id = v.customer_id
+        JOIN users u     
+            ON u.user_id = v.user_id
+        LEFT JOIN business_lines bl
+            ON bl.business_line_id = v.business_line_id
+        LEFT JOIN business_units bu
+            ON bu.business_unit_id = bl.business_unit_id
         WHERE v.audience_id IS NULL
-          AND v.other_audience_name IS NOT NULL
-          AND trim(v.other_audience_name) <> ''
+        AND v.other_audience_name IS NOT NULL
+        AND trim(v.other_audience_name) <> ''
         ORDER BY v.submitted_at_local DESC, v.visit_id DESC
         """
     )
