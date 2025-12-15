@@ -7946,6 +7946,7 @@ def page_review_target_audiences():
             "visit_notes": "Notes",
             "rep_name": "Submitted By",
             "rep_email": "Email",
+            "business_unit_name": "Business Unit",
         }
     )
 
