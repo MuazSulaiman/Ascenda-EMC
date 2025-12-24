@@ -1018,6 +1018,7 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
          - If timeout => show friendly warning + Retry button
     """
     TIMEOUT_S = 15  # adjust if you want longer/shorter
+    MAX_ACC_M = 300  # max allowed accuracy in meters
 
     with st.expander("📍 Location (auto) — required for check-in", expanded=True):
         tried_key   = k("geo_try")
@@ -1059,11 +1060,6 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
                     st.progress(min(1.0, elapsed / TIMEOUT_S))
                 # auto-refresh in 1s to re-check
                 st_autorefresh(interval=1000, key=refresh_key, limit=TIMEOUT_S + 2)
-                # Offer cancel/retry immediately if user wants
-                # if st.button("🔁 Retry location", key=k("btn_retry_loc")):
-                #     st.session_state.pop(tried_key, None)
-                #     st.session_state.pop(start_key, None)
-                #     st.rerun()
                 return (None, None, None)
 
             # Timeout reached → show the warning (only now)
@@ -1086,6 +1082,19 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
         except Exception:
             st.warning("Location values looked invalid. Please try again.")
             if st.button("🔁 Retry location", key=k("btn_retry_invalid")):
+                st.session_state.pop(tried_key, None)
+                st.session_state.pop(start_key, None)
+                st.rerun()
+            return (None, None, None)
+
+        # ✅ Accuracy gate (BLOCK if > 300m)
+        if facc is not None and facc > MAX_ACC_M:
+            shown_acc = f"{facc:.0f}m" if facc is not None else "unknown"
+            st.error(
+                f"Location accuracy is **{shown_acc}**, which is above the allowed limit (**≤ {MAX_ACC_M:.0f}m**).\n\n"
+                "Please enable **Precise location**, move outdoors, or wait a few seconds then try again."
+                )
+            if st.button("🔁 Capture again", key=k("btn_retry_low_accuracy")):
                 st.session_state.pop(tried_key, None)
                 st.session_state.pop(start_key, None)
                 st.rerun()
