@@ -8031,10 +8031,9 @@ def page_review_target_audiences():
             SELECT DISTINCT ON (v.audience_id)
                 v.audience_id,
                 v.submitted_at_local AS last_visited_date,
-                v.user_id    AS last_visited_user_id
+                v.user_id            AS last_visited_user_id
             FROM visits v
-            WHERE COALESCE(v.is_deleted, FALSE) IS FALSE
-            ORDER BY v.audience_id, v.submitted_at_local DESC
+            ORDER BY v.audience_id, v.submitted_at_local DESC, v.visit_id DESC
         )
         SELECT
             ta.audience_id,
@@ -8044,19 +8043,15 @@ def page_review_target_audiences():
             ta.position,
             ta.mobile,
             ta.email,
-
             lv.last_visited_date,
             u.name AS last_visited_by
-
         FROM target_audiences ta
         LEFT JOIN last_visits lv
             ON lv.audience_id = ta.audience_id
         LEFT JOIN users u
             ON u.user_id = lv.last_visited_user_id
-
         WHERE ta.customer_id = :cid
         AND COALESCE(ta.is_active, TRUE) IS TRUE
-
         ORDER BY ta.name
         """,
         {"cid": int(visit_row["customer_id"])},
