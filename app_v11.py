@@ -8027,18 +8027,37 @@ def page_review_target_audiences():
     # ------------- Load all existing TAs for that customer -------------
     ta_df = query_df(
         """
+        WITH last_visits AS (
+            SELECT DISTINCT ON (v.audience_id)
+                v.audience_id,
+                v.submitted_at_local AS last_visited_date,
+                v.user_id    AS last_visited_user_id
+            FROM visits v
+            WHERE COALESCE(v.is_deleted, FALSE) IS FALSE
+            ORDER BY v.audience_id, v.submitted_at_local DESC
+        )
         SELECT
-            audience_id,
-            title,
-            name,
-            department,
-            position,
-            mobile,
-            email
-        FROM target_audiences
-        WHERE customer_id = :cid
-          AND COALESCE(is_active, TRUE) IS TRUE
-        ORDER BY name
+            ta.audience_id,
+            ta.title,
+            ta.name,
+            ta.department,
+            ta.position,
+            ta.mobile,
+            ta.email,
+
+            lv.last_visited_date,
+            u.name AS last_visited_by
+
+        FROM target_audiences ta
+        LEFT JOIN last_visits lv
+            ON lv.audience_id = ta.audience_id
+        LEFT JOIN users u
+            ON u.user_id = lv.last_visited_user_id
+
+        WHERE ta.customer_id = :cid
+        AND COALESCE(ta.is_active, TRUE) IS TRUE
+
+        ORDER BY ta.name
         """,
         {"cid": int(visit_row["customer_id"])},
     )
@@ -8069,7 +8088,7 @@ def page_review_target_audiences():
 
         st.dataframe(
             ta_display[
-                ["audience_id", "Label", "Similarity", "department", "position", "mobile", "email"]
+                ["audience_id", "Label", "Similarity", "department", "position", "mobile", "email", "last_visited_date", "last_visited_by"]
             ].rename(
                 columns={
                     "audience_id": "ID",
@@ -8077,6 +8096,8 @@ def page_review_target_audiences():
                     "position": "Position",
                     "mobile": "Mobile",
                     "email": "Email",
+                    "last_visited_date": "Last Visited At",
+                    "last_visited_by": "Visited By",
                 }
             ),
             width='stretch',
