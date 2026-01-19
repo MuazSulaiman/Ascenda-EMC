@@ -929,7 +929,7 @@ def sidebar_nav():
     role = (user.get("role") if user else "").lower().strip()
 
     # Base pages
-    pages = ["Submit Visit", "My Submissions"]
+    pages = ["Submit Visit", "My Submissions", "Check-In"]
 
     if role == "rep":
         pages += ["Projects View", "User Settings"]
@@ -2224,6 +2224,298 @@ def page_submit_visit():
             st.caption(str(e))
             st.session_state[intent_key] = False
             st.session_state[busy_key]   = False
+
+def page_check_in():
+    st.title("✅ Check-In")
+
+    # ---- tiny CSS for floating button (optional) ----
+    st.markdown(
+        """
+        <style>
+          .sticky-submit-wrap{position:fixed; right:16px; bottom:16px; z-index:1000;}
+          @media (max-width:640px){
+            .sticky-submit-wrap{left:16px; right:16px;}
+            .sticky-submit-wrap button{width:100%;}
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div style="margin:.25rem 0 1rem 0;">'
+        'Fields marked with <span style="color:#d00000;font-weight:700">*</span> are required.'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    PAGE_NS = "check_in"
+
+    nonce_key     = f"_{PAGE_NS}_form_nonce"
+    saved_ok_key  = f"_{PAGE_NS}_saved_ok"
+    geo_nonce_key = f"_{PAGE_NS}_geo_nonce"
+    busy_key      = f"_{PAGE_NS}_busy"
+    intent_key    = f"_{PAGE_NS}_submit_intent"
+
+    st.session_state.setdefault(nonce_key, 0)
+    st.session_state.setdefault(geo_nonce_key, 0)
+    st.session_state.setdefault(busy_key, False)
+    st.session_state.setdefault(intent_key, False)
+
+    def k(name: str) -> str:
+        return f"{PAGE_NS}/{name}_{st.session_state[nonce_key]}"
+
+    # ---- cascade clear helpers (use current nonce'd keys) ----
+    def _on_region_change():
+        for n in ("city_sel", "sector_sel", "cust_sel"):
+            st.session_state.pop(k(n), None)
+
+    def _on_city_change():
+        for n in ("sector_sel", "cust_sel"):
+            st.session_state.pop(k(n), None)
+
+    def _on_sector_change():
+        for n in ("cust_sel",):
+            st.session_state.pop(k(n), None)
+
+    # Make this page current
+    set_current_page(PAGE_NS)
+
+    # --- Resolve logged-in user safely ---
+    u = st.session_state.get("user") or resolve_session_user()
+    if not u:
+        st.warning("Please sign in to continue.")
+        st.stop()
+
+    uid  = int(u.get("user_id") or u.get("id"))
+    role = (u.get("role") or "").lower().strip()
+
+    display_name   = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
+    display_region = u.get("region") or "—"
+    display_role   = u.get("role") or "—"
+    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
+
+    # Ensure location flow is reset when user or page changes
+    _reset_geo_on_user_or_page_change(PAGE_NS, uid)
+
+    if st.session_state.pop(saved_ok_key, False):
+        st.success("Checked in ✅ — you can add another one.")
+
+    # =====================================================
+    # SECTION 1 — Location (REQUIRED)
+    # =====================================================
+    st.markdown("### 1️⃣ Location")
+    lat, lon, acc = get_location_block(k)
+    if lat is None or lon is None:
+        st.info("📍 Location is required before you can check in.")
+        return
+
+    # =====================================================
+    # SECTION 2 — Customer (Region → City → Sector → Customer)
+    # =====================================================
+    st.markdown("### 2️⃣ Customer")
+
+    def _order_with_other_last(values: list[str]) -> list[str]:
+        normal_vals, other_vals = [], []
+        for v in values:
+            if isinstance(v, str) and v.strip().lower() == "other":
+                other_vals.append(v)
+            else:
+                normal_vals.append(v)
+        return normal_vals + other_vals
+
+    # ---- Region ----
+    reg_df = query_df(
+        """
+        SELECT DISTINCT region
+        FROM customers
+        WHERE is_active IS TRUE
+          AND region IS NOT NULL AND trim(region) <> ''
+        ORDER BY region
+        """
+    )
+    region_list = _order_with_other_last(reg_df["region"].tolist())
+    region_opts = [""] + region_list
+
+    region_choice = st.selectbox(
+        "Region *",
+        region_opts,
+        index=0,
+        key=k("region_sel"),
+        on_change=_on_region_change,
+    )
+    if not region_choice:
+        st.info("Select Region to continue.")
+        return
+
+    # ---- City ----
+    city_df = query_df(
+        """
+        SELECT DISTINCT city
+        FROM customers
+        WHERE is_active IS TRUE
+          AND region = :r
+          AND city IS NOT NULL AND trim(city) <> ''
+        ORDER BY city
+        """,
+        {"r": region_choice},
+    )
+    city_list = _order_with_other_last(city_df["city"].tolist())
+    city_opts = [""] + city_list
+
+    city_choice = st.selectbox(
+        "City *",
+        city_opts,
+        index=0,
+        key=k("city_sel"),
+        on_change=_on_city_change,
+    )
+    if not city_choice:
+        st.info("Select City to continue.")
+        return
+
+    # ---- Sector ----
+    sec_df = query_df(
+        """
+        SELECT DISTINCT sector
+        FROM customers
+        WHERE is_active IS TRUE
+          AND region = :r
+          AND city   = :c
+          AND sector IS NOT NULL AND trim(sector) <> ''
+        ORDER BY sector
+        """,
+        {"r": region_choice, "c": city_choice},
+    )
+    sector_list = _order_with_other_last(sec_df["sector"].tolist())
+    sector_opts = [""] + sector_list
+
+    sector_choice = st.selectbox(
+        "Sector *",
+        sector_opts,
+        index=0,
+        key=k("sector_sel"),
+        on_change=_on_sector_change,
+    )
+    if not sector_choice:
+        st.info("Select Sector to continue.")
+        return
+
+    # ---- Customer ----
+    cust_df = query_df(
+        """
+        SELECT customer_id, account_name
+        FROM customers
+        WHERE is_active IS TRUE
+          AND region = :r
+          AND city   = :c
+          AND sector = :s
+        ORDER BY account_name
+        """,
+        {"r": region_choice, "c": city_choice, "s": sector_choice},
+    )
+    cust_names = [""] + _order_with_other_last(cust_df["account_name"].tolist())
+
+    cust_choice = st.selectbox(
+        "Customer *",
+        cust_names,
+        index=0,
+        key=k("cust_sel"),
+    )
+    if not cust_choice:
+        st.info("Select Customer to continue.")
+        return
+
+    match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
+    customer_id = int(match.iloc[0]) if not match.empty else None
+    if not customer_id:
+        st.error("Invalid customer selection.")
+        return
+
+    # =====================================================
+    # SECTION 3 — Notes
+    # =====================================================
+    st.markdown("### 3️⃣ Notes")
+    notes = st.text_area("Notes (optional)", key=k("notes"))
+
+    # =====================================================
+    # Submit: Check In
+    # =====================================================
+    CHECKIN_OBJECTIVE_ID = 620
+
+    click = st.button(
+        "Check In",
+        type="primary",
+        key=k("checkin_btn"),
+        disabled=st.session_state[busy_key],
+        help="Saves immediately.",
+    )
+
+    if click and not st.session_state[busy_key]:
+        st.session_state[intent_key] = True
+        st.session_state[busy_key] = True
+        st.rerun()
+
+    if not st.session_state[intent_key]:
+        return
+
+    with st.spinner("Saving check-in…"):
+        # ---- minimal validations ----
+        errors = []
+        if not customer_id:
+            errors.append("Please choose a **Customer**.")
+        if lat is None or lon is None:
+            errors.append("Location is required.")
+
+        if errors:
+            for e in errors:
+                st.error(e)
+            st.session_state[intent_key] = False
+            st.session_state[busy_key] = False
+            return
+
+        visit_row = {
+            "user_id":            uid,
+            "submitted_at_utc":   _utcnow(),
+            "submitted_at_local": _local_now_str(),
+            "latitude":           lat,
+            "longitude":          lon,
+            "accuracy_m":         acc,
+            "customer_id":        int(customer_id),
+            "objective_id":       int(CHECKIN_OBJECTIVE_ID),
+            "notes":              (notes.strip() if notes else None),
+
+            # Keep these explicitly NULL for check-in:
+            "audience_id":        None,
+            "business_line_id":   None,
+            "product_id":         None,
+            "evaluation":         None,
+            "project_id":         None,
+            "other_audience_title":      None,
+            "other_audience_name":       None,
+            "other_audience_department": None,
+            "other_audience_position":   None,
+            "other_audience_phone":      None,
+            "other_audience_email":      None,
+        }
+
+        try:
+            visit_id = insert_visit_atomic(visit_row, home_payload=None, shelf_lines_payload=None)
+            st.toast(f"Check-In saved ✅", icon="✅")
+
+            # reset form
+            st.session_state[nonce_key] += 1
+            st.session_state[geo_nonce_key] += 1
+            st.session_state[saved_ok_key] = True
+            st.session_state[intent_key] = False
+            st.session_state[busy_key] = False
+            st.rerun()
+
+        except Exception as e:
+            st.error("Could not save your check-in.")
+            st.caption(str(e))
+            st.session_state[intent_key] = False
+            st.session_state[busy_key] = False
 
 # =============================
 # Page — My Submissions
@@ -8425,7 +8717,7 @@ def show_footer():
             <span style="font-size:0.9rem;">
                 © 2025 <strong>Al Madar Medical Co.</strong><br>
                 Core System © <strong>Muaz Sulaiman</strong><br>
-                <span style="font-size:0.8rem;">Version 11 • All rights reserved.</span>
+                <span style="font-size:0.8rem;">Version 12 • All rights reserved.</span>
             </span>
         </div>
         """,
@@ -8449,6 +8741,8 @@ else:
 
     if page == "Submit Visit":
         page_submit_visit()
+    elif page == "Check-In":
+        page_check_in()
     elif page == "My Submissions":
         page_my_submissions()
     elif page == "User Settings":
