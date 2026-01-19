@@ -929,7 +929,7 @@ def sidebar_nav():
     role = (user.get("role") if user else "").lower().strip()
 
     # Base pages
-    pages = ["Submit Visit", "My Submissions", "Check-In"]
+    pages = ["Submit Visit", "My Submissions"]
 
     if role == "rep":
         pages += ["Projects View", "User Settings"]
@@ -939,6 +939,7 @@ def sidebar_nav():
 
     if role == "admin":
         pages += [
+            "Check-In",
             "Project Creation",
             "Project Management",
             "Projects View",
