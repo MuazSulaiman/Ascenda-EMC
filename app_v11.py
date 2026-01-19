@@ -6954,8 +6954,8 @@ def page_admin_data():
             JOIN customers c        ON v.customer_id = c.customer_id
             LEFT JOIN target_audiences ta ON v.audience_id = ta.audience_id
             LEFT JOIN items i       ON v.product_id = i.product_id
-            JOIN business_lines bl  ON bl.business_line_id = v.business_line_id
-            JOIN business_units bu  ON bu.business_unit_id = bl.business_unit_id
+            LEFT JOIN business_lines bl  ON bl.business_line_id = v.business_line_id
+            LEFT JOIN business_units bu  ON bu.business_unit_id = bl.business_unit_id
             JOIN objectives o       ON v.objective_id = o.objective_id
             LEFT JOIN home_visits hv ON hv.visit_id = v.visit_id
             ORDER BY v.visit_id DESC
