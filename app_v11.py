@@ -2226,6 +2226,10 @@ def page_submit_visit():
             st.session_state[intent_key] = False
             st.session_state[busy_key]   = False
 
+# =============================
+# Page — Check-In 
+# =============================
+
 def page_check_in():
     st.title("✅ Check-In")
 
@@ -2251,10 +2255,10 @@ def page_check_in():
     )
 
     PAGE_NS = "check_in"
-
     nonce_key     = f"_{PAGE_NS}_form_nonce"
     saved_ok_key  = f"_{PAGE_NS}_saved_ok"
     geo_nonce_key = f"_{PAGE_NS}_geo_nonce"
+    geo_captured_key = f"_{PAGE_NS}_geo_captured"
     busy_key      = f"_{PAGE_NS}_busy"
     intent_key    = f"_{PAGE_NS}_submit_intent"
 
@@ -2279,7 +2283,6 @@ def page_check_in():
         for n in ("cust_sel",):
             st.session_state.pop(k(n), None)
 
-    # Make this page current
     set_current_page(PAGE_NS)
 
     # --- Resolve logged-in user safely ---
@@ -2289,30 +2292,31 @@ def page_check_in():
         st.stop()
 
     uid  = int(u.get("user_id") or u.get("id"))
-    role = (u.get("role") or "").lower().strip()
-
     display_name   = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
     display_region = u.get("region") or "—"
     display_role   = u.get("role") or "—"
+
     st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
 
     # Ensure location flow is reset when user or page changes
     _reset_geo_on_user_or_page_change(PAGE_NS, uid)
 
     if st.session_state.pop(saved_ok_key, False):
-        st.success("Checked in ✅ — you can add another one.")
+        st.success("Checked in ✅ — fields cleared, you can add a new check-in.")
 
     # =====================================================
     # SECTION 1 — Location (REQUIRED)
     # =====================================================
     st.markdown("### 1️⃣ Location")
     lat, lon, acc = get_location_block(k)
+
+    # Keep the same behavior as Submit Visit:
+    # show the page, but display info if location not captured yet
     if lat is None or lon is None:
         st.info("📍 Location is required before you can check in.")
-        return
 
     # =====================================================
-    # SECTION 2 — Customer (Region → City → Sector → Customer)
+    # SECTION 2 — Customer info (Region → City → Sector → Customer)
     # =====================================================
     st.markdown("### 2️⃣ Customer")
 
@@ -2345,93 +2349,94 @@ def page_check_in():
         key=k("region_sel"),
         on_change=_on_region_change,
     )
-    if not region_choice:
-        st.info("Select Region to continue.")
-        return
 
-    # ---- City ----
-    city_df = query_df(
-        """
-        SELECT DISTINCT city
-        FROM customers
-        WHERE is_active IS TRUE
-          AND region = :r
-          AND city IS NOT NULL AND trim(city) <> ''
-        ORDER BY city
-        """,
-        {"r": region_choice},
-    )
-    city_list = _order_with_other_last(city_df["city"].tolist())
-    city_opts = [""] + city_list
+    # ---- City (disabled until Region) ----
+    city_opts = [""]
+    if region_choice:
+        city_df = query_df(
+            """
+            SELECT DISTINCT city
+            FROM customers
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city IS NOT NULL AND trim(city) <> ''
+            ORDER BY city
+            """,
+            {"r": region_choice},
+        )
+        city_list = _order_with_other_last(city_df["city"].tolist())
+        city_opts = [""] + city_list
 
     city_choice = st.selectbox(
         "City *",
         city_opts,
         index=0,
         key=k("city_sel"),
-        on_change=_on_city_change,
+        disabled=not bool(region_choice),
+        on_change=_on_city_change if region_choice else None,
+        help=None if region_choice else "Select a Region first",
     )
-    if not city_choice:
-        st.info("Select City to continue.")
-        return
 
-    # ---- Sector ----
-    sec_df = query_df(
-        """
-        SELECT DISTINCT sector
-        FROM customers
-        WHERE is_active IS TRUE
-          AND region = :r
-          AND city   = :c
-          AND sector IS NOT NULL AND trim(sector) <> ''
-        ORDER BY sector
-        """,
-        {"r": region_choice, "c": city_choice},
-    )
-    sector_list = _order_with_other_last(sec_df["sector"].tolist())
-    sector_opts = [""] + sector_list
+    # ---- Sector (disabled until Region+City) ----
+    sector_opts = [""]
+    if region_choice and city_choice:
+        sec_df = query_df(
+            """
+            SELECT DISTINCT sector
+            FROM customers
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city   = :c
+              AND sector IS NOT NULL AND trim(sector) <> ''
+            ORDER BY sector
+            """,
+            {"r": region_choice, "c": city_choice},
+        )
+        sector_list = _order_with_other_last(sec_df["sector"].tolist())
+        sector_opts = [""] + sector_list
 
     sector_choice = st.selectbox(
         "Sector *",
         sector_opts,
         index=0,
         key=k("sector_sel"),
-        on_change=_on_sector_change,
+        disabled=not bool(region_choice and city_choice),
+        on_change=_on_sector_change if (region_choice and city_choice) else None,
+        help=None if (region_choice and city_choice) else "Select a City first",
     )
-    if not sector_choice:
-        st.info("Select Sector to continue.")
-        return
 
-    # ---- Customer ----
-    cust_df = query_df(
-        """
-        SELECT customer_id, account_name
-        FROM customers
-        WHERE is_active IS TRUE
-          AND region = :r
-          AND city   = :c
-          AND sector = :s
-        ORDER BY account_name
-        """,
-        {"r": region_choice, "c": city_choice, "s": sector_choice},
-    )
-    cust_names = [""] + _order_with_other_last(cust_df["account_name"].tolist())
+    # ---- Customer (disabled until Region+City+Sector) ----
+    cust_df = pd.DataFrame(columns=["customer_id", "account_name"])
+    cust_names = [""]
+
+    if region_choice and city_choice and sector_choice:
+        cust_df = query_df(
+            """
+            SELECT customer_id, account_name
+            FROM customers
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city   = :c
+              AND sector = :s
+            ORDER BY account_name
+            """,
+            {"r": region_choice, "c": city_choice, "s": sector_choice},
+        )
+        cust_names = [""] + _order_with_other_last(cust_df["account_name"].tolist())
 
     cust_choice = st.selectbox(
         "Customer *",
         cust_names,
         index=0,
         key=k("cust_sel"),
+        disabled=not bool(region_choice and city_choice and sector_choice),
+        help=None if (region_choice and city_choice and sector_choice) else "Select Sector first",
     )
-    if not cust_choice:
-        st.info("Select Customer to continue.")
-        return
 
-    match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
-    customer_id = int(match.iloc[0]) if not match.empty else None
-    if not customer_id:
-        st.error("Invalid customer selection.")
-        return
+    customer_id = None
+    if cust_choice and not cust_df.empty:
+        match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
+        customer_id = int(match.iloc[0]) if not match.empty else None
 
     # =====================================================
     # SECTION 3 — Notes
@@ -2440,7 +2445,7 @@ def page_check_in():
     notes = st.text_area("Notes (optional)", key=k("notes"))
 
     # =====================================================
-    # Submit: Check In
+    # Check In button
     # =====================================================
     CHECKIN_OBJECTIVE_ID = 620
 
@@ -2460,17 +2465,26 @@ def page_check_in():
     if not st.session_state[intent_key]:
         return
 
+    # =====================================================
+    # Save (validations only here — same pattern as Submit Visit)
+    # =====================================================
     with st.spinner("Saving check-in…"):
-        # ---- minimal validations ----
-        errors = []
+        errors: list[str] = []
+
+        if lat is None or lon is None:
+            errors.append("📍 Please capture **Location** before checking in.")
+        if not region_choice:
+            errors.append("Please choose a **Region**.")
+        if not city_choice:
+            errors.append("Please choose a **City**.")
+        if not sector_choice:
+            errors.append("Please choose a **Sector**.")
         if not customer_id:
             errors.append("Please choose a **Customer**.")
-        if lat is None or lon is None:
-            errors.append("Location is required.")
 
         if errors:
-            for e in errors:
-                st.error(e)
+            for msg in errors:
+                st.error(msg)
             st.session_state[intent_key] = False
             st.session_state[busy_key] = False
             return
@@ -2486,12 +2500,14 @@ def page_check_in():
             "objective_id":       int(CHECKIN_OBJECTIVE_ID),
             "notes":              (notes.strip() if notes else None),
 
-            # Keep these explicitly NULL for check-in:
+            # keep other fields NULL
             "audience_id":        None,
             "business_line_id":   None,
             "product_id":         None,
             "evaluation":         None,
             "project_id":         None,
+
+            # optional: if your insert expects these columns to exist
             "other_audience_title":      None,
             "other_audience_name":       None,
             "other_audience_department": None,
@@ -2502,11 +2518,12 @@ def page_check_in():
 
         try:
             visit_id = insert_visit_atomic(visit_row, home_payload=None, shelf_lines_payload=None)
-            st.toast(f"Check-In saved ✅", icon="✅")
+            st.toast(f"Check-In saved ✅ (Visit #{visit_id})", icon="✅")
 
             # reset form
             st.session_state[nonce_key] += 1
             st.session_state[geo_nonce_key] += 1
+            st.session_state.pop(geo_captured_key, None)
             st.session_state[saved_ok_key] = True
             st.session_state[intent_key] = False
             st.session_state[busy_key] = False
