@@ -2266,7 +2266,7 @@ def page_check_in():
     # =====================================================
     # SECTION 1 — Location (REQUIRED)
     # =====================================================
-    st.markdown("### 1️⃣ Visit Location")
+    st.markdown("### 1️⃣ Check-In Location")
     lat, lon, acc = get_location_block(k)
 
     # ✅ EXACTLY like Submit Visit: stop rendering the rest until location exists
