@@ -2261,7 +2261,7 @@ def page_check_in():
     _reset_geo_on_user_or_page_change(PAGE_NS, uid)
 
     if st.session_state.pop(saved_ok_key, False):
-        st.success("Checked in ✅ — fields cleared, you can enter a new one.")
+        st.success("Checked in ✅ — fields cleared.")
 
     # =====================================================
     # SECTION 1 — Location (REQUIRED)
