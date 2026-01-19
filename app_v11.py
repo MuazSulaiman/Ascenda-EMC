@@ -2459,7 +2459,7 @@ def page_check_in():
         }
 
         try:
-            visit_id = insert_visit_atomic(visit_row, home_payload=None, shelf_lines_payload=None)
+            visit_id = insert_visit_atomic(visit_row, home_visit=None, shelf_lines=None)
 
             # reset form (same pattern)
             st.session_state[nonce_key] += 1
