@@ -929,9 +929,12 @@ def sidebar_nav():
     role = (user.get("role") if user else "").lower().strip()
 
     # Base pages
-    pages = ["Submit Visit", "My Submissions"]
+    pages = ["Submit Visit","Check-In", "My Submissions"]
 
     if role == "rep":
+        pages += ["Projects View", "User Settings"]
+        
+    if role == "maintenance":
         pages += ["Projects View", "User Settings"]
 
     if role == "manager":
@@ -939,7 +942,6 @@ def sidebar_nav():
 
     if role == "admin":
         pages += [
-            "Check-In",
             "Project Creation",
             "Project Management",
             "Projects View",
@@ -7826,7 +7828,7 @@ def page_admin_users():
             bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
             bu_names = bu_df["name"].tolist()
             bu_sel = st.selectbox("Business Unit (optional)", [""] + bu_names, index=0)
-            role = st.selectbox("Role", ["rep", "admin","manager","maintenance"], index=0)
+            role = st.selectbox("Role", ["","rep", "admin","manager","maintenance"], index=0)
             pw = st.text_input("Temporary Password *", type="password",
                                value=st.session_state["create_user_tmp_pw"])
 
@@ -7969,7 +7971,14 @@ def page_admin_users():
                     index=(["", "C/R", "W/R", "E/R"].index(row["region"]) if row["region"] in ["", "C/R", "W/R", "E/R"] else 0)
                 )
                 new_bu_label = st.selectbox("Business Unit (optional)", bu_labels, index=bu_idx)
-                new_role = st.selectbox("Role", ["rep", "admin","manager","maintenance"], index=(0 if row["role"] == "rep" else 1))
+                
+                role_opts = ["", "rep", "admin", "manager", "maintenance"]
+
+                current_role = (row.get("role") or "").strip().lower()
+                role_idx = role_opts.index(current_role) if current_role in role_opts else 0
+
+                new_role = st.selectbox("Role", role_opts, index=role_idx)
+                
                 save = st.form_submit_button("Save changes")
 
             if save:
