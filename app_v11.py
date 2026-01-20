@@ -7826,7 +7826,7 @@ def page_admin_users():
             bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
             bu_names = bu_df["name"].tolist()
             bu_sel = st.selectbox("Business Unit (optional)", [""] + bu_names, index=0)
-            role = st.selectbox("Role", ["rep", "admin","manager"], index=0)
+            role = st.selectbox("Role", ["rep", "admin","manager","maintenance"], index=0)
             pw = st.text_input("Temporary Password *", type="password",
                                value=st.session_state["create_user_tmp_pw"])
 
@@ -7969,7 +7969,7 @@ def page_admin_users():
                     index=(["", "C/R", "W/R", "E/R"].index(row["region"]) if row["region"] in ["", "C/R", "W/R", "E/R"] else 0)
                 )
                 new_bu_label = st.selectbox("Business Unit (optional)", bu_labels, index=bu_idx)
-                new_role = st.selectbox("Role", ["rep", "admin","manager"], index=(0 if row["role"] == "rep" else 1))
+                new_role = st.selectbox("Role", ["rep", "admin","manager","maintenance"], index=(0 if row["role"] == "rep" else 1))
                 save = st.form_submit_button("Save changes")
 
             if save:
