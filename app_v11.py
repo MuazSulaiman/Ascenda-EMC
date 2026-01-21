@@ -2757,6 +2757,7 @@ def page_my_submissions():
                v.submitted_at_local,
                to_char(v.submitted_at_local, 'Day') AS day_name,
                c.account_name AS customer,
+               c.account_id AS account_id,
                ta.name AS audience,
                v.latitude, v.longitude, v.accuracy_m,
                i.article_number, i.description,
