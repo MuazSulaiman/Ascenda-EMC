@@ -2232,10 +2232,9 @@ def page_submit_visit():
 # =============================
 # Page — Check-In 
 # =============================
-
 def page_check_in():
     st.title("✅ Check-In")
-    
+
     # ---- Red asterisk legend ----
     st.markdown(
         '<div style="margin:.25rem 0 1rem 0;">'
@@ -2245,18 +2244,54 @@ def page_check_in():
     )
 
     PAGE_NS = "check_in"
-    nonce_key     = f"_{PAGE_NS}_form_nonce"
-    saved_ok_key  = f"_{PAGE_NS}_saved_ok"
-    geo_nonce_key = f"_{PAGE_NS}_geo_nonce"
-    geo_captured_key = f"_{PAGE_NS}_geo_captured"
-    busy_key      = f"_{PAGE_NS}_busy"
-    intent_key    = f"_{PAGE_NS}_submit_intent"
+    nonce_key         = f"_{PAGE_NS}_form_nonce"
+    saved_ok_key      = f"_{PAGE_NS}_saved_ok"
+    geo_nonce_key     = f"_{PAGE_NS}_geo_nonce"
+    geo_captured_key  = f"_{PAGE_NS}_geo_captured"
+    busy_key          = f"_{PAGE_NS}_busy"
+    intent_key        = f"_{PAGE_NS}_submit_intent"
+
+    # Customer search / lock state (fixed keys)
+    cid_locked_key     = f"_{PAGE_NS}_cid_locked"
+
+    # ✅ request flags so we can clear/set BEFORE widgets instantiate
+    req_clear_customer_key = f"_{PAGE_NS}_req_clear_customer"
+    req_clear_acct_key     = f"_{PAGE_NS}_req_clear_acct"
+
+    # ✅ request "set account id to uppercase" safely on next run
+    req_set_acct_key       = f"_{PAGE_NS}_req_set_acct"
+    acct_set_value_key     = f"_{PAGE_NS}_acct_set_value"
+
+    # Persist quick-find message across reruns
+    qf_msg_key        = f"_{PAGE_NS}_qf_msg"
+    qf_msg_type_key   = f"_{PAGE_NS}_qf_msg_type"  # "error" | "success" | ""
 
     st.session_state.setdefault(nonce_key, 0)
     st.session_state.setdefault(geo_nonce_key, 0)
     st.session_state.setdefault(busy_key, False)
     st.session_state.setdefault(intent_key, False)
 
+    st.session_state.setdefault(cid_locked_key, False)
+    st.session_state.setdefault(req_clear_customer_key, False)
+    st.session_state.setdefault(req_clear_acct_key, False)
+
+    st.session_state.setdefault(req_set_acct_key, False)
+    st.session_state.setdefault(acct_set_value_key, "")
+
+    st.session_state.setdefault(qf_msg_key, "")
+    st.session_state.setdefault(qf_msg_type_key, "")
+
+    # ------------------------------
+    # Fixed keys for customer widgets (DO NOT use nonce)
+    # ------------------------------
+    KEY_ACCT   = f"{PAGE_NS}/acct_search"
+    KEY_REGION = f"{PAGE_NS}/region_sel"
+    KEY_CITY   = f"{PAGE_NS}/city_sel"
+    KEY_SECTOR = f"{PAGE_NS}/sector_sel"
+    KEY_CUST   = f"{PAGE_NS}/cust_sel"
+    KEY_CUSTID = f"{PAGE_NS}/customer_id_resolved"
+
+    # Use nonce ONLY for non-customer widgets (notes, button keys, etc.)
     def k(name: str) -> str:
         return f"{PAGE_NS}/{name}_{st.session_state[nonce_key]}"
 
@@ -2271,15 +2306,11 @@ def page_check_in():
     uid = int(u.get("user_id") or u.get("id"))
     _reset_geo_on_user_or_page_change(PAGE_NS, uid)
 
-    # --- Defensive fallbacks ---
+    # --- Header ---
     display_name   = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
     display_region = u.get("region") or "—"
     display_role   = u.get("role") or "—"
-
-    # --- Display info ---
-    st.caption(
-        f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**"
-    )
+    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
 
     if st.session_state.pop(saved_ok_key, False):
         st.success("Checked in ✅ — fields cleared.")
@@ -2290,13 +2321,12 @@ def page_check_in():
     st.markdown("### 1️⃣ Check-In Location")
     lat, lon, acc = get_location_block(k)
 
-    # ✅ EXACTLY like Submit Visit: stop rendering the rest until location exists
     if lat is None or lon is None:
         st.info("📍 Location is required before you can check in.")
         return
 
     # =====================================================
-    # SECTION 2 — Customer info (now it appears)
+    # SECTION 2 — Customer info
     # =====================================================
     st.markdown("### 2️⃣ Customer")
 
@@ -2309,19 +2339,143 @@ def page_check_in():
                 normal_vals.append(v)
         return normal_vals + other_vals
 
+    def _set_qf_msg(msg: str, msg_type: str = "error"):
+        st.session_state[qf_msg_key] = msg
+        st.session_state[qf_msg_type_key] = msg_type
+
+    def _clear_qf_msg():
+        st.session_state[qf_msg_key] = ""
+        st.session_state[qf_msg_type_key] = ""
+
+    def _apply_requests_before_widgets():
+        """
+        ✅ Must run BEFORE widgets are created.
+        Clears/sets only customer-related fields (never touches location).
+        """
+        if st.session_state.get(req_clear_customer_key, False):
+            st.session_state[req_clear_customer_key] = False
+
+            st.session_state[cid_locked_key] = False
+            st.session_state[KEY_REGION] = ""
+            st.session_state[KEY_CITY]   = ""
+            st.session_state[KEY_SECTOR] = ""
+            st.session_state[KEY_CUST]   = ""
+            st.session_state.pop(KEY_CUSTID, None)
+
+        if st.session_state.get(req_clear_acct_key, False):
+            st.session_state[req_clear_acct_key] = False
+            st.session_state[KEY_ACCT] = ""
+
+        if st.session_state.get(req_set_acct_key, False):
+            st.session_state[req_set_acct_key] = False
+            st.session_state[KEY_ACCT] = (st.session_state.get(acct_set_value_key) or "")
+
+    # ✅ Apply pending requests BEFORE rendering widgets
+    _apply_requests_before_widgets()
+
+    locked = bool(st.session_state.get(cid_locked_key, False))
+
+    # -------- Show Quick-Find message (persistent) --------
+    if st.session_state.get(qf_msg_key):
+        if st.session_state.get(qf_msg_type_key) == "success":
+            st.success(st.session_state[qf_msg_key])
+        else:
+            st.error(st.session_state[qf_msg_key])
+
+    # ---------------- Quick Find (Account ID) ----------------
+    st.markdown("##### 🔎 Quick Find (Account ID)")
+
+    with st.form(key=f"{PAGE_NS}/quick_find_form", clear_on_submit=False):
+        q1, q2, q3 = st.columns([3, 1, 1])
+        with q1:
+            st.text_input(
+                "Account ID",
+                key=KEY_ACCT,
+                placeholder="e.g., C100555",
+                help="Search by the Account ID used by the team (letters + numbers).",
+            )
+        with q2:
+            find_click = st.form_submit_button("Find", use_container_width=True)
+        with q3:
+            clear_click = st.form_submit_button("Clear", use_container_width=True)
+
+    if clear_click:
+        _clear_qf_msg()
+        st.session_state[req_clear_customer_key] = True
+        st.session_state[req_clear_acct_key] = True
+        st.rerun()
+
+    if find_click:
+        raw_txt = (st.session_state.get(KEY_ACCT) or "")
+        txt = raw_txt.strip().upper()  # ✅ normalize
+
+        # Empty
+        if not txt:
+            _set_qf_msg("Please enter an Account ID. Fields cleared.", "error")
+            st.session_state[req_clear_customer_key] = True
+            st.session_state[req_clear_acct_key] = True
+            st.rerun()
+
+        found = query_df(
+            """
+            SELECT customer_id, account_id, account_name, region, city, sector
+            FROM customers
+            WHERE is_active IS TRUE
+              AND UPPER(TRIM(account_id)) = :aid
+            LIMIT 1
+            """,
+            {"aid": txt},
+        )
+
+        if found.empty:
+            _set_qf_msg("Account ID not found (or inactive). Fields cleared.", "error")
+            st.session_state[req_clear_customer_key] = True
+            st.session_state[req_clear_acct_key] = False
+            st.rerun()
+        else:
+            r = found.iloc[0]
+
+            # Fill customer fields + lock
+            st.session_state[KEY_REGION] = (str(r["region"]) if r["region"] is not None else "").strip()
+            st.session_state[KEY_CITY]   = (str(r["city"])   if r["city"]   is not None else "").strip()
+            st.session_state[KEY_SECTOR] = (str(r["sector"]) if r["sector"] is not None else "").strip()
+            st.session_state[KEY_CUST]   = (str(r["account_name"]) if r["account_name"] is not None else "").strip()
+            st.session_state[KEY_CUSTID] = int(r["customer_id"])
+            st.session_state[cid_locked_key] = True
+
+            # ✅ If you want the textbox itself to become uppercase, do it safely next run
+            st.session_state[acct_set_value_key] = txt
+            st.session_state[req_set_acct_key] = True
+
+            _set_qf_msg("Customer filled successfully.", "success")
+            st.rerun()
+
+    locked = bool(st.session_state.get(cid_locked_key, False))
+    if locked and st.session_state.get(KEY_CUSTID):
+        st.caption(f"🔒 Filled by Account ID · Internal customer_id: **{st.session_state.get(KEY_CUSTID)}**")
+
+    # ---------------- Region / City / Sector / Customer ----------------
     def _on_region_change():
-        for n in ("city_sel", "sector_sel", "cust_sel"):
-            st.session_state.pop(k(n), None)
+        _clear_qf_msg()
+        st.session_state[cid_locked_key] = False
+        st.session_state[KEY_CITY] = ""
+        st.session_state[KEY_SECTOR] = ""
+        st.session_state[KEY_CUST] = ""
+        st.session_state.pop(KEY_CUSTID, None)
 
     def _on_city_change():
-        for n in ("sector_sel", "cust_sel"):
-            st.session_state.pop(k(n), None)
+        _clear_qf_msg()
+        st.session_state[cid_locked_key] = False
+        st.session_state[KEY_SECTOR] = ""
+        st.session_state[KEY_CUST] = ""
+        st.session_state.pop(KEY_CUSTID, None)
 
     def _on_sector_change():
-        for n in ("cust_sel",):
-            st.session_state.pop(k(n), None)
+        _clear_qf_msg()
+        st.session_state[cid_locked_key] = False
+        st.session_state[KEY_CUST] = ""
+        st.session_state.pop(KEY_CUSTID, None)
 
-    # Region
     reg_df = query_df(
         """
         SELECT DISTINCT region
@@ -2337,11 +2491,12 @@ def page_check_in():
         "Region *",
         region_opts,
         index=0,
-        key=k("region_sel"),
-        on_change=_on_region_change,
+        key=KEY_REGION,
+        disabled=locked,
+        on_change=_on_region_change if not locked else None,
+        help=("Filled from Account ID. Click Clear to change." if locked else None),
     )
 
-    # City
     city_opts = [""]
     if region_choice:
         city_df = query_df(
@@ -2361,13 +2516,12 @@ def page_check_in():
         "City *",
         city_opts,
         index=0,
-        key=k("city_sel"),
-        disabled=not bool(region_choice),
-        on_change=_on_city_change if region_choice else None,
-        help=None if region_choice else "Select a Region first",
+        key=KEY_CITY,
+        disabled=locked or (not bool(region_choice)),
+        on_change=_on_city_change if (not locked and region_choice) else None,
+        help=("Filled from Account ID. Click Clear to change." if locked else ("Select a Region first" if not region_choice else None)),
     )
 
-    # Sector
     sector_opts = [""]
     if region_choice and city_choice:
         sec_df = query_df(
@@ -2388,13 +2542,12 @@ def page_check_in():
         "Sector *",
         sector_opts,
         index=0,
-        key=k("sector_sel"),
-        disabled=not bool(region_choice and city_choice),
-        on_change=_on_sector_change if (region_choice and city_choice) else None,
-        help=None if (region_choice and city_choice) else "Select a City first",
+        key=KEY_SECTOR,
+        disabled=locked or (not bool(region_choice and city_choice)),
+        on_change=_on_sector_change if (not locked and region_choice and city_choice) else None,
+        help=("Filled from Account ID. Click Clear to change." if locked else ("Select a City first" if not (region_choice and city_choice) else None)),
     )
 
-    # Customer
     cust_df = pd.DataFrame(columns=["customer_id", "account_name"])
     cust_names = [""]
 
@@ -2417,15 +2570,21 @@ def page_check_in():
         "Customer *",
         cust_names,
         index=0,
-        key=k("cust_sel"),
-        disabled=not bool(region_choice and city_choice and sector_choice),
-        help=None if (region_choice and city_choice and sector_choice) else "Select Sector first",
+        key=KEY_CUST,
+        disabled=locked or (not bool(region_choice and city_choice and sector_choice)),
+        help=("Filled from Account ID. Click Clear to change." if locked else ("Select Sector first" if not (region_choice and city_choice and sector_choice) else None)),
     )
 
+    # Resolve customer_id (safe)
     customer_id = None
-    if cust_choice and not cust_df.empty:
-        match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
-        customer_id = int(match.iloc[0]) if not match.empty else None
+    locked = bool(st.session_state.get(cid_locked_key, False))
+
+    if locked and st.session_state.get(KEY_CUSTID):
+        customer_id = int(st.session_state.get(KEY_CUSTID))
+    else:
+        if cust_choice and not cust_df.empty:
+            match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
+            customer_id = int(match.iloc[0]) if not match.empty else None
 
     # =====================================================
     # SECTION 3 — Notes
@@ -2455,10 +2614,19 @@ def page_check_in():
 
     with st.spinner("Saving check-in…"):
         errors = []
-        if not region_choice: errors.append("Please choose a **Region**.")
-        if not city_choice:   errors.append("Please choose a **City**.")
-        if not sector_choice: errors.append("Please choose a **Sector**.")
-        if not customer_id:   errors.append("Please choose a **Customer**.")
+        if not region_choice:
+            errors.append("Please choose a **Region**.")
+        if not city_choice:
+            errors.append("Please choose a **City**.")
+        if not sector_choice:
+            errors.append("Please choose a **Sector**.")
+        if not customer_id:
+            errors.append("Please choose a **Customer**.")
+
+        if locked:
+            acct_now = (st.session_state.get(KEY_ACCT) or "").strip()
+            if not acct_now or not st.session_state.get(KEY_CUSTID):
+                errors.append("Please use **Find** to select a valid Account ID (or click **Clear** and select manually).")
 
         if errors:
             for e in errors:
@@ -2480,15 +2648,21 @@ def page_check_in():
         }
 
         try:
-            visit_id = insert_visit_atomic(visit_row, home_visit=None, shelf_lines=None)
+            _ = insert_visit_atomic(visit_row, home_visit=None, shelf_lines=None)
 
-            # reset form (same pattern)
             st.session_state[nonce_key] += 1
             st.session_state[geo_nonce_key] += 1
             st.session_state.pop(geo_captured_key, None)
+
             st.session_state[saved_ok_key] = True
             st.session_state[intent_key] = False
             st.session_state[busy_key] = False
+
+            # clear customer fields after successful save (doesn't touch location)
+            st.session_state[req_clear_customer_key] = True
+            st.session_state[req_clear_acct_key] = True
+            _clear_qf_msg()
+
             st.rerun()
 
         except Exception as e:
