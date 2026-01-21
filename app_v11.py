@@ -8943,7 +8943,7 @@ def show_footer():
             <span style="font-size:0.9rem;">
                 © 2025 <strong>Al Madar Medical Co.</strong><br>
                 Core System © <strong>Muaz Sulaiman</strong><br>
-                <span style="font-size:0.8rem;">Version 12 • All rights reserved.</span>
+                <span style="font-size:0.8rem;">Version 13 • All rights reserved.</span>
             </span>
         </div>
         """,
