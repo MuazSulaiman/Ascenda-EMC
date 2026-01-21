@@ -1298,7 +1298,7 @@ def sidebar_nav():
     role = (user.get("role") if user else "").lower().strip()
 
     # Base pages
-    pages = ["Submit Visit", "My Submissions"]
+    pages = ["Submit Visit", "Check-In", "My Submissions"]
 
     if role == "rep":
         pages += ["Projects View", "User Settings"]
@@ -1311,7 +1311,6 @@ def sidebar_nav():
 
     if role == "admin":
         pages += [
-            "Check-In",
             "Project Creation",
             "Project Management",
             "Projects View",
@@ -1660,7 +1659,7 @@ def page_submit_visit():
     where_clauses: list[str] = ["p.status IN ('Not Started', 'Open')"]
     params: dict[str, object] = {}
 
-    if role == "rep":
+    if role in ("rep", "maintenance"):
         where_clauses.append("p.assigned_to_id = :uid")
         params["uid"] = uid
     elif role == "manager":
@@ -1669,7 +1668,7 @@ def page_submit_visit():
     elif role == "admin":
         pass
 
-    if role in ("rep", "manager", "admin"):
+    if role in ("rep", "maintenance", "manager", "admin"):
         project_df = query_df(
             f"""
             SELECT
