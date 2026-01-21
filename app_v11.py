@@ -752,6 +752,375 @@ def set_current_page(page_ns: str):
         _reset_location_state_for_page(page_ns)
     st.session_state["__current_page"] = page_ns
 
+# =============================
+# Quick Find module
+# =============================
+
+def customer_quick_find_module(
+    *,
+    page_ns: str,
+    query_df,
+    customers_table: str = "customers",
+    # --- fixed widget keys (pass your existing ones so it reuses the same state) ---
+    KEY_ACCT: str,
+    KEY_REGION: str,
+    KEY_CITY: str,
+    KEY_SECTOR: str,
+    KEY_CUST: str,
+    KEY_CUSTID: str,
+    # --- state keys for locking + request flags ---
+    cid_locked_key: str,
+    req_clear_customer_key: str,
+    req_clear_acct_key: str,
+    req_set_acct_key: str,
+    acct_set_value_key: str,
+    qf_msg_key: str,
+    qf_msg_type_key: str,
+    # --- optional UI text ---
+    title: str = "##### 🔎 Quick Find (Account ID)",
+    acct_placeholder: str = "e.g., C100XXX / P000XXX",
+    acct_help: str = "Search by the Account ID used by the ERP.",
+):
+    """
+    Reusable Quick-Find module:
+    - Renders Account ID input + Find/Clear buttons (inside a form)
+    - Finds active customer by account_id (case/space-insensitive)
+    - Fills region/city/sector/customer + customer_id, locks customer widgets
+    - Uses request flags to safely clear/set widget values on the next run
+
+    Returns dict:
+      {
+        "locked": bool,
+        "customer_id": int|None,
+        "account_id_norm": str,
+        "did_find": bool,
+        "did_clear": bool,
+      }
+    """
+
+    # -------------------------
+    # helpers (message + ordering)
+    # -------------------------
+    def _set_qf_msg(msg: str, msg_type: str = "error"):
+        st.session_state[qf_msg_key] = msg
+        st.session_state[qf_msg_type_key] = msg_type
+
+    def _clear_qf_msg():
+        st.session_state[qf_msg_key] = ""
+        st.session_state[qf_msg_type_key] = ""
+
+    def _order_with_other_last(values: list[str]) -> list[str]:
+        normal_vals, other_vals = [], []
+        for v in values:
+            if isinstance(v, str) and v.strip().lower() == "other":
+                other_vals.append(v)
+            else:
+                normal_vals.append(v)
+        return normal_vals + other_vals
+
+    # -------------------------
+    # apply requests BEFORE widgets
+    # -------------------------
+    def _apply_requests_before_widgets():
+        # clear customer fields (never touch location)
+        if st.session_state.get(req_clear_customer_key, False):
+            st.session_state[req_clear_customer_key] = False
+
+            st.session_state[cid_locked_key] = False
+            st.session_state[KEY_REGION] = ""
+            st.session_state[KEY_CITY]   = ""
+            st.session_state[KEY_SECTOR] = ""
+            st.session_state[KEY_CUST]   = ""
+            st.session_state.pop(KEY_CUSTID, None)
+
+        # clear account input
+        if st.session_state.get(req_clear_acct_key, False):
+            st.session_state[req_clear_acct_key] = False
+            st.session_state[KEY_ACCT] = ""
+
+        # set account input (e.g., uppercase) safely next run
+        if st.session_state.get(req_set_acct_key, False):
+            st.session_state[req_set_acct_key] = False
+            st.session_state[KEY_ACCT] = (st.session_state.get(acct_set_value_key) or "")
+
+    _apply_requests_before_widgets()
+
+    # -------------------------
+    # show persistent message
+    # -------------------------
+    if st.session_state.get(qf_msg_key):
+        if st.session_state.get(qf_msg_type_key) == "success":
+            st.success(st.session_state[qf_msg_key])
+        else:
+            st.error(st.session_state[qf_msg_key])
+
+    st.markdown(title)
+
+    # -------------------------
+    # form UI
+    # -------------------------
+    did_find = False
+    did_clear = False
+
+    with st.form(key=f"{page_ns}/quick_find_form", clear_on_submit=False):
+        q1, q2, q3 = st.columns([3, 1, 1])
+        with q1:
+            st.text_input(
+                "Account ID",
+                key=KEY_ACCT,
+                placeholder=acct_placeholder,
+                help=acct_help,
+            )
+        with q2:
+            find_click = st.form_submit_button("Find", use_container_width=True)
+        with q3:
+            clear_click = st.form_submit_button("Clear", use_container_width=True)
+
+    # -------------------------
+    # Clear
+    # -------------------------
+    if clear_click:
+        did_clear = True
+        _clear_qf_msg()
+        st.session_state[req_clear_customer_key] = True
+        st.session_state[req_clear_acct_key] = True
+        st.rerun()
+
+    # -------------------------
+    # Find
+    # -------------------------
+    account_id_norm = ((st.session_state.get(KEY_ACCT) or "").strip().upper())
+
+    if find_click:
+        # Empty
+        if not account_id_norm:
+            _set_qf_msg("Please enter an Account ID. Fields cleared.", "error")
+            st.session_state[req_clear_customer_key] = True
+            st.session_state[req_clear_acct_key] = True
+            st.rerun()
+
+        found = query_df(
+            f"""
+            SELECT customer_id, account_id, account_name, region, city, sector
+            FROM {customers_table}
+            WHERE is_active IS TRUE
+              AND UPPER(TRIM(account_id)) = :aid
+            LIMIT 1
+            """,
+            {"aid": account_id_norm},
+        )
+
+        if found.empty:
+            _set_qf_msg("Account ID not found (or inactive). Fields cleared.", "error")
+            st.session_state[req_clear_customer_key] = True
+            st.session_state[req_clear_acct_key] = False  # keep what user typed
+            st.rerun()
+        else:
+            did_find = True
+            r = found.iloc[0]
+
+            # Fill fields + lock
+            st.session_state[KEY_REGION] = (str(r["region"]) if r["region"] is not None else "").strip()
+            st.session_state[KEY_CITY]   = (str(r["city"])   if r["city"]   is not None else "").strip()
+            st.session_state[KEY_SECTOR] = (str(r["sector"]) if r["sector"] is not None else "").strip()
+            st.session_state[KEY_CUST]   = (str(r["account_name"]) if r["account_name"] is not None else "").strip()
+            st.session_state[KEY_CUSTID] = int(r["customer_id"])
+            st.session_state[cid_locked_key] = True
+
+            # make textbox itself uppercase next run (safe)
+            st.session_state[acct_set_value_key] = account_id_norm
+            st.session_state[req_set_acct_key] = True
+
+            _set_qf_msg("Customer filled successfully.", "success")
+            st.rerun()
+
+    # -------------------------
+    # compute resolved outputs
+    # -------------------------
+    locked = bool(st.session_state.get(cid_locked_key, False))
+    customer_id = int(st.session_state.get(KEY_CUSTID)) if locked and st.session_state.get(KEY_CUSTID) else None
+
+    if locked and customer_id:
+        st.caption(f"🔒 Filled by Account ID · Internal customer_id: **{customer_id}**")
+
+    return {
+        "locked": locked,
+        "customer_id": customer_id,
+        "account_id_norm": account_id_norm,
+        "did_find": did_find,
+        "did_clear": did_clear,
+    }
+
+def customer_cascading_selectors(
+    *,
+    query_df,
+    # fixed keys
+    KEY_REGION: str,
+    KEY_CITY: str,
+    KEY_SECTOR: str,
+    KEY_CUST: str,
+    KEY_CUSTID: str,
+    # state keys
+    cid_locked_key: str,
+    qf_msg_key: str,
+    qf_msg_type_key: str,
+    # db table
+    customers_table: str = "customers",
+):
+    """
+    Reusable Region/City/Sector/Customer cascading selectors.
+    Respects the lock state set by Quick-Find.
+    Returns resolved customer_id (locked uses KEY_CUSTID, otherwise resolves from selected customer name).
+    """
+
+    def _clear_qf_msg():
+        st.session_state[qf_msg_key] = ""
+        st.session_state[qf_msg_type_key] = ""
+
+    def _order_with_other_last(values: list[str]) -> list[str]:
+        normal_vals, other_vals = [], []
+        for v in values:
+            if isinstance(v, str) and v.strip().lower() == "other":
+                other_vals.append(v)
+            else:
+                normal_vals.append(v)
+        return normal_vals + other_vals
+
+    locked = bool(st.session_state.get(cid_locked_key, False))
+
+    def _on_region_change():
+        _clear_qf_msg()
+        st.session_state[cid_locked_key] = False
+        st.session_state[KEY_CITY] = ""
+        st.session_state[KEY_SECTOR] = ""
+        st.session_state[KEY_CUST] = ""
+        st.session_state.pop(KEY_CUSTID, None)
+
+    def _on_city_change():
+        _clear_qf_msg()
+        st.session_state[cid_locked_key] = False
+        st.session_state[KEY_SECTOR] = ""
+        st.session_state[KEY_CUST] = ""
+        st.session_state.pop(KEY_CUSTID, None)
+
+    def _on_sector_change():
+        _clear_qf_msg()
+        st.session_state[cid_locked_key] = False
+        st.session_state[KEY_CUST] = ""
+        st.session_state.pop(KEY_CUSTID, None)
+
+    # Region options
+    reg_df = query_df(
+        f"""
+        SELECT DISTINCT region
+        FROM {customers_table}
+        WHERE is_active IS TRUE
+          AND region IS NOT NULL AND trim(region) <> ''
+        ORDER BY region
+        """
+    )
+    region_opts = [""] + _order_with_other_last(reg_df["region"].tolist())
+
+    region_choice = st.selectbox(
+        "Region *",
+        region_opts,
+        index=0,
+        key=KEY_REGION,
+        disabled=locked,
+        on_change=_on_region_change if not locked else None,
+        help=("Filled from Account ID. Click Clear to change." if locked else None),
+    )
+
+    # City options
+    city_opts = [""]
+    if region_choice:
+        city_df = query_df(
+            f"""
+            SELECT DISTINCT city
+            FROM {customers_table}
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city IS NOT NULL AND trim(city) <> ''
+            ORDER BY city
+            """,
+            {"r": region_choice},
+        )
+        city_opts = [""] + _order_with_other_last(city_df["city"].tolist())
+
+    city_choice = st.selectbox(
+        "City *",
+        city_opts,
+        index=0,
+        key=KEY_CITY,
+        disabled=locked or (not bool(region_choice)),
+        on_change=_on_city_change if (not locked and region_choice) else None,
+        help=("Filled from Account ID. Click Clear to change." if locked else ("Select a Region first" if not region_choice else None)),
+    )
+
+    # Sector options
+    sector_opts = [""]
+    if region_choice and city_choice:
+        sec_df = query_df(
+            f"""
+            SELECT DISTINCT sector
+            FROM {customers_table}
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city   = :c
+              AND sector IS NOT NULL AND trim(sector) <> ''
+            ORDER BY sector
+            """,
+            {"r": region_choice, "c": city_choice},
+        )
+        sector_opts = [""] + _order_with_other_last(sec_df["sector"].tolist())
+
+    sector_choice = st.selectbox(
+        "Sector *",
+        sector_opts,
+        index=0,
+        key=KEY_SECTOR,
+        disabled=locked or (not bool(region_choice and city_choice)),
+        on_change=_on_sector_change if (not locked and region_choice and city_choice) else None,
+        help=("Filled from Account ID. Click Clear to change." if locked else ("Select a City first" if not (region_choice and city_choice) else None)),
+    )
+
+    # Customer options
+    cust_df = pd.DataFrame(columns=["customer_id", "account_name"])
+    cust_names = [""]
+
+    if region_choice and city_choice and sector_choice:
+        cust_df = query_df(
+            f"""
+            SELECT customer_id, account_name
+            FROM {customers_table}
+            WHERE is_active IS TRUE
+              AND region = :r
+              AND city   = :c
+              AND sector = :s
+            ORDER BY account_name
+            """,
+            {"r": region_choice, "c": city_choice, "s": sector_choice},
+        )
+        cust_names = [""] + _order_with_other_last(cust_df["account_name"].tolist())
+
+    cust_choice = st.selectbox(
+        "Customer *",
+        cust_names,
+        index=0,
+        key=KEY_CUST,
+        disabled=locked or (not bool(region_choice and city_choice and sector_choice)),
+        help=("Filled from Account ID. Click Clear to change." if locked else ("Select Sector first" if not (region_choice and city_choice and sector_choice) else None)),
+    )
+
+    # Resolve customer_id
+    if locked and st.session_state.get(KEY_CUSTID):
+        return int(st.session_state.get(KEY_CUSTID))
+
+    if cust_choice and not cust_df.empty:
+        match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
+        return int(match.iloc[0]) if not match.empty else None
+
+    return None
 
 # =============================
 # UI — Login / Logout (blocks inactive accounts)
@@ -1174,29 +1543,44 @@ def page_submit_visit():
     prev_proj_key    = f"_{PAGE_NS}_prev_project_label"
 
     TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
-    
+
     st.session_state.setdefault(nonce_key, 0)
     st.session_state.setdefault(geo_nonce_key, 0)
     st.session_state.setdefault(busy_key, False)
     st.session_state.setdefault(intent_key, False)
     st.session_state.setdefault(prev_proj_key, "")
 
+    # =====================================================
+    # Customer Quick-Find (fixed keys) — Submit Visit
+    # =====================================================
+    cid_locked_key         = f"_{PAGE_NS}_cid_locked"
+    req_clear_customer_key = f"_{PAGE_NS}_req_clear_customer"
+    req_clear_acct_key     = f"_{PAGE_NS}_req_clear_acct"
+    req_set_acct_key       = f"_{PAGE_NS}_req_set_acct"
+    acct_set_value_key     = f"_{PAGE_NS}_acct_set_value"
+    qf_msg_key             = f"_{PAGE_NS}_qf_msg"
+    qf_msg_type_key        = f"_{PAGE_NS}_qf_msg_type"
+
+    st.session_state.setdefault(cid_locked_key, False)
+    st.session_state.setdefault(req_clear_customer_key, False)
+    st.session_state.setdefault(req_clear_acct_key, False)
+    st.session_state.setdefault(req_set_acct_key, False)
+    st.session_state.setdefault(acct_set_value_key, "")
+    st.session_state.setdefault(qf_msg_key, "")
+    st.session_state.setdefault(qf_msg_type_key, "")
+
+    # Fixed keys for customer widgets (DO NOT use nonce here)
+    KEY_ACCT   = f"{PAGE_NS}/acct_search"
+    KEY_REGION = f"{PAGE_NS}/region_sel"
+    KEY_CITY   = f"{PAGE_NS}/city_sel"
+    KEY_SECTOR = f"{PAGE_NS}/sector_sel"
+    KEY_CUST   = f"{PAGE_NS}/cust_sel"
+    KEY_CUSTID = f"{PAGE_NS}/customer_id_resolved"
+
     def k(name: str) -> str:
         return f"{PAGE_NS}/{name}_{st.session_state[nonce_key]}"
 
-    # ---- cascade clear helpers (use current nonce'd keys) ----
-    def _on_region_change():
-        for n in ("city_sel", "sector_sel", "cust_sel", "aud_sel"):
-            st.session_state.pop(k(n), None)
-
-    def _on_city_change():
-        for n in ("sector_sel", "cust_sel", "aud_sel"):
-            st.session_state.pop(k(n), None)
-
-    def _on_sector_change():
-        for n in ("cust_sel", "aud_sel"):
-            st.session_state.pop(k(n), None)
-
+    # ---- cascade clear helpers (nonce’d keys for non-customer fields) ----
     def _on_bu_change():
         for n in ("cat_sel", "bl_sel", "prod_sel"):
             st.session_state.pop(k(n), None)
@@ -1205,12 +1589,23 @@ def page_submit_visit():
         for n in ("prod_sel",):
             st.session_state.pop(k(n), None)
 
-    # Clear project-dependent fields by forcing them to ""
+    # Clear project-dependent fields (UPDATED for fixed customer keys)
     def _clear_project_dependent_fields():
-        for n in (
-            "region_sel", "city_sel", "sector_sel", "cust_sel", "aud_sel",
-            "bu_sel", "cat_sel", "bl_sel", "prod_sel"
-        ):
+        # Fixed customer keys
+        st.session_state[KEY_ACCT]   = ""
+        st.session_state[KEY_REGION] = ""
+        st.session_state[KEY_CITY]   = ""
+        st.session_state[KEY_SECTOR] = ""
+        st.session_state[KEY_CUST]   = ""
+        st.session_state.pop(KEY_CUSTID, None)
+
+        # Clear quick find state/message
+        st.session_state[cid_locked_key] = False
+        st.session_state[qf_msg_key] = ""
+        st.session_state[qf_msg_type_key] = ""
+
+        # nonce’d keys for the rest
+        for n in ("aud_sel", "bu_sel", "cat_sel", "bl_sel", "prod_sel"):
             st.session_state[k(n)] = ""
 
     set_current_page(PAGE_NS)
@@ -1224,17 +1619,12 @@ def page_submit_visit():
     uid  = int(u.get("user_id") or u.get("id"))
     role = (u.get("role") or "").lower().strip()
 
-    # --- Defensive fallbacks ---
+    # --- Display info ---
     display_name   = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
     display_region = u.get("region") or "—"
     display_role   = u.get("role") or "—"
+    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
 
-    # --- Display info ---
-    st.caption(
-        f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**"
-    )
-
-    # Ensure location flow is reset when user or page changes
     _reset_geo_on_user_or_page_change(PAGE_NS, uid)
 
     if st.session_state.pop(saved_ok_key, False):
@@ -1277,7 +1667,6 @@ def page_submit_visit():
         where_clauses.append("p.assigned_by_id = :uid")
         params["uid"] = uid
     elif role == "admin":
-        # no extra filter
         pass
 
     if role in ("rep", "manager", "admin"):
@@ -1310,7 +1699,7 @@ def page_submit_visit():
             params,
         )
 
-    proj_labels: list[str] = [""]  # first = no project
+    proj_labels: list[str] = [""]
     proj_label_to_id: dict[str, int] = {}
 
     if not project_df.empty:
@@ -1331,15 +1720,11 @@ def page_submit_visit():
         help="Link this visit to a project. Customer and product context will follow the project.",
     )
 
-    # Detect transitions: project selected / switched / cleared
+    # Detect transitions
     prev_label = st.session_state.get(prev_proj_key, "")
     curr_label = project_choice or ""
-
     if curr_label != prev_label:
-        # Any change (None→something, something→other, something→None)
         _clear_project_dependent_fields()
-
-    # Persist the new label for next run
     st.session_state[prev_proj_key] = curr_label
 
     # Resolve selected project (if any)
@@ -1357,7 +1742,7 @@ def page_submit_visit():
 
     project_locked = selected_project is not None
 
-    # Pre-extract project fields (used to seed state)
+    # Pre-extract project fields
     proj_region        = selected_project.get("region")             if project_locked else None
     proj_city          = selected_project.get("city")               if project_locked else None
     proj_sector        = selected_project.get("sector")             if project_locked else None
@@ -1371,172 +1756,75 @@ def page_submit_visit():
     proj_prod_id       = selected_project.get("product_id")         if project_locked else None
 
     # =====================================================
-    # SECTION 3 — Customer & Target Audience
+    # SECTION 3 — Customer & Target Audience (UPDATED)
     # =====================================================
     st.markdown("### 3️⃣ Customer & Target Audience")
 
-    # helper: keep "Other"/"OTHER"/"other" at the very end
-    def _order_with_other_last(values: list[str]) -> list[str]:
-        normal_vals = []
-        other_vals  = []
-        for v in values:
-            if isinstance(v, str) and v.strip().lower() == "other":
-                other_vals.append(v)   # keep original casing
-            else:
-                normal_vals.append(v)
-        return normal_vals + other_vals
-
-    # ---- Region ----
-    reg_df = query_df(
-        """
-        SELECT DISTINCT region
-        FROM customers
-        WHERE is_active IS TRUE
-          AND region IS NOT NULL AND trim(region) <> ''
-        ORDER BY region
-        """
-    )
-
-    region_list = reg_df["region"].tolist()
-    region_list = _order_with_other_last(region_list)
-    region_opts = [""] + region_list
-
-    # if project-locked, force region = project region
-    if project_locked and proj_region:
-        st.session_state[k("region_sel")] = proj_region
-
-    region_choice = st.selectbox(
-        "Region *",
-        region_opts,
-        index=0,
-        key=k("region_sel"),
-        disabled=project_locked,
-        on_change=None if project_locked else _on_region_change,
-    )
     if project_locked:
-        region_choice = proj_region
+        # Project is the lock source; disable quick find
+        st.session_state[cid_locked_key] = False
 
-    # ---- City ----
-    if region_choice:
-        city_df = query_df(
-            """
-            SELECT DISTINCT city
-            FROM customers
-            WHERE is_active IS TRUE
-              AND region = :r
-              AND city IS NOT NULL AND trim(city) <> ''
-            ORDER BY city
-            """,
-            {"r": region_choice},
-        )
-        city_list = city_df["city"].tolist()
-        city_list = _order_with_other_last(city_list)
-        city_opts = [""] + city_list
+        st.session_state[KEY_REGION] = (proj_region or "") if proj_region else ""
+        st.session_state[KEY_CITY]   = (proj_city or "") if proj_city else ""
+        st.session_state[KEY_SECTOR] = (proj_sector or "") if proj_sector else ""
+        st.session_state[KEY_CUST]   = (proj_customer_name or "") if proj_customer_name else ""
+        if proj_customer_id is not None:
+            st.session_state[KEY_CUSTID] = int(proj_customer_id)
+
+        st.session_state[qf_msg_key] = ""
+        st.session_state[qf_msg_type_key] = ""
+
+        st.info("🔒 Customer is locked by the selected project (Quick Find disabled).")
+
     else:
-        city_df = pd.DataFrame(columns=["city"])
-        city_opts = [""]
-
-    if project_locked and proj_city:
-        st.session_state[k("city_sel")] = proj_city
-
-    city_choice = st.selectbox(
-        "City *",
-        city_opts,
-        index=0,
-        key=k("city_sel"),
-        disabled=project_locked or not region_choice,
-        on_change=None if project_locked else _on_city_change,
-        help=None if region_choice else "Select a Region first",
-    )
-    if project_locked:
-        city_choice = proj_city
-
-    # ---- Sector ----
-    if region_choice and city_choice:
-        sec_df = query_df(
-            """
-            SELECT DISTINCT sector
-            FROM customers
-            WHERE is_active IS TRUE
-              AND region = :r
-              AND city   = :c
-              AND sector IS NOT NULL AND trim(sector) <> ''
-            ORDER BY sector
-            """,
-            {"r": region_choice, "c": city_choice},
+        # Quick Find (Account ID)
+        _ = customer_quick_find_module(
+            page_ns=PAGE_NS,
+            query_df=query_df,
+            customers_table="customers",
+            KEY_ACCT=KEY_ACCT,
+            KEY_REGION=KEY_REGION,
+            KEY_CITY=KEY_CITY,
+            KEY_SECTOR=KEY_SECTOR,
+            KEY_CUST=KEY_CUST,
+            KEY_CUSTID=KEY_CUSTID,
+            cid_locked_key=cid_locked_key,
+            req_clear_customer_key=req_clear_customer_key,
+            req_clear_acct_key=req_clear_acct_key,
+            req_set_acct_key=req_set_acct_key,
+            acct_set_value_key=acct_set_value_key,
+            qf_msg_key=qf_msg_key,
+            qf_msg_type_key=qf_msg_type_key,
         )
-        sector_list = sec_df["sector"].tolist()
-        sector_list = _order_with_other_last(sector_list)
-        sector_opts = [""] + sector_list
-    else:
-        sec_df = pd.DataFrame(columns=["sector"])
-        sector_opts = [""]
 
-    if project_locked and proj_sector:
-        st.session_state[k("sector_sel")] = proj_sector
-
-    sector_choice = st.selectbox(
-        "Sector *",
-        sector_opts,
-        index=0,
-        key=k("sector_sel"),
-        disabled=project_locked or not (region_choice and city_choice),
-        on_change=None if project_locked else _on_sector_change,
-        help=None if (region_choice and city_choice) else "Select a City first",
-    )
-    if project_locked:
-        sector_choice = proj_sector
-
-    # ---- Customer ----
-    if region_choice and city_choice and sector_choice:
-        cust_df = query_df(
-            """
-            SELECT customer_id, account_name
-            FROM customers
-            WHERE is_active IS TRUE
-              AND region = :r
-              AND city   = :c
-              AND sector = :s
-            ORDER BY account_name
-            """,
-            {"r": region_choice, "c": city_choice, "s": sector_choice},
-        )
-        cust_list = cust_df["account_name"].tolist()
-        cust_list = _order_with_other_last(cust_list)
-        cust_names = [""] + cust_list
-    else:
-        cust_df = pd.DataFrame(columns=["customer_id", "account_name"])
-        cust_names = [""]
-
-    if project_locked and proj_customer_name:
-        st.session_state[k("cust_sel")] = proj_customer_name
-
-    cust_choice = st.selectbox(
-        "Customer *",
-        cust_names,
-        index=0,
-        key=k("cust_sel"),
-        disabled=project_locked or not (region_choice and city_choice and sector_choice),
-        help=None if (region_choice and city_choice and sector_choice) else "Select Sector first",
+    # Cascading selectors (respects lock)
+    customer_id = customer_cascading_selectors(
+        query_df=query_df,
+        customers_table="customers",
+        KEY_REGION=KEY_REGION,
+        KEY_CITY=KEY_CITY,
+        KEY_SECTOR=KEY_SECTOR,
+        KEY_CUST=KEY_CUST,
+        KEY_CUSTID=KEY_CUSTID,
+        cid_locked_key=cid_locked_key,
+        qf_msg_key=qf_msg_key,
+        qf_msg_type_key=qf_msg_type_key,
     )
 
-    customer_id = None
-    if project_locked and proj_customer_id:
-        customer_id = proj_customer_id
-        cust_choice = proj_customer_name
-    elif cust_choice:
-        match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
-        customer_id = int(match.iloc[0]) if not match.empty else None
+    # Keep these for validation / duplicate banner
+    region_choice = (st.session_state.get(KEY_REGION) or "")
+    city_choice   = (st.session_state.get(KEY_CITY) or "")
+    sector_choice = (st.session_state.get(KEY_SECTOR) or "")
+    cust_choice   = (st.session_state.get(KEY_CUST) or "")
 
     # ---------------- Target Audience (with “Other”) ----------------
     audience_id      = None
     aud_choice_label = ""
     aud_choice_name  = None
 
-    aud_labels: list[str] = [""]  # main dropdown labels
-    aud_rows   = []              # (label, id, raw_name)
+    aud_labels: list[str] = [""]
+    aud_rows   = []  # (label, id, raw_name)
 
-    # extra fields when TA = Other
     other_ta_title      = None
     other_ta_name       = None
     other_ta_department = None
@@ -1544,7 +1832,6 @@ def page_submit_visit():
     other_ta_phone      = None
     other_ta_email      = None
 
-    # 🔹 Global department & position lists from ALL target_audiences
     dept_choices_base: list[str] = []
     pos_choices_base:  list[str] = []
 
@@ -1572,7 +1859,6 @@ def page_submit_visit():
     if not pos_df.empty:
         pos_choices_base = pos_df["position"].astype(str).str.strip().tolist()
 
-    # 🔹 Customer-specific target audiences for the main dropdown
     if customer_id:
         aud_df = query_df(
             """
@@ -1581,7 +1867,7 @@ def page_submit_visit():
             WHERE is_active IS TRUE AND customer_id=:cid
             ORDER BY name
             """,
-            {"cid": customer_id},
+            {"cid": int(customer_id)},
         )
 
         def _fmt_audience(row) -> str:
@@ -1605,7 +1891,6 @@ def page_submit_visit():
         if len(aud_labels) == 1:
             st.warning("This customer has no Target Audiences.")
 
-        # Always add "Other" at the end
         aud_labels.append("Other")
 
     aud_choice_label = st.selectbox(
@@ -1624,19 +1909,16 @@ def page_submit_visit():
                 aud_choice_name = raw_name
                 break
 
-    # If "Other" is selected → capture full new TA details
     if customer_id and aud_choice_label == "Other":
         st.markdown("##### ➕ New Target Audience Details")
 
-        # Title (optional)
         other_ta_title = st.selectbox(
             "Title (optional)",
-            TITLE_OPTIONS,   # ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
+            TITLE_OPTIONS,
             index=0,
             key=k("other_ta_title"),
         )
 
-        # Name (required)
         other_ta_name = st.text_input(
             "Target Audience Name *",
             key=k("other_ta_name"),
@@ -1646,7 +1928,6 @@ def page_submit_visit():
         dept_opts = [""] + dept_choices_base + ["Other"]
         pos_opts  = [""] + pos_choices_base  + ["Other"]
 
-        # Department (required)
         other_ta_department = st.selectbox(
             "Department *",
             dept_opts,
@@ -1655,7 +1936,6 @@ def page_submit_visit():
             help="Select the department or choose 'Other'.",
         )
 
-        # Position (required)
         other_ta_position = st.selectbox(
             "Position *",
             pos_opts,
@@ -1664,14 +1944,12 @@ def page_submit_visit():
             help="Select the position or choose 'Other'.",
         )
 
-        # Phone (optional)
         other_ta_phone = st.text_input(
             "Phone # (optional)",
             key=k("other_ta_phone"),
             help="Optional – KSA mobile like 05XXXXXXXX.",
         )
 
-        # Email (optional)
         other_ta_email = st.text_input(
             "Email (optional)",
             key=k("other_ta_email"),
@@ -1817,9 +2095,7 @@ def page_submit_visit():
             """,
             {"blid": business_line_id},
         )
-        prod_labels = [
-            ""
-        ] + [
+        prod_labels = [""] + [
             (
                 f"{(r.article_number or r.product_id)} — {r.description}"
                 if pd.notna(r.description) and str(r.description).strip()
@@ -1828,7 +2104,6 @@ def page_submit_visit():
             for r in prod_df.itertuples(index=False)
         ]
 
-    # Seed fixed product if project has one
     prod_index = 0
     if project_locked and proj_prod_id and not prod_df.empty:
         label_to_pid = {}
@@ -1956,9 +2231,7 @@ def page_submit_visit():
     if customer_id:
         mins = recent_visit_minutes(uid, customer_id)
         if mins is not None and mins < DUP_MINUTES:
-            st.info(
-                f"You submitted for **{cust_choice}** {mins} minutes ago — potential duplicate."
-            )
+            st.info(f"You submitted for **{cust_choice}** {mins} minutes ago — potential duplicate.")
 
     # ---------------- Submit button ----------------
     inline_click = st.button(
@@ -1994,7 +2267,6 @@ def page_submit_visit():
         if not aud_choice_label:
             errors.append("Please choose a **Target Audience** for the selected customer.")
         elif aud_choice_label == "Other":
-            # Required fields
             if not other_ta_name or not other_ta_name.strip():
                 errors.append("For **Other Target Audience**, please enter **Target Audience Name**.")
             if not other_ta_department:
@@ -2002,7 +2274,6 @@ def page_submit_visit():
             if not other_ta_position:
                 errors.append("For **Other Target Audience**, please select a **Position**.")
 
-            # Optional phone validation (KSA format)
             if other_ta_phone and other_ta_phone.strip():
                 phone_clean = other_ta_phone.strip()
                 if not re.fullmatch(r"(?:\+966|00966|0)?5\d{8}", phone_clean):
@@ -2011,10 +2282,8 @@ def page_submit_visit():
                         "(expected KSA mobile like 05XXXXXXXX)."
                     )
 
-            # Optional email validation
             if other_ta_email and other_ta_email.strip():
                 email_clean = other_ta_email.strip()
-                # simple email structure check
                 if not re.fullmatch(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email_clean):
                     errors.append("For **Other Target Audience**, **Email** looks invalid.")
         elif not audience_id:
@@ -2040,12 +2309,12 @@ def page_submit_visit():
         if objective_id is None:
             errors.append("Please choose a **Business Objective**.")
         if evaluation_val is None:
-            errors.append("Please choose an **Evaluation** (Positive/Negative/Neutral/IDK).")
+            errors.append("Please choose an **Evaluation** (Positive/Negative/Neutral).")
 
-        # Shelf Movement validations
         shelf_lines_payload = None
         filled_rows = None
 
+        # Shelf Movement validations
         if is_shelf_movement:
             if shelf_editor is None or shelf_editor.empty:
                 errors.append(
@@ -2185,6 +2454,7 @@ def page_submit_visit():
                 "shelf_lines_count":  shelf_lines_count,
                 "shelf_total_qty":    shelf_total_qty,
             }
+
             if is_home_visit:
                 pbi_row.update({
                     "patient_name":  patient_name.strip(),
@@ -2206,6 +2476,13 @@ def page_submit_visit():
             st.session_state[intent_key]        = False
             st.session_state[busy_key]          = False
             st.session_state[prev_proj_key]     = ""  # reset project tracker after successful submit
+
+            # (optional but recommended) clear quick-find UI state after successful save
+            st.session_state[req_clear_customer_key] = True
+            st.session_state[req_clear_acct_key]     = True
+            st.session_state[qf_msg_key]             = ""
+            st.session_state[qf_msg_type_key]        = ""
+
             st.rerun()
 
         except IntegrityError as e:
@@ -2223,6 +2500,7 @@ def page_submit_visit():
                 st.caption(str(e))
             st.session_state[intent_key] = False
             st.session_state[busy_key]   = False
+
         except Exception as e:
             st.error("Could not save your submission.")
             st.caption(str(e))
@@ -2326,265 +2604,49 @@ def page_check_in():
         return
 
     # =====================================================
-    # SECTION 2 — Customer info
+    # SECTION 2 — Customer
     # =====================================================
     st.markdown("### 2️⃣ Customer")
 
-    def _order_with_other_last(values: list[str]) -> list[str]:
-        normal_vals, other_vals = [], []
-        for v in values:
-            if isinstance(v, str) and v.strip().lower() == "other":
-                other_vals.append(v)
-            else:
-                normal_vals.append(v)
-        return normal_vals + other_vals
+    # 2.1 Quick Find (fills + locks)
+    _ = customer_quick_find_module(
+        page_ns=PAGE_NS,
+        query_df=query_df,
+        customers_table="customers",
+        KEY_ACCT=KEY_ACCT,
+        KEY_REGION=KEY_REGION,
+        KEY_CITY=KEY_CITY,
+        KEY_SECTOR=KEY_SECTOR,
+        KEY_CUST=KEY_CUST,
+        KEY_CUSTID=KEY_CUSTID,
+        cid_locked_key=cid_locked_key,
+        req_clear_customer_key=req_clear_customer_key,
+        req_clear_acct_key=req_clear_acct_key,
+        req_set_acct_key=req_set_acct_key,
+        acct_set_value_key=acct_set_value_key,
+        qf_msg_key=qf_msg_key,
+        qf_msg_type_key=qf_msg_type_key,
+    )
 
-    def _set_qf_msg(msg: str, msg_type: str = "error"):
-        st.session_state[qf_msg_key] = msg
-        st.session_state[qf_msg_type_key] = msg_type
+    # 2.2 Cascading selectors (respects lock)
+    customer_id = customer_cascading_selectors(
+        query_df=query_df,
+        customers_table="customers",
+        KEY_REGION=KEY_REGION,
+        KEY_CITY=KEY_CITY,
+        KEY_SECTOR=KEY_SECTOR,
+        KEY_CUST=KEY_CUST,
+        KEY_CUSTID=KEY_CUSTID,
+        cid_locked_key=cid_locked_key,
+        qf_msg_key=qf_msg_key,
+        qf_msg_type_key=qf_msg_type_key,
+    )
 
-    def _clear_qf_msg():
-        st.session_state[qf_msg_key] = ""
-        st.session_state[qf_msg_type_key] = ""
-
-    def _apply_requests_before_widgets():
-        """
-        ✅ Must run BEFORE widgets are created.
-        Clears/sets only customer-related fields (never touches location).
-        """
-        if st.session_state.get(req_clear_customer_key, False):
-            st.session_state[req_clear_customer_key] = False
-
-            st.session_state[cid_locked_key] = False
-            st.session_state[KEY_REGION] = ""
-            st.session_state[KEY_CITY]   = ""
-            st.session_state[KEY_SECTOR] = ""
-            st.session_state[KEY_CUST]   = ""
-            st.session_state.pop(KEY_CUSTID, None)
-
-        if st.session_state.get(req_clear_acct_key, False):
-            st.session_state[req_clear_acct_key] = False
-            st.session_state[KEY_ACCT] = ""
-
-        if st.session_state.get(req_set_acct_key, False):
-            st.session_state[req_set_acct_key] = False
-            st.session_state[KEY_ACCT] = (st.session_state.get(acct_set_value_key) or "")
-
-    # ✅ Apply pending requests BEFORE rendering widgets
-    _apply_requests_before_widgets()
-
+    # Keep these variables for your validation logic
     locked = bool(st.session_state.get(cid_locked_key, False))
-
-    # -------- Show Quick-Find message (persistent) --------
-    if st.session_state.get(qf_msg_key):
-        if st.session_state.get(qf_msg_type_key) == "success":
-            st.success(st.session_state[qf_msg_key])
-        else:
-            st.error(st.session_state[qf_msg_key])
-
-    # ---------------- Quick Find (Account ID) ----------------
-    st.markdown("##### 🔎 Quick Find (Account ID)")
-
-    with st.form(key=f"{PAGE_NS}/quick_find_form", clear_on_submit=False):
-        q1, q2, q3 = st.columns([3, 1, 1])
-        with q1:
-            st.text_input(
-                "Account ID",
-                key=KEY_ACCT,
-                placeholder="e.g., C100555",
-                help="Search by the Account ID used by the team (letters + numbers).",
-            )
-        with q2:
-            find_click = st.form_submit_button("Find", use_container_width=True)
-        with q3:
-            clear_click = st.form_submit_button("Clear", use_container_width=True)
-
-    if clear_click:
-        _clear_qf_msg()
-        st.session_state[req_clear_customer_key] = True
-        st.session_state[req_clear_acct_key] = True
-        st.rerun()
-
-    if find_click:
-        raw_txt = (st.session_state.get(KEY_ACCT) or "")
-        txt = raw_txt.strip().upper()  # ✅ normalize
-
-        # Empty
-        if not txt:
-            _set_qf_msg("Please enter an Account ID. Fields cleared.", "error")
-            st.session_state[req_clear_customer_key] = True
-            st.session_state[req_clear_acct_key] = True
-            st.rerun()
-
-        found = query_df(
-            """
-            SELECT customer_id, account_id, account_name, region, city, sector
-            FROM customers
-            WHERE is_active IS TRUE
-              AND UPPER(TRIM(account_id)) = :aid
-            LIMIT 1
-            """,
-            {"aid": txt},
-        )
-
-        if found.empty:
-            _set_qf_msg("Account ID not found (or inactive). Fields cleared.", "error")
-            st.session_state[req_clear_customer_key] = True
-            st.session_state[req_clear_acct_key] = False
-            st.rerun()
-        else:
-            r = found.iloc[0]
-
-            # Fill customer fields + lock
-            st.session_state[KEY_REGION] = (str(r["region"]) if r["region"] is not None else "").strip()
-            st.session_state[KEY_CITY]   = (str(r["city"])   if r["city"]   is not None else "").strip()
-            st.session_state[KEY_SECTOR] = (str(r["sector"]) if r["sector"] is not None else "").strip()
-            st.session_state[KEY_CUST]   = (str(r["account_name"]) if r["account_name"] is not None else "").strip()
-            st.session_state[KEY_CUSTID] = int(r["customer_id"])
-            st.session_state[cid_locked_key] = True
-
-            # ✅ If you want the textbox itself to become uppercase, do it safely next run
-            st.session_state[acct_set_value_key] = txt
-            st.session_state[req_set_acct_key] = True
-
-            _set_qf_msg("Customer filled successfully.", "success")
-            st.rerun()
-
-    locked = bool(st.session_state.get(cid_locked_key, False))
-    if locked and st.session_state.get(KEY_CUSTID):
-        st.caption(f"🔒 Filled by Account ID · Internal customer_id: **{st.session_state.get(KEY_CUSTID)}**")
-
-    # ---------------- Region / City / Sector / Customer ----------------
-    def _on_region_change():
-        _clear_qf_msg()
-        st.session_state[cid_locked_key] = False
-        st.session_state[KEY_CITY] = ""
-        st.session_state[KEY_SECTOR] = ""
-        st.session_state[KEY_CUST] = ""
-        st.session_state.pop(KEY_CUSTID, None)
-
-    def _on_city_change():
-        _clear_qf_msg()
-        st.session_state[cid_locked_key] = False
-        st.session_state[KEY_SECTOR] = ""
-        st.session_state[KEY_CUST] = ""
-        st.session_state.pop(KEY_CUSTID, None)
-
-    def _on_sector_change():
-        _clear_qf_msg()
-        st.session_state[cid_locked_key] = False
-        st.session_state[KEY_CUST] = ""
-        st.session_state.pop(KEY_CUSTID, None)
-
-    reg_df = query_df(
-        """
-        SELECT DISTINCT region
-        FROM customers
-        WHERE is_active IS TRUE
-          AND region IS NOT NULL AND trim(region) <> ''
-        ORDER BY region
-        """
-    )
-    region_opts = [""] + _order_with_other_last(reg_df["region"].tolist())
-
-    region_choice = st.selectbox(
-        "Region *",
-        region_opts,
-        index=0,
-        key=KEY_REGION,
-        disabled=locked,
-        on_change=_on_region_change if not locked else None,
-        help=("Filled from Account ID. Click Clear to change." if locked else None),
-    )
-
-    city_opts = [""]
-    if region_choice:
-        city_df = query_df(
-            """
-            SELECT DISTINCT city
-            FROM customers
-            WHERE is_active IS TRUE
-              AND region = :r
-              AND city IS NOT NULL AND trim(city) <> ''
-            ORDER BY city
-            """,
-            {"r": region_choice},
-        )
-        city_opts = [""] + _order_with_other_last(city_df["city"].tolist())
-
-    city_choice = st.selectbox(
-        "City *",
-        city_opts,
-        index=0,
-        key=KEY_CITY,
-        disabled=locked or (not bool(region_choice)),
-        on_change=_on_city_change if (not locked and region_choice) else None,
-        help=("Filled from Account ID. Click Clear to change." if locked else ("Select a Region first" if not region_choice else None)),
-    )
-
-    sector_opts = [""]
-    if region_choice and city_choice:
-        sec_df = query_df(
-            """
-            SELECT DISTINCT sector
-            FROM customers
-            WHERE is_active IS TRUE
-              AND region = :r
-              AND city   = :c
-              AND sector IS NOT NULL AND trim(sector) <> ''
-            ORDER BY sector
-            """,
-            {"r": region_choice, "c": city_choice},
-        )
-        sector_opts = [""] + _order_with_other_last(sec_df["sector"].tolist())
-
-    sector_choice = st.selectbox(
-        "Sector *",
-        sector_opts,
-        index=0,
-        key=KEY_SECTOR,
-        disabled=locked or (not bool(region_choice and city_choice)),
-        on_change=_on_sector_change if (not locked and region_choice and city_choice) else None,
-        help=("Filled from Account ID. Click Clear to change." if locked else ("Select a City first" if not (region_choice and city_choice) else None)),
-    )
-
-    cust_df = pd.DataFrame(columns=["customer_id", "account_name"])
-    cust_names = [""]
-
-    if region_choice and city_choice and sector_choice:
-        cust_df = query_df(
-            """
-            SELECT customer_id, account_name
-            FROM customers
-            WHERE is_active IS TRUE
-              AND region = :r
-              AND city   = :c
-              AND sector = :s
-            ORDER BY account_name
-            """,
-            {"r": region_choice, "c": city_choice, "s": sector_choice},
-        )
-        cust_names = [""] + _order_with_other_last(cust_df["account_name"].tolist())
-
-    cust_choice = st.selectbox(
-        "Customer *",
-        cust_names,
-        index=0,
-        key=KEY_CUST,
-        disabled=locked or (not bool(region_choice and city_choice and sector_choice)),
-        help=("Filled from Account ID. Click Clear to change." if locked else ("Select Sector first" if not (region_choice and city_choice and sector_choice) else None)),
-    )
-
-    # Resolve customer_id (safe)
-    customer_id = None
-    locked = bool(st.session_state.get(cid_locked_key, False))
-
-    if locked and st.session_state.get(KEY_CUSTID):
-        customer_id = int(st.session_state.get(KEY_CUSTID))
-    else:
-        if cust_choice and not cust_df.empty:
-            match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]
-            customer_id = int(match.iloc[0]) if not match.empty else None
+    region_choice = (st.session_state.get(KEY_REGION) or "")
+    city_choice   = (st.session_state.get(KEY_CITY) or "")
+    sector_choice = (st.session_state.get(KEY_SECTOR) or "")
 
     # =====================================================
     # SECTION 3 — Notes
@@ -2661,7 +2723,10 @@ def page_check_in():
             # clear customer fields after successful save (doesn't touch location)
             st.session_state[req_clear_customer_key] = True
             st.session_state[req_clear_acct_key] = True
-            _clear_qf_msg()
+
+            # clear quick-find message (since _clear_qf_msg is now inside the module)
+            st.session_state[qf_msg_key] = ""
+            st.session_state[qf_msg_type_key] = ""
 
             st.rerun()
 
