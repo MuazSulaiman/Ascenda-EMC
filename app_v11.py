@@ -1740,6 +1740,7 @@ def page_submit_visit():
                 )
 
     project_locked = selected_project is not None
+    customer_locked = bool(st.session_state.get(cid_locked_key, False))
 
     # Pre-extract project fields
     proj_region        = selected_project.get("region")             if project_locked else None
@@ -1967,7 +1968,9 @@ def page_submit_visit():
             serial_no     = st.text_input("Device Serial # *", key=k("serial_no"))
 
     # =====================================================
-    # SECTION 4 — Product & Business Line
+    # SECTION 4 — Product & Business Line  ✅ (FIXED)
+    #   - Category / Business Line / Product lock ONLY when project_locked=True
+    #   - Account-ID customer lock should NOT affect this section
     # =====================================================
     st.markdown("### 4️⃣ Product Details")
 
@@ -1982,6 +1985,7 @@ def page_submit_visit():
     )
     bu_names = [""] + bu_df["name"].tolist()
 
+    # If project-locked, seed BU name
     if project_locked and proj_bu_name:
         st.session_state[k("bu_sel")] = proj_bu_name
 
@@ -1990,7 +1994,7 @@ def page_submit_visit():
         bu_names,
         index=0,
         key=k("bu_sel"),
-        disabled=project_locked,
+        disabled=project_locked,  # ✅ ONLY project locks BU
         on_change=None if project_locked else _on_bu_change,
     )
 
@@ -2012,15 +2016,16 @@ def page_submit_visit():
             SELECT DISTINCT category
             FROM business_lines
             WHERE is_active IS TRUE
-              AND business_unit_id = :bid
-              AND category IS NOT NULL
-              AND trim(category) <> ''
+            AND business_unit_id = :bid
+            AND category IS NOT NULL
+            AND trim(category) <> ''
             ORDER BY category
             """,
             {"bid": bu_id},
         )
         cat_names = [""] + cat_df["category"].tolist()
 
+    # If project-locked, seed Category
     if project_locked and proj_cat:
         st.session_state[k("cat_sel")] = proj_cat
 
@@ -2029,14 +2034,14 @@ def page_submit_visit():
         cat_names,
         index=0,
         key=k("cat_sel"),
-        disabled=project_locked or bu_id is None,
+        disabled=project_locked or (bu_id is None),  # ✅ ONLY project locks Category
         help=None if bu_id else "Select a Business Unit first",
     )
     if project_locked:
         cat_choice = proj_cat
 
     # ---- Business Line ----
-    bl_df   = pd.DataFrame()
+    bl_df    = pd.DataFrame()
     bl_names = [""]
 
     bl_choice = ""
@@ -2048,14 +2053,15 @@ def page_submit_visit():
             SELECT business_line_id, name
             FROM business_lines
             WHERE is_active IS TRUE
-              AND business_unit_id = :bid
-              AND category = :cat
+            AND business_unit_id = :bid
+            AND category = :cat
             ORDER BY name
             """,
             {"bid": bu_id, "cat": cat_choice},
         )
         bl_names = [""] + bl_df["name"].tolist()
 
+    # If project-locked, seed BL
     if project_locked and proj_bl_name:
         st.session_state[k("bl_sel")] = proj_bl_name
 
@@ -2064,7 +2070,7 @@ def page_submit_visit():
         bl_names,
         index=0,
         key=k("bl_sel"),
-        disabled=project_locked or bu_id is None or not cat_choice,
+        disabled=project_locked or (bu_id is None) or (not cat_choice),  # ✅ ONLY project locks BL
         on_change=None if project_locked else _on_line_change,
         help=None if (bu_id and cat_choice) else "Select a Category first",
     )
@@ -2081,7 +2087,9 @@ def page_submit_visit():
     prod_df = pd.DataFrame()
     product_id  = None
     prod_choice = ""
-    prod_disabled = False
+
+    # ✅ This is the ONLY lock for product dropdown
+    prod_disabled = bool(project_locked)
 
     if business_line_id:
         prod_df = query_df(
@@ -2089,11 +2097,12 @@ def page_submit_visit():
             SELECT product_id, article_number, description
             FROM items
             WHERE is_active IS TRUE
-              AND business_line_id = :blid
+            AND business_line_id = :blid
             ORDER BY COALESCE(article_number, product_id)
             """,
             {"blid": business_line_id},
         )
+
         prod_labels = [""] + [
             (
                 f"{(r.article_number or r.product_id)} — {r.description}"
@@ -2103,6 +2112,7 @@ def page_submit_visit():
             for r in prod_df.itertuples(index=False)
         ]
 
+    # Seed fixed product if project has one
     prod_index = 0
     if project_locked and proj_prod_id and not prod_df.empty:
         label_to_pid = {}
@@ -2120,14 +2130,12 @@ def page_submit_visit():
                 st.session_state[k("prod_sel")] = lbl
                 break
 
-        prod_disabled = True
-
     prod_choice = st.selectbox(
         "Article Number/Product (optional)",
         prod_labels,
         index=prod_index,
         key=k("prod_sel"),
-        disabled=(business_line_id is None) or prod_disabled,
+        disabled=(business_line_id is None) or prod_disabled,  # ✅ ONLY project locks Product
         help=None if business_line_id else "Select Business Line first",
     )
 
