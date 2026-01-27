@@ -1607,6 +1607,9 @@ def page_submit_visit():
         for n in ("aud_sel", "bu_sel", "cat_sel", "bl_sel", "prod_sel"):
             st.session_state[k(n)] = ""
 
+        # ✅ also clear "Other Customer Name" field for fresh entry
+        st.session_state.pop(k("other_customer_name"), None)
+
     set_current_page(PAGE_NS)
 
     # --- Resolve logged-in user safely ---
@@ -1739,7 +1742,7 @@ def page_submit_visit():
                     "Customer and product context are locked to the project."
                 )
 
-    project_locked = selected_project is not None
+    project_locked  = selected_project is not None
     customer_locked = bool(st.session_state.get(cid_locked_key, False))
 
     # Pre-extract project fields
@@ -1816,6 +1819,18 @@ def page_submit_visit():
     city_choice   = (st.session_state.get(KEY_CITY) or "")
     sector_choice = (st.session_state.get(KEY_SECTOR) or "")
     cust_choice   = (st.session_state.get(KEY_CUST) or "")
+
+    # ✅ NEW: "Other" customer required name (stored into visits.other_customer_name)
+    other_customer_name = None
+    is_other_customer = bool(cust_choice and cust_choice.strip().lower() == "other")
+
+    if is_other_customer:
+        st.markdown("##### ➕ New Customer Details")
+        other_customer_name = st.text_input(
+            "Customer Name *",
+            key=k("other_customer_name"),
+            help="Enter the real legal customer name when you selected 'Other'.",
+        )
 
     # ---------------- Target Audience (with “Other”) ----------------
     audience_id      = None
@@ -1969,8 +1984,6 @@ def page_submit_visit():
 
     # =====================================================
     # SECTION 4 — Product & Business Line  ✅ (FIXED)
-    #   - Category / Business Line / Product lock ONLY when project_locked=True
-    #   - Account-ID customer lock should NOT affect this section
     # =====================================================
     st.markdown("### 4️⃣ Product Details")
 
@@ -1994,7 +2007,7 @@ def page_submit_visit():
         bu_names,
         index=0,
         key=k("bu_sel"),
-        disabled=project_locked,  # ✅ ONLY project locks BU
+        disabled=project_locked,
         on_change=None if project_locked else _on_bu_change,
     )
 
@@ -2034,7 +2047,7 @@ def page_submit_visit():
         cat_names,
         index=0,
         key=k("cat_sel"),
-        disabled=project_locked or (bu_id is None),  # ✅ ONLY project locks Category
+        disabled=project_locked or (bu_id is None),
         help=None if bu_id else "Select a Business Unit first",
     )
     if project_locked:
@@ -2070,7 +2083,7 @@ def page_submit_visit():
         bl_names,
         index=0,
         key=k("bl_sel"),
-        disabled=project_locked or (bu_id is None) or (not cat_choice),  # ✅ ONLY project locks BL
+        disabled=project_locked or (bu_id is None) or (not cat_choice),
         on_change=None if project_locked else _on_line_change,
         help=None if (bu_id and cat_choice) else "Select a Category first",
     )
@@ -2088,7 +2101,6 @@ def page_submit_visit():
     product_id  = None
     prod_choice = ""
 
-    # ✅ This is the ONLY lock for product dropdown
     prod_disabled = bool(project_locked)
 
     if business_line_id:
@@ -2112,7 +2124,6 @@ def page_submit_visit():
             for r in prod_df.itertuples(index=False)
         ]
 
-    # Seed fixed product if project has one
     prod_index = 0
     if project_locked and proj_prod_id and not prod_df.empty:
         label_to_pid = {}
@@ -2135,7 +2146,7 @@ def page_submit_visit():
         prod_labels,
         index=prod_index,
         key=k("prod_sel"),
-        disabled=(business_line_id is None) or prod_disabled,  # ✅ ONLY project locks Product
+        disabled=(business_line_id is None) or prod_disabled,
         help=None if business_line_id else "Select Business Line first",
     )
 
@@ -2269,6 +2280,11 @@ def page_submit_visit():
             errors.append("Please choose a **Sector**.")
         if not customer_id:
             errors.append("Please choose a **Customer**.")
+
+        # ✅ NEW: Other Customer validation
+        if is_other_customer:
+            if not other_customer_name or not other_customer_name.strip():
+                errors.append("For **Other Customer**, please enter **Customer Name**.")
 
         # Target audience validation
         if not aud_choice_label:
@@ -2406,6 +2422,9 @@ def page_submit_visit():
             "evaluation":          evaluation_val,
             "project_id":          int(selected_project_id) if selected_project_id else None,
 
+            # ✅ NEW: store the typed name when customer is Other
+            "other_customer_name": (other_customer_name.strip() if (is_other_customer and other_customer_name) else None),
+
             # New fields for "Other" Target Audience
             "other_audience_title":      (other_ta_title.strip() if other_ta_title else None) or None,
             "other_audience_name":       (other_ta_name.strip() if other_ta_name else None),
@@ -2462,6 +2481,10 @@ def page_submit_visit():
                 "shelf_total_qty":    shelf_total_qty,
             }
 
+            # (optional) include the typed Other customer name in Power BI payload too
+            if is_other_customer and other_customer_name and other_customer_name.strip():
+                pbi_row["other_customer_name"] = other_customer_name.strip()
+
             if is_home_visit:
                 pbi_row.update({
                     "patient_name":  patient_name.strip(),
@@ -2483,6 +2506,9 @@ def page_submit_visit():
             st.session_state[intent_key]        = False
             st.session_state[busy_key]          = False
             st.session_state[prev_proj_key]     = ""  # reset project tracker after successful submit
+
+            # clear "Other Customer Name" field after save
+            st.session_state.pop(k("other_customer_name"), None)
 
             # (optional but recommended) clear quick-find UI state after successful save
             st.session_state[req_clear_customer_key] = True
@@ -2655,6 +2681,19 @@ def page_check_in():
     city_choice   = (st.session_state.get(KEY_CITY) or "")
     sector_choice = (st.session_state.get(KEY_SECTOR) or "")
 
+    # ✅ NEW: other customer name required (stored into visits.other_customer_name)
+    cust_choice = (st.session_state.get(KEY_CUST) or "")
+    is_other_customer = bool(cust_choice and cust_choice.strip().lower() == "other")
+    other_customer_name = None
+
+    if is_other_customer:
+        st.markdown("##### ➕ New Customer Details")
+        other_customer_name = st.text_input(
+            "Customer Name *",
+            key=k("other_customer_name"),
+            help="Enter the real legal customer name when you selected 'Other'.",
+        )
+
     # =====================================================
     # SECTION 3 — Notes
     # =====================================================
@@ -2692,6 +2731,11 @@ def page_check_in():
         if not customer_id:
             errors.append("Please choose a **Customer**.")
 
+        # ✅ NEW: validate Other customer name
+        if is_other_customer:
+            if not other_customer_name or not other_customer_name.strip():
+                errors.append("For **Other Customer**, please enter **Customer Name**.")
+
         if locked:
             acct_now = (st.session_state.get(KEY_ACCT) or "").strip()
             if not acct_now or not st.session_state.get(KEY_CUSTID):
@@ -2714,6 +2758,9 @@ def page_check_in():
             "customer_id":        int(customer_id),
             "objective_id":       int(CHECKIN_OBJECTIVE_ID),
             "notes":              (notes.strip() if notes else None),
+
+            # ✅ NEW: store typed name if customer == Other
+            "other_customer_name": (other_customer_name.strip() if (is_other_customer and other_customer_name) else None),
         }
 
         try:
@@ -2734,6 +2781,9 @@ def page_check_in():
             # clear quick-find message (since _clear_qf_msg is now inside the module)
             st.session_state[qf_msg_key] = ""
             st.session_state[qf_msg_type_key] = ""
+
+            # clear Other customer input after successful save
+            st.session_state.pop(k("other_customer_name"), None)
 
             st.rerun()
 
@@ -8437,6 +8487,7 @@ def page_review_target_audiences():
             v.other_audience_phone,
             v.other_audience_email,
             v.notes                      AS visit_notes,
+            v.other_customer_name,
             v.user_id,
             u.name                       AS rep_name,
             u.email                      AS rep_email,
@@ -8479,6 +8530,7 @@ def page_review_target_audiences():
             "other_audience_phone": "Other TA Phone",
             "other_audience_email": "Other TA Email",
             "visit_notes": "Notes",
+            "other_customer_name": "Other Customer Name",
             "rep_name": "Submitted By",
             "rep_email": "Email",
             "business_unit_name": "Business Unit",
@@ -8498,6 +8550,7 @@ def page_review_target_audiences():
                 "Other TA Phone",
                 "Other TA Email",
                 "Notes",
+                "Other Customer Name",
                 "Submitted By",
                 "Email",
                 "Business Unit"
