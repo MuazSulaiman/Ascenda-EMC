@@ -1391,7 +1391,7 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
          - If timeout => show friendly warning + Retry button
     """
     TIMEOUT_S = 15  # adjust if you want longer/shorter
-    MAX_ACC_M = 200  # max allowed accuracy in meters
+    MAX_ACC_M = 2500  # max allowed accuracy in meters
 
     with st.expander("📍 Location (auto) — required for check-in", expanded=True):
         tried_key   = k("geo_try")
