@@ -2170,7 +2170,7 @@ def page_submit_visit():
     # =====================================================
     st.markdown("### 5️⃣ Visit Details & Outcome")
 
-    if role in {"admin", "manager"}:
+    if role in {"admin"}:
         obj_df = query_df(
             """
             SELECT objective_id, name
@@ -8143,7 +8143,7 @@ def page_admin_users():
             bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
             bu_names = bu_df["name"].tolist()
             bu_sel = st.selectbox("Business Unit (optional)", [""] + bu_names, index=0)
-            role = st.selectbox("Role", ["","rep", "admin","manager","maintenance"], index=0)
+            role = st.selectbox("Role", ["","rep", "admin","sales manager","biomedical manager","maintenance"], index=0)
             pw = st.text_input("Temporary Password *", type="password",
                                value=st.session_state["create_user_tmp_pw"])
 
@@ -8287,7 +8287,7 @@ def page_admin_users():
                 )
                 new_bu_label = st.selectbox("Business Unit (optional)", bu_labels, index=bu_idx)
                 
-                role_opts = ["", "rep", "admin", "manager", "maintenance"]
+                role_opts = ["", "rep", "admin", "sales manager","biomedical manager", "maintenance"]
 
                 current_role = (row.get("role") or "").strip().lower()
                 role_idx = role_opts.index(current_role) if current_role in role_opts else 0
