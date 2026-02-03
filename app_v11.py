@@ -2170,14 +2170,30 @@ def page_submit_visit():
     # =====================================================
     st.markdown("### 5️⃣ Visit Details & Outcome")
 
-    obj_df = query_df(
-        """
-        SELECT objective_id, name
-        FROM objectives
-        WHERE COALESCE(is_active, TRUE) IS TRUE
-        ORDER BY name
-        """
-    )
+    if role in {"admin", "manager"}:
+        obj_df = query_df(
+            """
+            SELECT objective_id, name
+            FROM objectives
+            WHERE COALESCE(is_active, TRUE) IS TRUE
+            ORDER BY name
+            """
+        )
+    else:
+        obj_df = query_df(
+            """
+            SELECT o.objective_id, o.name
+            FROM objectives o
+            JOIN role_objectives ro
+              ON ro.objective_id = o.objective_id
+            WHERE COALESCE(o.is_active, TRUE) IS TRUE
+              AND COALESCE(ro.is_active, TRUE) IS TRUE
+              AND ro.role = :role
+            ORDER BY o.name
+            """,
+            {"role": role},
+        )
+        
     obj_names  = [""] + obj_df["name"].tolist()
     obj_choice = st.selectbox("Business Objective *", obj_names, index=0, key=k("obj_sel"))
 
