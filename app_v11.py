@@ -1306,9 +1306,12 @@ def sidebar_nav():
     if role == "maintenance":
         pages += ["Projects View", "User Settings"]
 
-    if role == "manager":
+    if role == "sales manager":
         pages += ["Project Creation", "Project Management", "Projects View", "User Settings"]
 
+    if role == "biomedical manager":
+        pages += ["Project Creation", "Project Management", "Projects View", "User Settings"]
+    
     if role == "admin":
         pages += [
             "Project Creation",
