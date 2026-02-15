@@ -9206,7 +9206,7 @@ def page_review_other_customers():
         )
         candidates_df = candidates_df.sort_values(by="similarity", ascending=False)
 
-        top_df = candidates_df.head(30).copy()
+        top_df = candidates_df.head(100).copy()
         top_df["Similarity"] = top_df["similarity"].map(lambda x: f"{x:.2f}")
 
         st.dataframe(
