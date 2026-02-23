@@ -10972,21 +10972,16 @@ def page_change_request():
         )
         return [""] + (df["department"].astype(str).tolist() if not df.empty else [])
 
-    def _load_other_position_options(dept: str | None) -> list[str]:
-        dept = _norm(dept)
-        if not dept:
-            return [""]
+    def _load_other_position_options() -> list[str]:
         df = query_df(
             """
             SELECT DISTINCT position
             FROM target_audiences
             WHERE COALESCE(is_active, TRUE) IS TRUE
-              AND department = :dept
-              AND position IS NOT NULL
-              AND trim(position) <> ''
+            AND position IS NOT NULL
+            AND trim(position) <> ''
             ORDER BY position
-            """,
-            {"dept": dept},
+            """
         )
         return [""] + (df["position"].astype(str).tolist() if not df.empty else [])
 
@@ -11298,12 +11293,6 @@ def page_change_request():
             return
         st.session_state[f"{PAGE_NS}/prod_sel"] = ""
 
-    # ✅ Department -> Position dependency
-    def _clear_from_ota_dept():
-        if _in_prefill_phase():
-            return
-        st.session_state[f"{PAGE_NS}/ota_pos"] = ""
-
     # ============================================================
     # Keys to clear when searching a new visit
     # ============================================================
@@ -11511,17 +11500,14 @@ def page_change_request():
                 dept_opts,
                 key=f"{PAGE_NS}/ota_dept",
                 prefill_value=st.session_state.get(f"{PAGE_NS}/ota_dept", ""),
-                on_change=_clear_from_ota_dept,   # ✅ makes position dependent
             )
 
-            selected_dept = st.session_state.get(f"{PAGE_NS}/ota_dept", "")
-            pos_opts = _load_other_position_options(selected_dept)
+            pos_opts = _load_other_position_options()
             _prefill_selectbox(
                 "Position *",
                 pos_opts,
                 key=f"{PAGE_NS}/ota_pos",
                 prefill_value=st.session_state.get(f"{PAGE_NS}/ota_pos", ""),
-                disabled=(not selected_dept),
             )
 
             st.text_input("Phone # (optional)", key=f"{PAGE_NS}/ota_phone")
