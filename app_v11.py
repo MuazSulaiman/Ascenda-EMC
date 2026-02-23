@@ -872,9 +872,9 @@ def customer_quick_find_module(
                 help=acct_help,
             )
         with q2:
-            find_click = st.form_submit_button("Find", use_container_width=True)
+            find_click = st.form_submit_button("Find", width="stretch")
         with q3:
-            clear_click = st.form_submit_button("Clear", use_container_width=True)
+            clear_click = st.form_submit_button("Clear", width="stretch")
 
     # -------------------------
     # Clear
@@ -1322,6 +1322,7 @@ def sidebar_nav():
             "Admin: Users",
             "Review Target Audiences",
             "Review Other Customers",
+            "Visit Change Requests",
             "User Settings",
         ]
 
@@ -1511,1055 +1512,1125 @@ try:
 except Exception:
     UniqueViolation = None
 
-def page_submit_visit():
-    st.title("📝 Submit Visit")
+def page_change_request():
+    import pandas as pd
+    import folium
+    import streamlit as st
+    from streamlit_folium import st_folium
+    from sqlalchemy import text
 
-    # ---- tiny CSS for floating submit ----
-    st.markdown(
-        """
-        <style>
-          .sticky-submit-wrap{position:fixed; right:16px; bottom:16px; z-index:1000;}
-          @media (max-width:640px){
-            .sticky-submit-wrap{left:16px; right:16px;}
-            .sticky-submit-wrap button{width:100%;}
-          }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.title("✍️ Change Request")
 
-    # ---- Red asterisk legend ----
-    st.markdown(
-        '<div style="margin:.25rem 0 1rem 0;">'
-        'Fields marked with <span style="color:#d00000;font-weight:700">*</span> are required.'
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    PAGE_NS = "submit_visit"
-    nonce_key        = f"_{PAGE_NS}_form_nonce"
-    saved_ok_key     = f"_{PAGE_NS}_saved_ok"
-    geo_nonce_key    = f"_{PAGE_NS}_geo_nonce"
-    geo_captured_key = f"_{PAGE_NS}_geo_captured"
-    busy_key         = f"_{PAGE_NS}_busy"
-    intent_key       = f"_{PAGE_NS}_submit_intent"
-    prev_proj_key    = f"_{PAGE_NS}_prev_project_label"
-
-    TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
-
-    st.session_state.setdefault(nonce_key, 0)
-    st.session_state.setdefault(geo_nonce_key, 0)
-    st.session_state.setdefault(busy_key, False)
-    st.session_state.setdefault(intent_key, False)
-    st.session_state.setdefault(prev_proj_key, "")
-
-    # =====================================================
-    # Customer Quick-Find (fixed keys) — Submit Visit
-    # =====================================================
-    cid_locked_key         = f"_{PAGE_NS}_cid_locked"
-    req_clear_customer_key = f"_{PAGE_NS}_req_clear_customer"
-    req_clear_acct_key     = f"_{PAGE_NS}_req_clear_acct"
-    req_set_acct_key       = f"_{PAGE_NS}_req_set_acct"
-    acct_set_value_key     = f"_{PAGE_NS}_acct_set_value"
-    qf_msg_key             = f"_{PAGE_NS}_qf_msg"
-    qf_msg_type_key        = f"_{PAGE_NS}_qf_msg_type"
-
-    st.session_state.setdefault(cid_locked_key, False)
-    st.session_state.setdefault(req_clear_customer_key, False)
-    st.session_state.setdefault(req_clear_acct_key, False)
-    st.session_state.setdefault(req_set_acct_key, False)
-    st.session_state.setdefault(acct_set_value_key, "")
-    st.session_state.setdefault(qf_msg_key, "")
-    st.session_state.setdefault(qf_msg_type_key, "")
-
-    # Fixed keys for customer widgets (DO NOT use nonce here)
-    KEY_ACCT   = f"{PAGE_NS}/acct_search"
-    KEY_REGION = f"{PAGE_NS}/region_sel"
-    KEY_CITY   = f"{PAGE_NS}/city_sel"
-    KEY_SECTOR = f"{PAGE_NS}/sector_sel"
-    KEY_CUST   = f"{PAGE_NS}/cust_sel"
-    KEY_CUSTID = f"{PAGE_NS}/customer_id_resolved"
-
-    def k(name: str) -> str:
-        return f"{PAGE_NS}/{name}_{st.session_state[nonce_key]}"
-
-    # ---- cascade clear helpers (nonce’d keys for non-customer fields) ----
-    def _on_bu_change():
-        for n in ("cat_sel", "bl_sel", "prod_sel"):
-            st.session_state.pop(k(n), None)
-
-    def _on_line_change():
-        for n in ("prod_sel",):
-            st.session_state.pop(k(n), None)
-
-    # Clear project-dependent fields (UPDATED for fixed customer keys)
-    def _clear_project_dependent_fields():
-        # Fixed customer keys
-        st.session_state[KEY_ACCT]   = ""
-        st.session_state[KEY_REGION] = ""
-        st.session_state[KEY_CITY]   = ""
-        st.session_state[KEY_SECTOR] = ""
-        st.session_state[KEY_CUST]   = ""
-        st.session_state.pop(KEY_CUSTID, None)
-
-        # Clear quick find state/message
-        st.session_state[cid_locked_key] = False
-        st.session_state[qf_msg_key] = ""
-        st.session_state[qf_msg_type_key] = ""
-
-        # nonce’d keys for the rest
-        for n in ("aud_sel", "bu_sel", "cat_sel", "bl_sel", "prod_sel"):
-            st.session_state[k(n)] = ""
-
-        # ✅ also clear "Other Customer Name" field for fresh entry
-        st.session_state.pop(k("other_customer_name"), None)
-
-    set_current_page(PAGE_NS)
-
-    # --- Resolve logged-in user safely ---
+    # ------------------------------------------------------------
+    # Resolve logged-in user safely
+    # ------------------------------------------------------------
     u = st.session_state.get("user") or resolve_session_user()
     if not u:
         st.warning("Please sign in to continue.")
-        st.stop()
-
-    uid  = int(u.get("user_id") or u.get("id"))
-    role = (u.get("role") or "").lower().strip()
-
-    # --- Display info ---
-    display_name   = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
-    display_region = u.get("region") or "—"
-    display_role   = u.get("role") or "—"
-    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
-
-    _reset_geo_on_user_or_page_change(PAGE_NS, uid)
-
-    if st.session_state.pop(saved_ok_key, False):
-        st.success("Saved ✅ — fields cleared, you can enter a new visit.")
-
-    # Focus first text box
-    components.html(
-        """<script>
-        const wait=()=>{const el=window.parent.document.querySelector('input[type="search"], input[type="text"]');
-        if(!el){setTimeout(wait,250);return;} el.focus();}; wait();
-        </script>""",
-        height=0,
-    )
-
-    # =====================================================
-    # SECTION 1 — Visit Location (REQUIRED)
-    # =====================================================
-    st.markdown("### 1️⃣ Visit Location")
-    lat, lon, acc = get_location_block(k)
-    if lat is None or lon is None:
-        st.info("📍 Location is required before you can submit.")
         return
 
-    # =====================================================
-    # SECTION 2 — Project (optional)
-    # =====================================================
-    st.markdown("### 2️⃣ Project (optional)")
+    uid = int(u.get("user_id") or u.get("id"))
+    role = (u.get("role") or "").lower().strip()
 
-    project_df          = pd.DataFrame()
-    selected_project    = None
-    selected_project_id = None
+    display_name = u.get("name") or u.get("email") or f"User #{uid}"
+    display_region = u.get("region") or "—"
+    display_role = u.get("role") or "—"
+    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
 
-    where_clauses: list[str] = ["p.status IN ('Not Started', 'Open')"]
-    params: dict[str, object] = {}
+    PAGE_NS = "change_request"
+    TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
 
-    if role in ("rep", "maintenance"):
-        where_clauses.append("p.assigned_to_id = :uid")
-        params["uid"] = uid
-    elif role == "manager":
-        where_clauses.append("p.assigned_by_id = :uid")
-        params["uid"] = uid
-    elif role == "admin":
-        pass
+    # ============================================================
+    # Helpers
+    # ============================================================
+    def _norm(x):
+        if x is None:
+            return ""
+        try:
+            if pd.isna(x):
+                return ""
+        except Exception:
+            pass
+        return str(x).strip()
 
-    if role in ("rep", "maintenance", "manager", "admin"):
-        project_df = query_df(
-            f"""
+    def _safe_int(x):
+        try:
+            s = str(x).strip()
+            return int(s) if s else None
+        except Exception:
+            return None
+
+    def _is_home_visit_label(aud_label):
+        return bool(aud_label and aud_label.strip().lower().startswith("home visit"))
+
+    def _is_shelf_objective(obj_name):
+        return bool(obj_name and ("shelf movement" in obj_name.strip().lower()))
+
+    def _add_detail(details: list[dict], field: str, old, new):
+        if old is None and new is None:
+            return
+        if str(old) == str(new):
+            return
+        details.append(
+            {
+                "field": field,
+                "old_value": (None if old is None else str(old)),
+                "new_value": (None if new is None else str(new)),
+            }
+        )
+
+    def _prefill_selectbox(label: str, options: list[str], key: str, prefill_value: str, **kwargs):
+        opts = [_norm(o) for o in (options or [""])]
+        pv = _norm(prefill_value)
+
+        if not opts:
+            opts = [""]
+
+        if opts[0] != "":
+            opts = [""] + [o for o in opts if o != ""]
+
+        if pv and pv not in opts:
+            opts = [""] + [pv] + [o for o in opts[1:] if o != pv]
+
+        idx = opts.index(pv) if pv and pv in opts else 0
+        return st.selectbox(label, opts, index=idx, key=key, **kwargs)
+
+    # ============================================================
+    # DB helpers
+    # ============================================================
+    def _has_open_request_for_visit(visit_id: int) -> bool:
+        df = query_df(
+            """
+            SELECT request_id
+            FROM request_changes
+            WHERE visit_id = :vid AND status = 'IN_REVIEW'
+            LIMIT 1
+            """,
+            {"vid": int(visit_id)},
+        )
+        return not df.empty
+
+    def _load_visit_snapshot(visit_id: int) -> dict | None:
+        vdf = query_df(
+            """
+            SELECT
+              visit_id, user_id, submitted_at_utc, submitted_at_local,
+              latitude, longitude, accuracy_m,
+              customer_id, audience_id,
+              business_line_id, product_id, objective_id,
+              notes, evaluation, project_id,
+              other_audience_name, other_audience_department, other_audience_position,
+              other_audience_title, other_audience_phone, other_audience_email,
+              other_customer_name
+            FROM visits
+            WHERE visit_id = :vid
+            """,
+            {"vid": int(visit_id)},
+        )
+        if vdf.empty:
+            return None
+
+        visit = vdf.iloc[0].to_dict()
+
+        hvdf = query_df(
+            """
+            SELECT home_visit_id, patient_name, patient_phone, serial_no
+            FROM home_visits
+            WHERE visit_id = :vid
+            """,
+            {"vid": int(visit_id)},
+        )
+        home_visit = hvdf.iloc[0].to_dict() if not hvdf.empty else None
+
+        mhdf = query_df(
+            """
+            SELECT movement_id
+            FROM shelf_movement_headers
+            WHERE visit_id = :vid
+            """,
+            {"vid": int(visit_id)},
+        )
+        movement_id = int(mhdf.iloc[0]["movement_id"]) if not mhdf.empty else None
+
+        movement_lines = []
+        if movement_id:
+            mldf = query_df(
+                """
+                SELECT product_id, qty_checked
+                FROM shelf_movement_lines
+                WHERE movement_id = :mid
+                """,
+                {"mid": movement_id},
+            )
+            if not mldf.empty:
+                movement_lines = mldf.to_dict(orient="records")
+
+        return {
+            "visit": visit,
+            "home_visit": home_visit,
+            "movement_id": movement_id,
+            "movement_lines": movement_lines,
+        }
+
+    def _get_customer_locked_fields(customer_id: int) -> dict:
+        df = query_df(
+            """
+            SELECT account_name, region, city, sector
+            FROM customers
+            WHERE customer_id = :cid
+            """,
+            {"cid": int(customer_id)},
+        )
+        if df.empty:
+            return {"account_name": "", "region": "", "city": "", "sector": ""}
+        return df.iloc[0].to_dict()
+
+    # ============================================================
+    # ✅ Section 2 — Project (READ ONLY)
+    # ============================================================
+    def _load_project_readonly(project_id: int) -> dict | None:
+        df = query_df(
+            """
             SELECT
                 p.project_id,
                 p.name AS project_name,
-                p.customer_id,
+                p.status,
                 c.account_name,
-                c.region,
-                c.city,
-                c.sector,
-                p.business_line_id,
                 bl.name AS business_line_name,
-                bl.business_unit_id AS business_unit_id,
                 bu.name AS business_unit_name,
                 bl.category,
-                p.product_id,
                 i.article_number,
                 i.description AS item_description
             FROM projects p
-            JOIN customers      c  ON c.customer_id       = p.customer_id
-            JOIN business_lines bl ON bl.business_line_id = p.business_line_id
+            LEFT JOIN customers c      ON c.customer_id = p.customer_id
+            LEFT JOIN business_lines bl ON bl.business_line_id = p.business_line_id
             LEFT JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
-            LEFT JOIN items      i  ON i.product_id        = p.product_id
-            WHERE {" AND ".join(where_clauses)}
-            ORDER BY p.project_id, p.name, c.account_name
+            LEFT JOIN items i          ON i.product_id = p.product_id
+            WHERE p.project_id = :pid
+            LIMIT 1
             """,
-            params,
+            {"pid": int(project_id)},
         )
+        if df.empty:
+            return None
+        return df.iloc[0].to_dict()
 
-    proj_labels: list[str] = [""]
-    proj_label_to_id: dict[str, int] = {}
-
-    if not project_df.empty:
-        for r in project_df.itertuples(index=False):
-            base = f"{r.project_id}. {r.project_name}"
-            parts = [base, str(r.account_name)]
-            if getattr(r, "business_line_name", None):
-                parts.append(str(r.business_line_name))
-            label = " — ".join(parts)
-            proj_labels.append(label)
-            proj_label_to_id[label] = int(r.project_id)
-
-    project_choice = st.selectbox(
-        "Project (optional)",
-        proj_labels,
-        index=0,
-        key=k("proj_sel"),
-        help="Link this visit to a project. Customer and product context will follow the project.",
-    )
-
-    # Detect transitions
-    prev_label = st.session_state.get(prev_proj_key, "")
-    curr_label = project_choice or ""
-    if curr_label != prev_label:
-        _clear_project_dependent_fields()
-    st.session_state[prev_proj_key] = curr_label
-
-    # Resolve selected project (if any)
-    if curr_label:
-        selected_project_id = proj_label_to_id.get(curr_label)
-        if selected_project_id is not None:
-            sel_rows = project_df[project_df["project_id"] == selected_project_id]
-            if not sel_rows.empty:
-                selected_project = sel_rows.iloc[0].to_dict()
-                proj_label = f"{selected_project['project_id']}. {selected_project.get('project_name', '')}"
-                st.info(
-                    f"🔒 Linked to project **{proj_label}**. "
-                    "Customer and product context are locked to the project."
-                )
-
-    project_locked  = selected_project is not None
-    customer_locked = bool(st.session_state.get(cid_locked_key, False))
-
-    # Pre-extract project fields
-    proj_region        = selected_project.get("region")             if project_locked else None
-    proj_city          = selected_project.get("city")               if project_locked else None
-    proj_sector        = selected_project.get("sector")             if project_locked else None
-    proj_customer_id   = int(selected_project["customer_id"])       if project_locked else None
-    proj_customer_name = selected_project.get("account_name")       if project_locked else None
-    proj_bu_id         = int(selected_project["business_unit_id"])  if project_locked and selected_project.get("business_unit_id") is not None else None
-    proj_bu_name       = selected_project.get("business_unit_name") if project_locked else None
-    proj_cat           = selected_project.get("category")           if project_locked else None
-    proj_bl_id         = int(selected_project["business_line_id"])  if project_locked and selected_project.get("business_line_id") is not None else None
-    proj_bl_name       = selected_project.get("business_line_name") if project_locked else None
-    proj_prod_id       = selected_project.get("product_id")         if project_locked else None
-
-    # =====================================================
-    # SECTION 3 — Customer & Target Audience (UPDATED)
-    # =====================================================
-    st.markdown("### 3️⃣ Customer & Target Audience")
-
-    if project_locked:
-        # Project is the lock source; disable quick find
-        st.session_state[cid_locked_key] = False
-
-        st.session_state[KEY_REGION] = (proj_region or "") if proj_region else ""
-        st.session_state[KEY_CITY]   = (proj_city or "") if proj_city else ""
-        st.session_state[KEY_SECTOR] = (proj_sector or "") if proj_sector else ""
-        st.session_state[KEY_CUST]   = (proj_customer_name or "") if proj_customer_name else ""
-        if proj_customer_id is not None:
-            st.session_state[KEY_CUSTID] = int(proj_customer_id)
-
-        st.session_state[qf_msg_key] = ""
-        st.session_state[qf_msg_type_key] = ""
-
-        st.info("🔒 Customer is locked by the selected project (Quick Find disabled).")
-
-    else:
-        # Quick Find (Account ID)
-        _ = customer_quick_find_module(
-            page_ns=PAGE_NS,
-            query_df=query_df,
-            customers_table="customers",
-            KEY_ACCT=KEY_ACCT,
-            KEY_REGION=KEY_REGION,
-            KEY_CITY=KEY_CITY,
-            KEY_SECTOR=KEY_SECTOR,
-            KEY_CUST=KEY_CUST,
-            KEY_CUSTID=KEY_CUSTID,
-            cid_locked_key=cid_locked_key,
-            req_clear_customer_key=req_clear_customer_key,
-            req_clear_acct_key=req_clear_acct_key,
-            req_set_acct_key=req_set_acct_key,
-            acct_set_value_key=acct_set_value_key,
-            qf_msg_key=qf_msg_key,
-            qf_msg_type_key=qf_msg_type_key,
+    # ============================================================
+    # Audience helpers
+    # ============================================================
+    def _audience_label_for_id(audience_id: int) -> str:
+        df = query_df(
+            """
+            SELECT title, name, department, position
+            FROM target_audiences
+            WHERE audience_id = :aid
+            """,
+            {"aid": int(audience_id)},
         )
+        if df.empty:
+            return ""
+        r = df.iloc[0]
+        parts = []
+        title = (str(r["title"]).strip() + " ") if pd.notna(r["title"]) and str(r["title"]).strip() else ""
+        name = str(r["name"]).strip() if pd.notna(r["name"]) else ""
+        parts.append((title + name).strip())
+        if pd.notna(r["department"]) and str(r["department"]).strip():
+            parts.append(str(r["department"]).strip())
+        if pd.notna(r["position"]) and str(r["position"]).strip():
+            parts.append(str(r["position"]).strip())
+        return " || ".join([p for p in parts if p])
 
-    # Cascading selectors (respects lock)
-    customer_id = customer_cascading_selectors(
-        query_df=query_df,
-        customers_table="customers",
-        KEY_REGION=KEY_REGION,
-        KEY_CITY=KEY_CITY,
-        KEY_SECTOR=KEY_SECTOR,
-        KEY_CUST=KEY_CUST,
-        KEY_CUSTID=KEY_CUSTID,
-        cid_locked_key=cid_locked_key,
-        qf_msg_key=qf_msg_key,
-        qf_msg_type_key=qf_msg_type_key,
-    )
-
-    # Keep these for validation / duplicate banner
-    region_choice = (st.session_state.get(KEY_REGION) or "")
-    city_choice   = (st.session_state.get(KEY_CITY) or "")
-    sector_choice = (st.session_state.get(KEY_SECTOR) or "")
-    cust_choice   = (st.session_state.get(KEY_CUST) or "")
-
-    # ✅ NEW: "Other" customer required name (stored into visits.other_customer_name)
-    other_customer_name = None
-    is_other_customer = bool(cust_choice and cust_choice.strip().lower() == "other")
-
-    if is_other_customer:
-        st.markdown("##### ➕ New Customer Details")
-        other_customer_name = st.text_input(
-            "Customer Name *",
-            key=k("other_customer_name"),
-            help="Enter the real legal customer name when you selected 'Other'.",
-        )
-
-    # ---------------- Target Audience (with “Other”) ----------------
-    audience_id      = None
-    aud_choice_label = ""
-    aud_choice_name  = None
-
-    aud_labels: list[str] = [""]
-    aud_rows   = []  # (label, id, raw_name)
-
-    other_ta_title      = None
-    other_ta_name       = None
-    other_ta_department = None
-    other_ta_position   = None
-    other_ta_phone      = None
-    other_ta_email      = None
-
-    dept_choices_base: list[str] = []
-    pos_choices_base:  list[str] = []
-
-    dept_df = query_df(
-        """
-        SELECT DISTINCT department
-        FROM target_audiences
-        WHERE department IS NOT NULL
-          AND trim(department) <> ''
-        ORDER BY department
-        """
-    )
-    if not dept_df.empty:
-        dept_choices_base = dept_df["department"].astype(str).str.strip().tolist()
-
-    pos_df = query_df(
-        """
-        SELECT DISTINCT position
-        FROM target_audiences
-        WHERE position IS NOT NULL
-          AND trim(position) <> ''
-        ORDER BY position
-        """
-    )
-    if not pos_df.empty:
-        pos_choices_base = pos_df["position"].astype(str).str.strip().tolist()
-
-    if customer_id:
-        aud_df = query_df(
+    def _load_audience_options(customer_id: int) -> list[str]:
+        df = query_df(
             """
             SELECT audience_id, title, name, department, position
             FROM target_audiences
-            WHERE is_active IS TRUE AND customer_id=:cid
+            WHERE is_active IS TRUE AND customer_id = :cid
             ORDER BY name
             """,
             {"cid": int(customer_id)},
         )
 
-        def _fmt_audience(row) -> str:
+        def fmt(row) -> str:
             parts = []
-            title = (str(row.title).strip() + " ") if pd.notna(row.title) and str(row.title).strip() else ""
-            name  = str(row.name).strip()          if pd.notna(row.name)  else ""
+            title = (str(row["title"]).strip() + " ") if pd.notna(row["title"]) and str(row["title"]).strip() else ""
+            name = str(row["name"]).strip() if pd.notna(row["name"]) else ""
             parts.append((title + name).strip())
-            if pd.notna(row.department) and str(row.department).strip():
-                parts.append(str(row.department).strip())
-            if pd.notna(row.position) and str(row.position).strip():
-                parts.append(str(row.position).strip())
-            parts = [p for p in parts if p]
-            return " || ".join(parts) if parts else name
+            if pd.notna(row["department"]) and str(row["department"]).strip():
+                parts.append(str(row["department"]).strip())
+            if pd.notna(row["position"]) and str(row["position"]).strip():
+                parts.append(str(row["position"]).strip())
+            return " || ".join([p for p in parts if p])
 
-        for r in aud_df.itertuples(index=False):
-            label = _fmt_audience(r)
-            aud_rows.append((label, int(r.audience_id), str(r.name).strip() if pd.notna(r.name) else ""))
+        labels = [""]
+        if not df.empty:
+            for _, r in df.iterrows():
+                labels.append(fmt(r))
+        labels.append("Other")
+        return labels
 
-        aud_labels = [""] + [x[0] for x in aud_rows]
+    def _resolve_audience_id_from_label(customer_id: int, label: str) -> int | None:
+        label = _norm(label)
+        if not label or label == "Other":
+            return None
 
-        if len(aud_labels) == 1:
-            st.warning("This customer has no Target Audiences.")
-
-        aud_labels.append("Other")
-
-    aud_choice_label = st.selectbox(
-        "Target Audience *",
-        aud_labels,
-        index=0,
-        key=k("aud_sel"),
-        disabled=(customer_id is None),
-        help=None if customer_id else "Select a Customer first",
-    )
-
-    if customer_id and aud_choice_label and aud_choice_label not in ("", "Other"):
-        for lbl, aid, raw_name in aud_rows:
-            if lbl == aud_choice_label:
-                audience_id     = aid
-                aud_choice_name = raw_name
-                break
-
-    if customer_id and aud_choice_label == "Other":
-        st.markdown("##### ➕ New Target Audience Details")
-
-        other_ta_title = st.selectbox(
-            "Title (optional)",
-            TITLE_OPTIONS,
-            index=0,
-            key=k("other_ta_title"),
+        df = query_df(
+            """
+            SELECT audience_id, title, name, department, position
+            FROM target_audiences
+            WHERE is_active IS TRUE AND customer_id = :cid
+            """,
+            {"cid": int(customer_id)},
         )
+        if df.empty:
+            return None
 
-        other_ta_name = st.text_input(
-            "Target Audience Name *",
-            key=k("other_ta_name"),
-            help="Name of the person you are meeting.",
+        def fmt(row) -> str:
+            parts = []
+            title = (str(row["title"]).strip() + " ") if pd.notna(row["title"]) and str(row["title"]).strip() else ""
+            name = str(row["name"]).strip() if pd.notna(row["name"]) else ""
+            parts.append((title + name).strip())
+            if pd.notna(row["department"]) and str(row["department"]).strip():
+                parts.append(str(row["department"]).strip())
+            if pd.notna(row["position"]) and str(row["position"]).strip():
+                parts.append(str(row["position"]).strip())
+            return " || ".join([p for p in parts if p])
+
+        for _, r in df.iterrows():
+            if _norm(fmt(r)) == label:
+                return int(r["audience_id"])
+        return None
+
+    # ============================================================
+    # ✅ Other Audience lists (dependent dept -> position)
+    # ============================================================
+    def _load_other_dept_options() -> list[str]:
+        df = query_df(
+            """
+            SELECT DISTINCT trim(department) AS department
+            FROM target_audiences
+            WHERE department IS NOT NULL
+              AND trim(department) <> ''
+            ORDER BY trim(department)
+            """
         )
+        opts = [""] + (df["department"].astype(str).tolist() if not df.empty else [])
+        if "Other" not in opts:
+            opts.append("Other")
+        return opts
 
-        dept_opts = [""] + dept_choices_base + ["Other"]
-        pos_opts  = [""] + pos_choices_base  + ["Other"]
+    def _load_other_pos_options(dept: str) -> list[str]:
+        dept = _norm(dept)
+        if not dept or dept == "Other":
+            return ["", "Other"]
 
-        other_ta_department = st.selectbox(
-            "Department *",
-            dept_opts,
-            index=0,
-            key=k("other_ta_dept_sel"),
-            help="Select the department or choose 'Other'.",
+        df = query_df(
+            """
+            SELECT DISTINCT trim(position) AS position
+            FROM target_audiences
+            WHERE position IS NOT NULL
+              AND trim(position) <> ''
+              AND lower(trim(department)) = lower(trim(:dept))
+            ORDER BY trim(position)
+            """,
+            {"dept": dept},
         )
+        opts = [""] + (df["position"].astype(str).tolist() if not df.empty else [])
+        if "Other" not in opts:
+            opts.append("Other")
+        return opts
 
-        other_ta_position = st.selectbox(
-            "Position *",
-            pos_opts,
-            index=0,
-            key=k("other_ta_pos_sel"),
-            help="Select the position or choose 'Other'.",
+    # ============================================================
+    # BU / Category / BL / Product
+    # ============================================================
+    def _load_bu_options() -> list[str]:
+        df = query_df(
+            """
+            SELECT name
+            FROM business_units
+            WHERE is_active IS TRUE
+            ORDER BY name
+            """
         )
+        return [""] + (df["name"].astype(str).tolist() if not df.empty else [])
 
-        other_ta_phone = st.text_input(
-            "Phone # (optional)",
-            key=k("other_ta_phone"),
-            help="Optional – KSA mobile like 05XXXXXXXX.",
+    def _bu_id_from_name(bu_name: str) -> int | None:
+        bu_name = _norm(bu_name)
+        if not bu_name:
+            return None
+        df = query_df(
+            """
+            SELECT business_unit_id
+            FROM business_units
+            WHERE is_active IS TRUE AND trim(name) = :n
+            LIMIT 1
+            """,
+            {"n": bu_name},
         )
+        return int(df.iloc[0]["business_unit_id"]) if not df.empty else None
 
-        other_ta_email = st.text_input(
-            "Email (optional)",
-            key=k("other_ta_email"),
-            help="Optional – must be a valid email address.",
-        )
-
-    # -------- Home Visit block --------
-    is_home_visit  = bool(aud_choice_label and aud_choice_label.strip().lower().startswith("home visit"))
-    patient_name   = None
-    patient_phone  = None
-    serial_no      = None
-    if is_home_visit:
-        with st.container():
-            patient_name  = st.text_input("Patient Name *", key=k("pat_name"))
-            patient_phone = st.text_input("Patient Phone # *", key=k("pat_phone"))
-            serial_no     = st.text_input("Device Serial # *", key=k("serial_no"))
-
-    # =====================================================
-    # SECTION 4 — Product & Business Line  ✅ (FIXED)
-    # =====================================================
-    st.markdown("### 4️⃣ Product Details")
-
-    # ---- Business Unit ----
-    bu_df = query_df(
-        """
-        SELECT business_unit_id, name
-        FROM business_units
-        WHERE is_active IS TRUE
-        ORDER BY name
-        """
-    )
-    bu_names = [""] + bu_df["name"].tolist()
-
-    # If project-locked, seed BU name
-    if project_locked and proj_bu_name:
-        st.session_state[k("bu_sel")] = proj_bu_name
-
-    bu_choice = st.selectbox(
-        "Business Unit *",
-        bu_names,
-        index=0,
-        key=k("bu_sel"),
-        disabled=project_locked,
-        on_change=None if project_locked else _on_bu_change,
-    )
-
-    bu_id = None
-    if project_locked and proj_bu_id:
-        bu_id     = proj_bu_id
-        bu_choice = proj_bu_name
-    elif bu_choice:
-        match = bu_df.loc[bu_df["name"] == bu_choice, "business_unit_id"]
-        bu_id = int(match.iloc[0]) if not match.empty else None
-
-    # ---- Category ----
-    cat_df    = pd.DataFrame()
-    cat_names = [""]
-
-    if bu_id:
-        cat_df = query_df(
+    def _load_category_options(bu_id: int | None) -> list[str]:
+        if not bu_id:
+            return [""]
+        df = query_df(
             """
             SELECT DISTINCT category
             FROM business_lines
             WHERE is_active IS TRUE
-            AND business_unit_id = :bid
-            AND category IS NOT NULL
-            AND trim(category) <> ''
+              AND business_unit_id = :bid
+              AND category IS NOT NULL
+              AND trim(category) <> ''
             ORDER BY category
             """,
-            {"bid": bu_id},
+            {"bid": int(bu_id)},
         )
-        cat_names = [""] + cat_df["category"].tolist()
+        return [""] + (df["category"].astype(str).tolist() if not df.empty else [])
 
-    # If project-locked, seed Category
-    if project_locked and proj_cat:
-        st.session_state[k("cat_sel")] = proj_cat
-
-    cat_choice = st.selectbox(
-        "Category *",
-        cat_names,
-        index=0,
-        key=k("cat_sel"),
-        disabled=project_locked or (bu_id is None),
-        help=None if bu_id else "Select a Business Unit first",
-    )
-    if project_locked:
-        cat_choice = proj_cat
-
-    # ---- Business Line ----
-    bl_df    = pd.DataFrame()
-    bl_names = [""]
-
-    bl_choice = ""
-    business_line_id = None
-
-    if bu_id and cat_choice:
-        bl_df = query_df(
+    def _load_bl_options(bu_id: int | None, category: str | None) -> list[str]:
+        category = _norm(category)
+        if not bu_id or not category:
+            return [""]
+        df = query_df(
             """
-            SELECT business_line_id, name
+            SELECT name
             FROM business_lines
             WHERE is_active IS TRUE
-            AND business_unit_id = :bid
-            AND category = :cat
+              AND business_unit_id = :bid
+              AND category = :cat
             ORDER BY name
             """,
-            {"bid": bu_id, "cat": cat_choice},
+            {"bid": int(bu_id), "cat": category},
         )
-        bl_names = [""] + bl_df["name"].tolist()
+        return [""] + (df["name"].astype(str).tolist() if not df.empty else [])
 
-    # If project-locked, seed BL
-    if project_locked and proj_bl_name:
-        st.session_state[k("bl_sel")] = proj_bl_name
+    def _bl_id_from_name(bu_id: int, category: str, bl_name: str) -> int | None:
+        category = _norm(category)
+        bl_name = _norm(bl_name)
+        if not (bu_id and category and bl_name):
+            return None
+        df = query_df(
+            """
+            SELECT business_line_id
+            FROM business_lines
+            WHERE is_active IS TRUE
+              AND business_unit_id = :bid
+              AND category = :cat
+              AND trim(name) = :nm
+            LIMIT 1
+            """,
+            {"bid": int(bu_id), "cat": category, "nm": bl_name},
+        )
+        return int(df.iloc[0]["business_line_id"]) if not df.empty else None
 
-    bl_choice = st.selectbox(
-        "Business Line *",
-        bl_names,
-        index=0,
-        key=k("bl_sel"),
-        disabled=project_locked or (bu_id is None) or (not cat_choice),
-        on_change=None if project_locked else _on_line_change,
-        help=None if (bu_id and cat_choice) else "Select a Category first",
-    )
+    def _infer_bu_cat_bl_from_blid(business_line_id: int) -> dict:
+        df = query_df(
+            """
+            SELECT
+              bl.business_line_id,
+              bl.name AS business_line_name,
+              bl.category,
+              bu.business_unit_id,
+              bu.name AS business_unit_name
+            FROM business_lines bl
+            JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+            WHERE bl.business_line_id = :blid
+            LIMIT 1
+            """,
+            {"blid": int(business_line_id)},
+        )
+        if df.empty:
+            return {"bu_name": "", "bu_id": None, "category": "", "bl_name": ""}
+        r = df.iloc[0].to_dict()
+        return {
+            "bu_name": _norm(r.get("business_unit_name")),
+            "bu_id": int(r.get("business_unit_id")) if r.get("business_unit_id") is not None else None,
+            "category": _norm(r.get("category")),
+            "bl_name": _norm(r.get("business_line_name")),
+        }
 
-    if project_locked and proj_bl_id:
-        business_line_id = proj_bl_id
-        bl_choice        = proj_bl_name
-    elif bu_id and cat_choice and bl_choice:
-        match = bl_df.loc[bl_df["name"] == bl_choice, "business_line_id"]
-        business_line_id = int(match.iloc[0]) if not match.empty else None
-
-    # ---- Product (Article Number) ----
-    prod_labels: list[str] = [""]
-    prod_df = pd.DataFrame()
-    product_id  = None
-    prod_choice = ""
-
-    prod_disabled = bool(project_locked)
-
-    if business_line_id:
-        prod_df = query_df(
+    def _load_product_options(business_line_id: int | None) -> list[str]:
+        if not business_line_id:
+            return [""]
+        df = query_df(
             """
             SELECT product_id, article_number, description
             FROM items
             WHERE is_active IS TRUE
-            AND business_line_id = :blid
+              AND business_line_id = :blid
             ORDER BY COALESCE(article_number, product_id)
             """,
-            {"blid": business_line_id},
+            {"blid": int(business_line_id)},
         )
+        labels = [""]
+        if not df.empty:
+            for _, r in df.iterrows():
+                article = r["article_number"] if pd.notna(r["article_number"]) else r["product_id"]
+                desc = str(r["description"]).strip() if pd.notna(r["description"]) else ""
+                labels.append(f"{article} — {desc}" if desc else f"{article}")
+        return labels
 
-        prod_labels = [""] + [
-            (
-                f"{(r.article_number or r.product_id)} — {r.description}"
-                if pd.notna(r.description) and str(r.description).strip()
-                else f"{(r.article_number or r.product_id)}"
-            )
-            for r in prod_df.itertuples(index=False)
-        ]
-
-    prod_index = 0
-    if project_locked and proj_prod_id and not prod_df.empty:
-        label_to_pid = {}
-        for r in prod_df.itertuples(index=False):
-            label = (
-                f"{(r.article_number or r.product_id)} — {r.description}"
-                if pd.notna(r.description) and str(r.description).strip()
-                else f"{(r.article_number or r.product_id)}"
-            )
-            label_to_pid[label] = r.product_id
-
-        for lbl, pid in label_to_pid.items():
-            if str(pid) == str(proj_prod_id) and lbl in prod_labels:
-                prod_index = prod_labels.index(lbl)
-                st.session_state[k("prod_sel")] = lbl
-                break
-
-    prod_choice = st.selectbox(
-        "Article Number/Product (optional)",
-        prod_labels,
-        index=prod_index,
-        key=k("prod_sel"),
-        disabled=(business_line_id is None) or prod_disabled,
-        help=None if business_line_id else "Select Business Line first",
-    )
-
-    if business_line_id and prod_choice:
-        label_to_pid = {}
-        for r in prod_df.itertuples(index=False):
-            label = (
-                f"{(r.article_number or r.product_id)} — {r.description}"
-                if pd.notna(r.description) and str(r.description).strip()
-                else f"{(r.article_number or r.product_id)}"
-            )
-            label_to_pid[label] = r.product_id
-        product_id = label_to_pid.get(prod_choice)
-
-    if project_locked and proj_prod_id and not product_id:
-        product_id = proj_prod_id
-
-    # =====================================================
-    # SECTION 5 — Visit Details & Outcome
-    # =====================================================
-    st.markdown("### 5️⃣ Visit Details & Outcome")
-
-    if role in {"admin"}:
-        obj_df = query_df(
+    def _product_id_from_label(business_line_id: int, label: str) -> str | None:
+        label = _norm(label)
+        if not label:
+            return None
+        df = query_df(
             """
-            SELECT objective_id, name
-            FROM objectives
-            WHERE COALESCE(is_active, TRUE) IS TRUE
-            ORDER BY name
-            """
-        )
-    else:
-        obj_df = query_df(
-            """
-            SELECT o.objective_id, o.name
-            FROM objectives o
-            JOIN role_objectives ro
-              ON ro.objective_id = o.objective_id
-            WHERE COALESCE(o.is_active, TRUE) IS TRUE
-              AND COALESCE(ro.is_active, TRUE) IS TRUE
-              AND ro.role = :role
-            ORDER BY o.name
+            SELECT product_id, article_number, description
+            FROM items
+            WHERE is_active IS TRUE
+              AND business_line_id = :blid
             """,
-            {"role": role},
+            {"blid": int(business_line_id)},
         )
-        
-    obj_names  = [""] + obj_df["name"].tolist()
-    obj_choice = st.selectbox("Business Objective *", obj_names, index=0, key=k("obj_sel"))
+        if df.empty:
+            return None
+        for _, r in df.iterrows():
+            article = r["article_number"] if pd.notna(r["article_number"]) else r["product_id"]
+            desc = str(r["description"]).strip() if pd.notna(r["description"]) else ""
+            lbl = f"{article} — {desc}" if desc else f"{article}"
+            if _norm(lbl) == label:
+                return str(r["product_id"])
+        return None
 
-    objective_id = None
-    if obj_choice:
-        match = obj_df.loc[obj_df["name"] == obj_choice, "objective_id"]
-        objective_id = int(match.iloc[0]) if not match.empty else None
+    # ============================================================
+    # Objectives (role-based)
+    # ============================================================
+    def _objective_name_for_id(objective_id: int) -> str:
+        df = query_df(
+            """
+            SELECT name
+            FROM objectives
+            WHERE objective_id = :oid
+            LIMIT 1
+            """,
+            {"oid": int(objective_id)},
+        )
+        return _norm(df.iloc[0]["name"]) if not df.empty else ""
 
-    is_shelf_movement = bool(obj_choice and ("shelf movement" in obj_choice.strip().lower()))
-    notes             = st.text_area("Notes (optional)", key=k("notes"))
-
-    allowed_evals = {"Positive", "Negative", "Neutral"}
-    evaluation_choice = st.selectbox(
-        "Evaluation *",
-        [""] + sorted(list(allowed_evals)),
-        index=0,
-        key=k("eval_sel"),
-    )
-    evaluation_val = evaluation_choice if evaluation_choice in allowed_evals else None
-
-    # ---------------- Shelf Movement grid ----------------
-    shelf_df    = pd.DataFrame()
-    shelf_editor = None
-    if is_shelf_movement:
-        st.subheader("🧾 Shelf Movement — Quantities Checked")
-        if not bu_id:
-            st.info("Select a Business Unit to load items.")
-        elif not cat_choice:
-            st.info("Select a Category to load items.")
-        else:
-            shelf_df = query_df(
+    def _load_objective_options_for_role(role_name: str) -> list[str]:
+        if role_name in {"admin", "manager"}:
+            df = query_df(
                 """
-                SELECT i.product_id,
-                       COALESCE(i.article_number, i.product_id) AS article_number,
-                       COALESCE(i.description, '') AS description
-                FROM items i
-                JOIN business_lines bl ON bl.business_line_id = i.business_line_id
-                WHERE i.is_active IS TRUE
-                  AND bl.is_active IS TRUE
-                  AND bl.business_unit_id = :bid
-                  AND bl.category = :cat
-                ORDER BY COALESCE(i.article_number, i.product_id)
-                """,
-                {"bid": bu_id, "cat": cat_choice},
+                SELECT name
+                FROM objectives
+                WHERE COALESCE(is_active, TRUE) IS TRUE
+                ORDER BY name
+                """
             )
-            if shelf_df.empty:
-                st.warning("No active items found for this Category.")
-            else:
-                shelf_df = shelf_df.assign(qty_checked=pd.Series([None] * len(shelf_df)))
-                shelf_editor = st.data_editor(
-                    shelf_df,
-                    key=k("sm_editor"),
-                    width='stretch',
-                    hide_index=True,
-                    num_rows="fixed",
-                    column_config={
-                        "product_id":     st.column_config.TextColumn("Product ID", disabled=True),
-                        "article_number": st.column_config.TextColumn("Article #",  disabled=True),
-                        "description":    st.column_config.TextColumn("Description", disabled=True),
-                        "qty_checked":    st.column_config.NumberColumn(
-                            "Qty Checked",
-                            help="Leave blank if not checked. Enter 0 if none on shelf.",
-                            min_value=0,
-                            step=1,
-                        ),
+        else:
+            df = query_df(
+                """
+                SELECT o.name
+                FROM objectives o
+                JOIN role_objectives ro ON ro.objective_id = o.objective_id
+                WHERE COALESCE(o.is_active, TRUE) IS TRUE
+                  AND COALESCE(ro.is_active, TRUE) IS TRUE
+                  AND ro.role = :role
+                ORDER BY o.name
+                """,
+                {"role": role_name},
+            )
+        return [""] + (df["name"].astype(str).tolist() if not df.empty else [])
+
+    def _objective_id_from_name(obj_name: str) -> int | None:
+        obj_name = _norm(obj_name)
+        if not obj_name:
+            return None
+        df = query_df(
+            """
+            SELECT objective_id
+            FROM objectives
+            WHERE trim(name) = :n
+            LIMIT 1
+            """,
+            {"n": obj_name},
+        )
+        return int(df.iloc[0]["objective_id"]) if not df.empty else None
+
+    # ============================================================
+    # Location view
+    # ============================================================
+    def _render_location_view(lat, lon, acc):
+        st.markdown("### 1️⃣ Visit Location")
+        st.text_input("Latitude", value=str(lat or ""), disabled=True, key=f"{PAGE_NS}/lat_view")
+        st.text_input("Longitude", value=str(lon or ""), disabled=True, key=f"{PAGE_NS}/lon_view")
+        st.text_input("Accuracy (m)", value=str(acc or ""), disabled=True, key=f"{PAGE_NS}/acc_view")
+
+        if lat is None or lon is None:
+            st.info("No location captured for this visit.")
+            return
+
+        try:
+            m = folium.Map(location=[float(lat), float(lon)], zoom_start=15, control_scale=True)
+            folium.Marker([float(lat), float(lon)], tooltip="Visit Location").add_to(m)
+            st_folium(m, width="100%", height=280)
+        except Exception:
+            st.info("Map preview unavailable (lat/lon invalid).")
+
+    # ============================================================
+    # Insert request + details
+    # ============================================================
+    def _insert_request_and_details(visit_id: int, requested_by: int, note: str, details: list[dict]) -> int:
+        sql_req = text(
+            """
+            INSERT INTO request_changes
+              (visit_id, change_source, requested_by, request_note, status, request_date)
+            VALUES
+              (:visit_id, 'REQUEST', :requested_by, :request_note, 'IN_REVIEW', NOW())
+            RETURNING request_id
+            """
+        )
+        sql_det = text(
+            """
+            INSERT INTO request_change_details
+              (request_id, field, old_value, new_value)
+            VALUES
+              (:request_id, :field, :old_value, :new_value)
+            """
+        )
+
+        with engine.begin() as conn:
+            chk = conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM request_changes
+                    WHERE visit_id = :vid AND status = 'IN_REVIEW'
+                    LIMIT 1
+                    """
+                ),
+                {"vid": int(visit_id)},
+            ).fetchone()
+            if chk:
+                raise ValueError("There is already an IN_REVIEW request for this visit.")
+
+            request_id = conn.execute(
+                sql_req,
+                {"visit_id": int(visit_id), "requested_by": int(requested_by), "request_note": str(note)},
+            ).scalar_one()
+
+            for d in details:
+                conn.execute(
+                    sql_det,
+                    {
+                        "request_id": int(request_id),
+                        "field": str(d["field"]),
+                        "old_value": d.get("old_value"),
+                        "new_value": d.get("new_value"),
                     },
                 )
 
-    # ---------------- Potential duplicate banner ----------------
-    if customer_id:
-        mins = recent_visit_minutes(uid, customer_id)
-        if mins is not None and mins < DUP_MINUTES:
-            st.info(f"You submitted for **{cust_choice}** {mins} minutes ago — potential duplicate.")
+        return int(request_id)
 
-    # ---------------- Submit button ----------------
-    inline_click = st.button(
-        "Submit",
-        type="primary",
-        key=k("submit_btn_inline"),
-        disabled=st.session_state[busy_key],
-        help="Saves immediately. You’ll see a spinner while saving.",
-    )
+    # ============================================================
+    # Cascading reset callbacks (guarded by prefill phase)
+    # ============================================================
+    def _in_prefill_phase() -> bool:
+        return bool(st.session_state.get(f"{PAGE_NS}/prefill_phase", False))
 
-    if inline_click and not st.session_state[busy_key]:
-        st.session_state[intent_key] = True
-        st.session_state[busy_key]   = True
-        st.rerun()
-
-    if not st.session_state[intent_key]:
-        return
-
-    # ---------------- Process submission ----------------
-    with st.spinner("Saving your visit…"):
-        errors: list[str] = []
-
-        if not region_choice:
-            errors.append("Please choose a **Region**.")
-        if not city_choice:
-            errors.append("Please choose a **City**.")
-        if not sector_choice:
-            errors.append("Please choose a **Sector**.")
-        if not customer_id:
-            errors.append("Please choose a **Customer**.")
-
-        # ✅ NEW: Other Customer validation
-        if is_other_customer:
-            if not other_customer_name or not other_customer_name.strip():
-                errors.append("For **Other Customer**, please enter **Customer Name**.")
-
-        # Target audience validation
-        if not aud_choice_label:
-            errors.append("Please choose a **Target Audience** for the selected customer.")
-        elif aud_choice_label == "Other":
-            if not other_ta_name or not other_ta_name.strip():
-                errors.append("For **Other Target Audience**, please enter **Target Audience Name**.")
-            if not other_ta_department:
-                errors.append("For **Other Target Audience**, please select a **Department**.")
-            if not other_ta_position:
-                errors.append("For **Other Target Audience**, please select a **Position**.")
-
-            if other_ta_phone and other_ta_phone.strip():
-                phone_clean = other_ta_phone.strip()
-                if not re.fullmatch(r"(?:\+966|00966|0)?5\d{8}", phone_clean):
-                    errors.append(
-                        "For **Other Target Audience**, **Phone #** looks invalid "
-                        "(expected KSA mobile like 05XXXXXXXX)."
-                    )
-
-            if other_ta_email and other_ta_email.strip():
-                email_clean = other_ta_email.strip()
-                if not re.fullmatch(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email_clean):
-                    errors.append("For **Other Target Audience**, **Email** looks invalid.")
-        elif not audience_id:
-            errors.append("Please choose a valid **Target Audience** for the selected customer.")
-
-        if is_home_visit:
-            if not patient_name:
-                errors.append("For **Home Visit**, please enter **Patient Name**.")
-            if not patient_phone:
-                errors.append("For **Home Visit**, please enter **Patient Phone #**.")
-            elif not re.fullmatch(r"(?:\+966|00966|0)?5\d{8}", patient_phone.strip()):
-                errors.append("**Patient Phone #** looks invalid (expected KSA mobile like 05XXXXXXXX).")
-            if not serial_no:
-                errors.append("For **Home Visit**, please enter **Serial #**.")
-
-        if not bu_id:
-            errors.append("Please choose a **Business Unit**.")
-        if not cat_choice:
-            errors.append("Please choose a **Category**.")
-        if not business_line_id:
-            errors.append("Please choose a **Business Line**.")
-
-        if objective_id is None:
-            errors.append("Please choose a **Business Objective**.")
-        if evaluation_val is None:
-            errors.append("Please choose an **Evaluation** (Positive/Negative/Neutral).")
-
-        shelf_lines_payload = None
-        filled_rows = None
-
-        # Shelf Movement validations
-        if is_shelf_movement:
-            if shelf_editor is None or shelf_editor.empty:
-                errors.append(
-                    "**Shelf Movement** grid is empty. Load items by selecting Business Unit and Category."
-                )
-            else:
-                shelf_lines_payload = []
-                any_qty = False
-                invalid_qty_found = False
-                negative_qty_found = False
-
-                digit_map = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
-
-                for _, row in shelf_editor.iterrows():
-                    raw = row.get("qty_checked", None)
-                    if raw is None:
-                        continue
-
-                    txt = str(raw).strip()
-                    if txt == "" or txt.lower() == "none":
-                        continue
-
-                    txt = txt.translate(digit_map)
-                    digits_only = "".join(ch for ch in txt if ch in "0123456789")
-
-                    if digits_only == "":
-                        invalid_qty_found = True
-                        continue
-
-                    qty = int(digits_only)
-
-                    if qty < 0:
-                        negative_qty_found = True
-                        continue
-
-                    any_qty = True
-                    shelf_lines_payload.append(
-                        {
-                            "product_id": int(row["product_id"]),
-                            "qty_checked": float(qty),
-                        }
-                    )
-
-                filled_rows = pd.DataFrame(shelf_lines_payload)
-
-                if negative_qty_found:
-                    errors.append("Quantities in **Shelf Movement** cannot be negative.")
-
-                if invalid_qty_found:
-                    errors.append(
-                        "Some values in **Shelf Movement** are not numeric or are out of range. "
-                        "Please enter only valid numbers or leave blank."
-                    )
-
-                if not any_qty and not invalid_qty_found and not negative_qty_found:
-                    errors.append(
-                        "Enter at least **one** quantity in the **Shelf Movement** grid "
-                        "(blank = not checked; 0 is allowed)."
-                    )
-
-        if errors:
-            for msg in errors:
-                st.error(msg)
-            st.session_state[busy_key]   = False
-            st.session_state[intent_key] = False
+    def _clear_from_bu():
+        if _in_prefill_phase():
             return
+        st.session_state[f"{PAGE_NS}/cat_sel"] = ""
+        st.session_state[f"{PAGE_NS}/bl_sel"] = ""
+        st.session_state[f"{PAGE_NS}/prod_sel"] = ""
+        st.session_state.pop(f"{PAGE_NS}/sm_editor", None)
 
-        # ----- All validations passed → persist -----
-        visit_row = {
-            "user_id":             uid,
-            "submitted_at_utc":    _utcnow(),
-            "submitted_at_local":  _local_now_str(),
-            "latitude":            lat,
-            "longitude":           lon,
-            "accuracy_m":          acc,
-            "customer_id":         int(customer_id),
-            "audience_id":         int(audience_id) if audience_id else None,
-            "business_line_id":    int(business_line_id),
-            "product_id":          (None if is_shelf_movement else product_id),
-            "objective_id":        int(objective_id),
-            "notes":               (notes.strip() if notes else None),
-            "evaluation":          evaluation_val,
-            "project_id":          int(selected_project_id) if selected_project_id else None,
+    def _clear_from_cat():
+        if _in_prefill_phase():
+            return
+        st.session_state[f"{PAGE_NS}/bl_sel"] = ""
+        st.session_state[f"{PAGE_NS}/prod_sel"] = ""
+        st.session_state.pop(f"{PAGE_NS}/sm_editor", None)
 
-            # ✅ NEW: store the typed name when customer is Other
-            "other_customer_name": (other_customer_name.strip() if (is_other_customer and other_customer_name) else None),
+    def _clear_from_bl():
+        if _in_prefill_phase():
+            return
+        st.session_state[f"{PAGE_NS}/prod_sel"] = ""
 
-            # New fields for "Other" Target Audience
-            "other_audience_title":      (other_ta_title.strip() if other_ta_title else None) or None,
-            "other_audience_name":       (other_ta_name.strip() if other_ta_name else None),
-            "other_audience_department": (other_ta_department.strip() if other_ta_department else None),
-            "other_audience_position":   (other_ta_position.strip() if other_ta_position else None),
-            "other_audience_phone":      (other_ta_phone.strip() if other_ta_phone else None) or None,
-            "other_audience_email":      (other_ta_email.strip() if other_ta_email else None) or None,
-        }
+    def _on_other_dept_change():
+        if _in_prefill_phase():
+            return
+        st.session_state[f"{PAGE_NS}/ota_pos"] = ""
 
-        home_payload = None
-        if is_home_visit:
-            home_payload = {
-                "patient_name":  patient_name,
-                "patient_phone": patient_phone,
-                "serial_no":     serial_no,
-            }
+    # ============================================================
+    # Keys to clear when searching a new visit
+    # ============================================================
+    PREFILL_KEYS = [
+        f"{PAGE_NS}/snap",
+        f"{PAGE_NS}/prefilled_vid",
+        f"{PAGE_NS}/pending_vid",
+        f"{PAGE_NS}/prefill_phase",
+        f"{PAGE_NS}/active_visit_id",
 
-        try:
-            visit_id = insert_visit_atomic(visit_row, home_payload, shelf_lines_payload)
+        f"{PAGE_NS}/aud_sel",
+        f"{PAGE_NS}/bu_sel", f"{PAGE_NS}/cat_sel", f"{PAGE_NS}/bl_sel", f"{PAGE_NS}/prod_sel",
+        f"{PAGE_NS}/obj_sel", f"{PAGE_NS}/eval_sel",
+        f"{PAGE_NS}/notes",
 
-            # Power BI row
-            def _article_from_label(lbl: str | None) -> str:
-                if not lbl:
-                    return ""
-                return str(lbl).split(" — ", 1)[0].strip()
+        f"{PAGE_NS}/ota_title", f"{PAGE_NS}/ota_name", f"{PAGE_NS}/ota_dept", f"{PAGE_NS}/ota_pos",
+        f"{PAGE_NS}/ota_phone", f"{PAGE_NS}/ota_email",
 
-            shelf_lines_count = int(len(filled_rows)) if (is_shelf_movement and filled_rows is not None) else 0
-            shelf_total_qty   = int(filled_rows["qty_checked"].sum()) if (is_shelf_movement and filled_rows is not None) else 0
+        f"{PAGE_NS}/hv_name", f"{PAGE_NS}/hv_phone", f"{PAGE_NS}/hv_serial",
 
-            pbi_row = {
-                "submitted_at_utc":   datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                "submitted_at_local": datetime.now().isoformat(),
-                "user_name":          str(u.get("name") or ""),
-                "user_region":        str(u.get("region") or ""),
-                "customer_name":      str(cust_choice or ""),
-                "audience_name":      ("Home Visit" if is_home_visit else str(aud_choice_label or "")),
-                "business_unit":      str(bu_choice or ""),
-                "category":           str(cat_choice or ""),
-                "business_line":      str(bl_choice or ""),
-                "article_number": (
-                    "" if is_shelf_movement else _article_from_label(
-                        prod_choice if (business_line_id and prod_choice) else None
-                    )
-                ),
-                "objective":          str(obj_choice or ""),
-                "evaluation":         str(evaluation_val or ""),
-                "latitude":           float(lat) if lat is not None else 0.0,
-                "longitude":          float(lon) if lon is not None else 0.0,
-                "accuracy_m": (
-                    f"{acc:.1f}" if isinstance(acc, (int, float)) else (str(acc) if acc is not None else "")
-                ),
-                "notes":              (notes.strip() if notes else ""),
-                "shelf_lines_count":  shelf_lines_count,
-                "shelf_total_qty":    shelf_total_qty,
-            }
+        f"{PAGE_NS}/sm_editor",
+        f"{PAGE_NS}/req_note",
+    ]
 
-            # (optional) include the typed Other customer name in Power BI payload too
-            if is_other_customer and other_customer_name and other_customer_name.strip():
-                pbi_row["other_customer_name"] = other_customer_name.strip()
+    # ============================================================
+    # Tabs
+    # ============================================================
+    tab_new, tab_view = st.tabs(["➕ New Request", "📄 View Requests"])
 
-            if is_home_visit:
-                pbi_row.update({
-                    "patient_name":  patient_name.strip(),
-                    "patient_phone": patient_phone.strip(),
-                    "serial_no":     serial_no.strip().upper(),
-                })
+    # ============================================================
+    # TAB 1 — New Request
+    # ============================================================
+    with tab_new:
+        st.markdown(
+            '<div style="margin:.25rem 0 1rem 0;">'
+            'Fields marked with <span style="color:#d00000;font-weight:700">*</span> are required.'
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
-            ok, err = push_visit_to_pbi(pbi_row)
-            if not ok:
-                st.warning(f"Saved, but Power BI push failed → {err}")
-            else:
-                st.toast("Pushed to Power BI ✅", icon="✅")
+        st.markdown("### Select Visit")
+        vcol1, vcol2 = st.columns([2, 1])
+        with vcol1:
+            visit_id_str = st.text_input(
+                "Input Visit ID you are wishing to request a change for:",
+                key=f"{PAGE_NS}/visit_id_in",
+            )
+        with vcol2:
+            search_click = st.button("Search", type="primary", key=f"{PAGE_NS}/search_btn")
 
-            # reset form
-            st.session_state[nonce_key]        += 1
-            st.session_state[geo_nonce_key]    += 1
-            st.session_state.pop(geo_captured_key, None)
-            st.session_state[saved_ok_key]      = True
-            st.session_state[intent_key]        = False
-            st.session_state[busy_key]          = False
-            st.session_state[prev_proj_key]     = ""  # reset project tracker after successful submit
+        if search_click:
+            vid = _safe_int(visit_id_str)
+            if not vid:
+                st.error("Enter a valid Visit ID.")
+                st.stop()
 
-            # clear "Other Customer Name" field after save
-            st.session_state.pop(k("other_customer_name"), None)
+            for k in PREFILL_KEYS:
+                st.session_state.pop(k, None)
 
-            # (optional but recommended) clear quick-find UI state after successful save
-            st.session_state[req_clear_customer_key] = True
-            st.session_state[req_clear_acct_key]     = True
-            st.session_state[qf_msg_key]             = ""
-            st.session_state[qf_msg_type_key]        = ""
+            st.session_state[f"{PAGE_NS}/pending_vid"] = int(vid)
+            st.rerun()
+
+        pending_vid = st.session_state.pop(f"{PAGE_NS}/pending_vid", None)
+        if pending_vid:
+            snap = _load_visit_snapshot(int(pending_vid))
+            if not snap:
+                st.error("Visit ID not found.")
+                st.stop()
+
+            if int(snap["visit"]["user_id"]) != uid and role not in {"admin", "manager"}:
+                st.error("You can only request changes for your own visits.")
+                st.stop()
+
+            if _has_open_request_for_visit(int(pending_vid)):
+                st.error("This visit already has an IN_REVIEW request.")
+                st.stop()
+
+            v = snap["visit"]
+
+            st.session_state[f"{PAGE_NS}/prefill_phase"] = True
+
+            # Audience label
+            aud_label = ""
+            if v.get("audience_id"):
+                aud_label = _audience_label_for_id(int(v["audience_id"]))
+            elif _norm(v.get("other_audience_name")):
+                aud_label = "Other"
+            st.session_state[f"{PAGE_NS}/aud_sel"] = aud_label
+
+            # Infer BU/Category/BL from BLID
+            blid = _safe_int(v.get("business_line_id"))
+            infer = _infer_bu_cat_bl_from_blid(blid) if blid else {"bu_name": "", "category": "", "bl_name": ""}
+            st.session_state[f"{PAGE_NS}/bu_sel"] = _norm(infer.get("bu_name"))
+            st.session_state[f"{PAGE_NS}/cat_sel"] = _norm(infer.get("category"))
+            st.session_state[f"{PAGE_NS}/bl_sel"] = _norm(infer.get("bl_name"))
+
+            # Product label lookup
+            prod_lbl = ""
+            pid_txt = _norm(v.get("product_id"))
+            if pid_txt:
+                dfp = query_df(
+                    """
+                    SELECT product_id, article_number, description
+                    FROM items
+                    WHERE product_id = :pid
+                    LIMIT 1
+                    """,
+                    {"pid": pid_txt},
+                )
+                if not dfp.empty:
+                    r = dfp.iloc[0]
+                    article = r["article_number"] if pd.notna(r["article_number"]) else r["product_id"]
+                    desc = str(r["description"]).strip() if pd.notna(r["description"]) else ""
+                    prod_lbl = f"{article} — {desc}" if desc else f"{article}"
+            st.session_state[f"{PAGE_NS}/prod_sel"] = _norm(prod_lbl)
+
+            # Objective + eval
+            obj_lbl = ""
+            oid = _safe_int(v.get("objective_id"))
+            if oid:
+                obj_lbl = _objective_name_for_id(int(oid))
+            st.session_state[f"{PAGE_NS}/obj_sel"] = _norm(obj_lbl)
+            st.session_state[f"{PAGE_NS}/eval_sel"] = _norm(v.get("evaluation"))
+
+            # Notes prefill
+            st.session_state[f"{PAGE_NS}/active_visit_id"] = int(pending_vid)
+            st.session_state[f"{PAGE_NS}/notes"] = _norm(v.get("notes"))
+
+            # Other TA fields
+            st.session_state[f"{PAGE_NS}/ota_title"] = _norm(v.get("other_audience_title"))
+            st.session_state[f"{PAGE_NS}/ota_name"] = _norm(v.get("other_audience_name"))
+            st.session_state[f"{PAGE_NS}/ota_dept"] = _norm(v.get("other_audience_department"))
+            st.session_state[f"{PAGE_NS}/ota_pos"] = _norm(v.get("other_audience_position"))
+            st.session_state[f"{PAGE_NS}/ota_phone"] = _norm(v.get("other_audience_phone"))
+            st.session_state[f"{PAGE_NS}/ota_email"] = _norm(v.get("other_audience_email"))
+
+            # Home visit fields
+            hv0 = snap["home_visit"] or {}
+            st.session_state[f"{PAGE_NS}/hv_name"] = _norm(hv0.get("patient_name"))
+            st.session_state[f"{PAGE_NS}/hv_phone"] = _norm(hv0.get("patient_phone"))
+            st.session_state[f"{PAGE_NS}/hv_serial"] = _norm(hv0.get("serial_no"))
+
+            st.session_state[f"{PAGE_NS}/snap"] = snap
+            st.session_state[f"{PAGE_NS}/prefilled_vid"] = int(pending_vid)
 
             st.rerun()
 
-        except IntegrityError as e:
-            emsg = str(e).lower()
-            if (
-                UniqueViolation and isinstance(e.orig, UniqueViolation)
-            ) or (
-                "duplicate key value violates unique constraint" in emsg
-            ) or (
-                "unique constraint" in emsg and "home_visits_serial_no" in emsg
-            ):
-                st.error("Serial # already exists. Please verify and try again.")
+        snap = st.session_state.get(f"{PAGE_NS}/snap")
+        if not snap:
+            st.info("Search for a Visit ID to start.")
+            st.stop()
+
+        v = snap["visit"]
+
+        # keep notes synced if visit changes
+        current_vid = int(v.get("visit_id") or 0)
+        if st.session_state.get(f"{PAGE_NS}/active_visit_id") != current_vid:
+            st.session_state[f"{PAGE_NS}/active_visit_id"] = current_vid
+            st.session_state[f"{PAGE_NS}/notes"] = _norm(v.get("notes"))
+
+        # =====================================================
+        # 1️⃣ Location
+        # =====================================================
+        _render_location_view(v.get("latitude"), v.get("longitude"), v.get("accuracy_m"))
+
+        # =====================================================
+        # 2️⃣ Project (READ ONLY)
+        # =====================================================
+        st.markdown("### 2️⃣ Project (read-only)")
+        proj_id = _safe_int(v.get("project_id"))
+        if not proj_id:
+            st.info("No project linked to this visit.")
+        else:
+            proj = _load_project_readonly(int(proj_id))
+            if not proj:
+                st.warning(f"Project #{proj_id} linked, but details were not found.")
             else:
-                st.error("Could not save your submission.")
+                proj_title = f"{int(proj.get('project_id'))}. {_norm(proj.get('project_name'))}"
+                st.success(f"🔒 Linked to project **{proj_title}** (read-only)")
+
+                cols = st.columns(2)
+                with cols[0]:
+                    st.text_input("Project Status", value=_norm(proj.get("status")), disabled=True, key=f"{PAGE_NS}/proj_status")
+                    st.text_input("Customer", value=_norm(proj.get("account_name")), disabled=True, key=f"{PAGE_NS}/proj_customer")
+                    st.text_input("Business Unit", value=_norm(proj.get("business_unit_name")), disabled=True, key=f"{PAGE_NS}/proj_bu")
+                with cols[1]:
+                    st.text_input("Category", value=_norm(proj.get("category")), disabled=True, key=f"{PAGE_NS}/proj_cat")
+                    st.text_input("Business Line", value=_norm(proj.get("business_line_name")), disabled=True, key=f"{PAGE_NS}/proj_bl")
+                    art = _norm(proj.get("article_number"))
+                    desc = _norm(proj.get("item_description"))
+                    st.text_input("Product", value=(f"{art} — {desc}" if art and desc else (art or desc)), disabled=True, key=f"{PAGE_NS}/proj_prod")
+
+        # =====================================================
+        # 3️⃣ Customer & Target Audience
+        # =====================================================
+        st.markdown("### 3️⃣ Customer & Target Audience")
+        customer_id = int(v.get("customer_id") or 0)
+        cust = _get_customer_locked_fields(customer_id)
+
+        st.text_input("Region *", value=_norm(cust.get("region")), disabled=True, key=f"{PAGE_NS}/region_view")
+        st.text_input("City *", value=_norm(cust.get("city")), disabled=True, key=f"{PAGE_NS}/city_view")
+        st.text_input("Sector *", value=_norm(cust.get("sector")), disabled=True, key=f"{PAGE_NS}/sector_view")
+        st.text_input("Customer *", value=_norm(cust.get("account_name")), disabled=True, key=f"{PAGE_NS}/cust_view")
+
+        aud_labels = _load_audience_options(customer_id)
+        _prefill_selectbox(
+            "Target Audience *",
+            aud_labels,
+            key=f"{PAGE_NS}/aud_sel",
+            prefill_value=st.session_state.get(f"{PAGE_NS}/aud_sel", ""),
+        )
+
+        aud_choice = st.session_state.get(f"{PAGE_NS}/aud_sel", "")
+        is_other_aud = (aud_choice == "Other")
+        is_home_visit = _is_home_visit_label(aud_choice)
+
+        if is_other_aud:
+            st.markdown("##### ➕ New Target Audience Details")
+
+            _prefill_selectbox(
+                "Title (optional)",
+                TITLE_OPTIONS,
+                key=f"{PAGE_NS}/ota_title",
+                prefill_value=st.session_state.get(f"{PAGE_NS}/ota_title", ""),
+            )
+
+            st.text_input("Target Audience Name *", key=f"{PAGE_NS}/ota_name")
+
+            dept_opts = _load_other_dept_options()
+            _prefill_selectbox(
+                "Department *",
+                dept_opts,
+                key=f"{PAGE_NS}/ota_dept",
+                prefill_value=st.session_state.get(f"{PAGE_NS}/ota_dept", ""),
+                on_change=_on_other_dept_change,   # clears position when dept changes
+            )
+
+            selected_dept = st.session_state.get(f"{PAGE_NS}/ota_dept", "")
+            pos_opts = _load_other_pos_options(selected_dept)
+            _prefill_selectbox(
+                "Position *",
+                pos_opts,
+                key=f"{PAGE_NS}/ota_pos",
+                prefill_value=st.session_state.get(f"{PAGE_NS}/ota_pos", ""),
+                disabled=(not selected_dept),
+            )
+
+            st.text_input("Phone # (optional)", key=f"{PAGE_NS}/ota_phone")
+            st.text_input("Email (optional)", key=f"{PAGE_NS}/ota_email")
+
+        if is_home_visit:
+            st.markdown("##### 🏠 Home Visit Details")
+            st.text_input("Patient Name *", key=f"{PAGE_NS}/hv_name")
+            st.text_input("Patient Phone # *", key=f"{PAGE_NS}/hv_phone")
+            st.text_input("Device Serial # *", key=f"{PAGE_NS}/hv_serial")
+
+        # =====================================================
+        # 4️⃣ Product Details
+        # =====================================================
+        st.markdown("### 4️⃣ Product Details")
+
+        bu_names = _load_bu_options()
+        st.selectbox(
+            "Business Unit *",
+            bu_names,
+            index=bu_names.index(st.session_state.get(f"{PAGE_NS}/bu_sel", "")) if st.session_state.get(f"{PAGE_NS}/bu_sel", "") in bu_names else 0,
+            key=f"{PAGE_NS}/bu_sel",
+            on_change=_clear_from_bu,
+        )
+        bu_choice = st.session_state.get(f"{PAGE_NS}/bu_sel", "")
+        bu_id = _bu_id_from_name(bu_choice) if bu_choice else None
+
+        cat_names = _load_category_options(bu_id)
+        st.selectbox(
+            "Category *",
+            cat_names,
+            index=cat_names.index(st.session_state.get(f"{PAGE_NS}/cat_sel", "")) if st.session_state.get(f"{PAGE_NS}/cat_sel", "") in cat_names else 0,
+            key=f"{PAGE_NS}/cat_sel",
+            disabled=(bu_id is None),
+            on_change=_clear_from_cat,
+        )
+        cat_choice = st.session_state.get(f"{PAGE_NS}/cat_sel", "")
+
+        bl_names = _load_bl_options(bu_id, cat_choice)
+        st.selectbox(
+            "Business Line *",
+            bl_names,
+            index=bl_names.index(st.session_state.get(f"{PAGE_NS}/bl_sel", "")) if st.session_state.get(f"{PAGE_NS}/bl_sel", "") in bl_names else 0,
+            key=f"{PAGE_NS}/bl_sel",
+            disabled=(bu_id is None) or (not cat_choice),
+            on_change=_clear_from_bl,
+        )
+        bl_choice = st.session_state.get(f"{PAGE_NS}/bl_sel", "")
+
+        new_business_line_id = (
+            _bl_id_from_name(bu_id, cat_choice, bl_choice) if (bu_id and cat_choice and bl_choice) else None
+        )
+
+        prod_labels = _load_product_options(new_business_line_id)
+        st.selectbox(
+            "Article Number/Product (optional)",
+            prod_labels,
+            index=prod_labels.index(st.session_state.get(f"{PAGE_NS}/prod_sel", "")) if st.session_state.get(f"{PAGE_NS}/prod_sel", "") in prod_labels else 0,
+            key=f"{PAGE_NS}/prod_sel",
+            disabled=(new_business_line_id is None),
+        )
+        prod_choice = st.session_state.get(f"{PAGE_NS}/prod_sel", "")
+
+        # =====================================================
+        # 5️⃣ Objective, Notes, Evaluation
+        # =====================================================
+        st.markdown("### 5️⃣ Visit Details & Outcome")
+
+        obj_names = _load_objective_options_for_role(role)
+        _prefill_selectbox(
+            "Business Objective *",
+            obj_names,
+            key=f"{PAGE_NS}/obj_sel",
+            prefill_value=st.session_state.get(f"{PAGE_NS}/obj_sel", ""),
+        )
+        obj_choice = st.session_state.get(f"{PAGE_NS}/obj_sel", "")
+        is_shelf = _is_shelf_objective(obj_choice)
+
+        # Notes
+        prefilled_notes = st.session_state.get(f"{PAGE_NS}/notes", "")
+        notes = st.text_area("Notes (optional)", value=prefilled_notes, key=f"{PAGE_NS}/notes")
+
+        _prefill_selectbox(
+            "Evaluation *",
+            ["", "Positive", "Negative", "Neutral"],
+            key=f"{PAGE_NS}/eval_sel",
+            prefill_value=st.session_state.get(f"{PAGE_NS}/eval_sel", ""),
+        )
+        evaluation_choice = st.session_state.get(f"{PAGE_NS}/eval_sel", "")
+
+        # end prefill phase after first full render
+        if st.session_state.get(f"{PAGE_NS}/prefill_phase"):
+            st.session_state[f"{PAGE_NS}/prefill_phase"] = False
+
+        # =====================================================
+        # Live Changes Preview
+        # =====================================================
+        details: list[dict] = []
+
+        new_audience_id = _resolve_audience_id_from_label(customer_id, aud_choice)
+        new_objective_id = _objective_id_from_name(obj_choice)
+
+        new_product_id = None
+        if (not is_shelf) and new_business_line_id and prod_choice:
+            new_product_id = _product_id_from_label(new_business_line_id, prod_choice)
+
+        _add_detail(details, "visits.audience_id", v.get("audience_id"), new_audience_id)
+        _add_detail(details, "visits.business_line_id", v.get("business_line_id"), new_business_line_id)
+        _add_detail(details, "visits.product_id", v.get("product_id"), (None if is_shelf else new_product_id))
+        _add_detail(details, "visits.objective_id", v.get("objective_id"), new_objective_id)
+        _add_detail(details, "visits.notes", v.get("notes"), (notes.strip() if notes else None))
+        _add_detail(details, "visits.evaluation", v.get("evaluation"), (evaluation_choice or None))
+
+        if is_other_aud:
+            _add_detail(details, "visits.other_audience_title", v.get("other_audience_title"), (st.session_state.get(f"{PAGE_NS}/ota_title") or None))
+            _add_detail(details, "visits.other_audience_name", v.get("other_audience_name"), (st.session_state.get(f"{PAGE_NS}/ota_name") or None))
+            _add_detail(details, "visits.other_audience_department", v.get("other_audience_department"), (st.session_state.get(f"{PAGE_NS}/ota_dept") or None))
+            _add_detail(details, "visits.other_audience_position", v.get("other_audience_position"), (st.session_state.get(f"{PAGE_NS}/ota_pos") or None))
+            _add_detail(details, "visits.other_audience_phone", v.get("other_audience_phone"), (st.session_state.get(f"{PAGE_NS}/ota_phone") or None))
+            _add_detail(details, "visits.other_audience_email", v.get("other_audience_email"), (st.session_state.get(f"{PAGE_NS}/ota_email") or None))
+
+        st.markdown("### 🔎 Live Changes Preview")
+        if not details:
+            st.info("No changes yet.")
+        else:
+            preview_df = pd.DataFrame(
+                [{"Field": d["field"], "Old Value": d.get("old_value"), "New Value": d.get("new_value")} for d in details]
+            )
+            st.dataframe(preview_df, use_container_width=True)
+
+        # =====================================================
+        # Request note + Submit
+        # =====================================================
+        st.markdown("### Change Request Note")
+        st.text_area(
+            "Change Request Note (required) *",
+            key=f"{PAGE_NS}/req_note",
+            placeholder="Explain what you changed and why.",
+        )
+        req_note = st.session_state.get(f"{PAGE_NS}/req_note", "")
+
+        submit_click = st.button(
+            "Submit Change Request",
+            type="primary",
+            disabled=(len(details) == 0),
+            key=f"{PAGE_NS}/submit_btn",
+        )
+        if submit_click:
+            if not req_note or not req_note.strip():
+                st.error("Change Request Note is required.")
+                st.stop()
+
+            try:
+                req_id = _insert_request_and_details(
+                    visit_id=int(v["visit_id"]),
+                    requested_by=uid,
+                    note=req_note.strip(),
+                    details=details,
+                )
+                st.success(f"Request submitted ✅ (Request ID: {req_id})")
+
+                for k in PREFILL_KEYS:
+                    st.session_state.pop(k, None)
+
+                st.rerun()
+            except Exception as e:
+                st.error("Could not submit your request.")
                 st.caption(str(e))
-            st.session_state[intent_key] = False
-            st.session_state[busy_key]   = False
 
-        except Exception as e:
-            st.error("Could not save your submission.")
-            st.caption(str(e))
-            st.session_state[intent_key] = False
-            st.session_state[busy_key]   = False
+    # ============================================================
+    # TAB 2 — View Requests
+    # ============================================================
+    with tab_view:
+        st.subheader("📄 View Requests")
 
+        df = query_df(
+            """
+            SELECT
+              request_id,
+              request_date,
+              visit_id,
+              change_source,
+              status,
+              resolve_date,
+              reject_note
+            FROM request_changes
+            WHERE requested_by = :uid
+            ORDER BY request_date DESC
+            """,
+            {"uid": int(uid)},
+        )
+
+        if df.empty:
+            st.info("No requests yet.")
+            return
+
+        req_ids = df["request_id"].astype(int).tolist()
+        placeholders = ", ".join([f":id{i}" for i in range(len(req_ids))])
+        det_params = {f"id{i}": int(rid) for i, rid in enumerate(req_ids)}
+
+        det = query_df(
+            f"""
+            SELECT request_id, field
+            FROM request_change_details
+            WHERE request_id IN ({placeholders})
+            """,
+            det_params,
+        )
+
+        if not det.empty:
+            summary = (
+                det.groupby("request_id")["field"]
+                .apply(lambda s: ", ".join(sorted(set(map(str, s)))))
+                .to_dict()
+            )
+            df["changes"] = df["request_id"].map(summary)
+        else:
+            df["changes"] = ""
+
+        show_cols = [
+            "request_id",
+            "request_date",
+            "visit_id",
+            "status",
+            "change_source",
+            "changes",
+            "resolve_date",
+            "reject_note",
+        ]
+        show_cols = [c for c in show_cols if c in df.columns]
+
+        st.dataframe(df[show_cols], width="stretch")
+    
 # =============================
 # Page — Check-In 
 # =============================
@@ -9561,6 +9632,1079 @@ def page_review_other_customers():
                 st.error("Failed to create new customer and link visit.")
                 st.caption(str(e))
 
+# ============================================================
+# Change Request Page (User) — Ascenda
+# - Separate from Submit Visit flow (no shared helpers required)
+# - Creates change requests ONLY (no modifications to visits/home/shelf tables)
+# - Home Visit logic is TEXT-driven:
+#     Target Audience label startswith "Home Visit" => Home Visit required
+# - Shelf Movement logic is TEXT-driven:
+#     Objective name contains "shelf movement" => Shelf Movement required
+# - Customer + Location + Project are VIEW-ONLY
+# ============================================================
+
+def page_change_request():
+    import re
+    import json
+    import pandas as pd
+    import folium
+    from streamlit_folium import st_folium
+    from sqlalchemy import text
+    import streamlit as st
+
+    st.title("✍️ Change Request")
+
+    # ------------------------------------------------------------
+    # Resolve logged-in user safely
+    # ------------------------------------------------------------
+    u = st.session_state.get("user") or resolve_session_user()
+    if not u:
+        st.warning("Please sign in to continue.")
+        return
+
+    uid = int(u.get("user_id") or u.get("id"))
+    role = (u.get("role") or "").lower().strip()
+
+    display_name = u.get("name") or u.get("email") or f"User #{uid}"
+    display_region = u.get("region") or "—"
+    display_role = u.get("role") or "—"
+    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
+
+    PAGE_NS = "change_request"
+    TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
+
+    # ============================================================
+    # Helpers
+    # ============================================================
+    def _norm(x):
+        if x is None:
+            return ""
+        try:
+            if pd.isna(x):
+                return ""
+        except Exception:
+            pass
+        return str(x).strip()
+
+    def _safe_int(x):
+        try:
+            s = str(x).strip()
+            return int(s) if s else None
+        except Exception:
+            return None
+
+    def _json_dumps(obj) -> str:
+        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str)
+
+    def _is_home_visit_label(aud_label):
+        return bool(aud_label and aud_label.strip().lower().startswith("home visit"))
+
+    def _is_shelf_objective(obj_name):
+        return bool(obj_name and ("shelf movement" in obj_name.strip().lower()))
+
+    def _add_detail(details: list[dict], field: str, old, new):
+        if old is None and new is None:
+            return
+        if str(old) == str(new):
+            return
+        details.append(
+            {
+                "field": field,
+                "old_value": (None if old is None else str(old)),
+                "new_value": (None if new is None else str(new)),
+            }
+        )
+
+    def _prefill_selectbox(label: str, options: list[str], key: str, prefill_value: str, **kwargs):
+        opts = [_norm(o) for o in (options or [""])]
+        pv = _norm(prefill_value)
+
+        if not opts:
+            opts = [""]
+
+        if opts[0] != "":
+            opts = [""] + [o for o in opts if o != ""]
+
+        if pv and pv not in opts:
+            opts = [""] + [pv] + [o for o in opts[1:] if o != pv]
+
+        idx = opts.index(pv) if pv and pv in opts else 0
+        return st.selectbox(label, opts, index=idx, key=key, **kwargs)
+
+    # ============================================================
+    # DB helpers
+    # ============================================================
+    def _has_open_request_for_visit(visit_id: int) -> bool:
+        df = query_df(
+            """
+            SELECT request_id
+            FROM request_changes
+            WHERE visit_id = :vid AND status = 'IN_REVIEW'
+            LIMIT 1
+            """,
+            {"vid": int(visit_id)},
+        )
+        return not df.empty
+
+    def _load_visit_snapshot(visit_id: int) -> dict | None:
+        vdf = query_df(
+            """
+            SELECT
+              visit_id, user_id, submitted_at_utc, submitted_at_local,
+              latitude, longitude, accuracy_m,
+              customer_id, audience_id,
+              business_line_id, product_id, objective_id,
+              notes, evaluation, project_id,
+              other_audience_name, other_audience_department, other_audience_position,
+              other_audience_title, other_audience_phone, other_audience_email,
+              other_customer_name
+            FROM visits
+            WHERE visit_id = :vid
+            """,
+            {"vid": int(visit_id)},
+        )
+        if vdf.empty:
+            return None
+
+        visit = vdf.iloc[0].to_dict()
+
+        hvdf = query_df(
+            """
+            SELECT home_visit_id, patient_name, patient_phone, serial_no
+            FROM home_visits
+            WHERE visit_id = :vid
+            """,
+            {"vid": int(visit_id)},
+        )
+        home_visit = hvdf.iloc[0].to_dict() if not hvdf.empty else None
+
+        mhdf = query_df(
+            """
+            SELECT movement_id
+            FROM shelf_movement_headers
+            WHERE visit_id = :vid
+            """,
+            {"vid": int(visit_id)},
+        )
+        movement_id = int(mhdf.iloc[0]["movement_id"]) if not mhdf.empty else None
+
+        movement_lines = []
+        if movement_id:
+            mldf = query_df(
+                """
+                SELECT product_id, qty_checked
+                FROM shelf_movement_lines
+                WHERE movement_id = :mid
+                """,
+                {"mid": movement_id},
+            )
+            if not mldf.empty:
+                movement_lines = mldf.to_dict(orient="records")
+
+        return {
+            "visit": visit,
+            "home_visit": home_visit,
+            "movement_id": movement_id,
+            "movement_lines": movement_lines,
+        }
+
+    def _get_customer_locked_fields(customer_id: int) -> dict:
+        df = query_df(
+            """
+            SELECT account_name, region, city, sector
+            FROM customers
+            WHERE customer_id = :cid
+            """,
+            {"cid": int(customer_id)},
+        )
+        if df.empty:
+            return {"account_name": "", "region": "", "city": "", "sector": ""}
+        return df.iloc[0].to_dict()
+
+    def _audience_label_for_id(audience_id: int) -> str:
+        df = query_df(
+            """
+            SELECT title, name, department, position
+            FROM target_audiences
+            WHERE audience_id = :aid
+            """,
+            {"aid": int(audience_id)},
+        )
+        if df.empty:
+            return ""
+        r = df.iloc[0]
+        parts = []
+        title = (str(r["title"]).strip() + " ") if pd.notna(r["title"]) and str(r["title"]).strip() else ""
+        name = str(r["name"]).strip() if pd.notna(r["name"]) else ""
+        parts.append((title + name).strip())
+        if pd.notna(r["department"]) and str(r["department"]).strip():
+            parts.append(str(r["department"]).strip())
+        if pd.notna(r["position"]) and str(r["position"]).strip():
+            parts.append(str(r["position"]).strip())
+        return " || ".join([p for p in parts if p])
+
+    def _load_audience_options(customer_id: int) -> list[str]:
+        df = query_df(
+            """
+            SELECT audience_id, title, name, department, position
+            FROM target_audiences
+            WHERE is_active IS TRUE AND customer_id = :cid
+            ORDER BY name
+            """,
+            {"cid": int(customer_id)},
+        )
+
+        def fmt(row) -> str:
+            parts = []
+            title = (str(row["title"]).strip() + " ") if pd.notna(row["title"]) and str(row["title"]).strip() else ""
+            name = str(row["name"]).strip() if pd.notna(row["name"]) else ""
+            parts.append((title + name).strip())
+            if pd.notna(row["department"]) and str(row["department"]).strip():
+                parts.append(str(row["department"]).strip())
+            if pd.notna(row["position"]) and str(row["position"]).strip():
+                parts.append(str(row["position"]).strip())
+            return " || ".join([p for p in parts if p])
+
+        labels = [""]
+        if not df.empty:
+            for _, r in df.iterrows():
+                labels.append(fmt(r))
+        labels.append("Other")
+        return labels
+
+    def _resolve_audience_id_from_label(customer_id: int, label: str) -> int | None:
+        label = _norm(label)
+        if not label or label == "Other":
+            return None
+
+        df = query_df(
+            """
+            SELECT audience_id, title, name, department, position
+            FROM target_audiences
+            WHERE is_active IS TRUE AND customer_id = :cid
+            """,
+            {"cid": int(customer_id)},
+        )
+        if df.empty:
+            return None
+
+        def fmt(row) -> str:
+            parts = []
+            title = (str(row["title"]).strip() + " ") if pd.notna(row["title"]) and str(row["title"]).strip() else ""
+            name = str(row["name"]).strip() if pd.notna(row["name"]) else ""
+            parts.append((title + name).strip())
+            if pd.notna(row["department"]) and str(row["department"]).strip():
+                parts.append(str(row["department"]).strip())
+            if pd.notna(row["position"]) and str(row["position"]).strip():
+                parts.append(str(row["position"]).strip())
+            return " || ".join([p for p in parts if p])
+
+        for _, r in df.iterrows():
+            if _norm(fmt(r)) == label:
+                return int(r["audience_id"])
+        return None
+
+    # ============================================================
+    # Other Audience dropdowns (Department -> Position dependent)
+    # ============================================================
+    def _load_other_dept_options() -> list[str]:
+        df = query_df(
+            """
+            SELECT DISTINCT department
+            FROM target_audiences
+            WHERE COALESCE(is_active, TRUE) IS TRUE
+              AND department IS NOT NULL
+              AND trim(department) <> ''
+            ORDER BY department
+            """
+        )
+        return [""] + (df["department"].astype(str).tolist() if not df.empty else [])
+
+    def _load_other_position_options(dept: str | None) -> list[str]:
+        dept = _norm(dept)
+        if not dept:
+            return [""]
+        df = query_df(
+            """
+            SELECT DISTINCT position
+            FROM target_audiences
+            WHERE COALESCE(is_active, TRUE) IS TRUE
+              AND department = :dept
+              AND position IS NOT NULL
+              AND trim(position) <> ''
+            ORDER BY position
+            """,
+            {"dept": dept},
+        )
+        return [""] + (df["position"].astype(str).tolist() if not df.empty else [])
+
+    # ============================================================
+    # BU / Category / BL / Product
+    # ============================================================
+    def _load_bu_options() -> list[str]:
+        df = query_df(
+            """
+            SELECT name
+            FROM business_units
+            WHERE is_active IS TRUE
+            ORDER BY name
+            """
+        )
+        return [""] + (df["name"].astype(str).tolist() if not df.empty else [])
+
+    def _bu_id_from_name(bu_name: str) -> int | None:
+        bu_name = _norm(bu_name)
+        if not bu_name:
+            return None
+        df = query_df(
+            """
+            SELECT business_unit_id
+            FROM business_units
+            WHERE is_active IS TRUE AND trim(name) = :n
+            LIMIT 1
+            """,
+            {"n": bu_name},
+        )
+        return int(df.iloc[0]["business_unit_id"]) if not df.empty else None
+
+    def _load_category_options(bu_id: int | None) -> list[str]:
+        if not bu_id:
+            return [""]
+        df = query_df(
+            """
+            SELECT DISTINCT category
+            FROM business_lines
+            WHERE is_active IS TRUE
+              AND business_unit_id = :bid
+              AND category IS NOT NULL
+              AND trim(category) <> ''
+            ORDER BY category
+            """,
+            {"bid": int(bu_id)},
+        )
+        return [""] + (df["category"].astype(str).tolist() if not df.empty else [])
+
+    def _load_bl_options(bu_id: int | None, category: str | None) -> list[str]:
+        category = _norm(category)
+        if not bu_id or not category:
+            return [""]
+        df = query_df(
+            """
+            SELECT name
+            FROM business_lines
+            WHERE is_active IS TRUE
+              AND business_unit_id = :bid
+              AND category = :cat
+            ORDER BY name
+            """,
+            {"bid": int(bu_id), "cat": category},
+        )
+        return [""] + (df["name"].astype(str).tolist() if not df.empty else [])
+
+    def _bl_id_from_name(bu_id: int, category: str, bl_name: str) -> int | None:
+        category = _norm(category)
+        bl_name = _norm(bl_name)
+        if not (bu_id and category and bl_name):
+            return None
+        df = query_df(
+            """
+            SELECT business_line_id
+            FROM business_lines
+            WHERE is_active IS TRUE
+              AND business_unit_id = :bid
+              AND category = :cat
+              AND trim(name) = :nm
+            LIMIT 1
+            """,
+            {"bid": int(bu_id), "cat": category, "nm": bl_name},
+        )
+        return int(df.iloc[0]["business_line_id"]) if not df.empty else None
+
+    def _infer_bu_cat_bl_from_blid(business_line_id: int) -> dict:
+        df = query_df(
+            """
+            SELECT
+              bl.business_line_id,
+              bl.name AS business_line_name,
+              bl.category,
+              bu.business_unit_id,
+              bu.name AS business_unit_name
+            FROM business_lines bl
+            JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+            WHERE bl.business_line_id = :blid
+            LIMIT 1
+            """,
+            {"blid": int(business_line_id)},
+        )
+        if df.empty:
+            return {"bu_name": "", "bu_id": None, "category": "", "bl_name": ""}
+        r = df.iloc[0].to_dict()
+        return {
+            "bu_name": _norm(r.get("business_unit_name")),
+            "bu_id": int(r.get("business_unit_id")) if r.get("business_unit_id") is not None else None,
+            "category": _norm(r.get("category")),
+            "bl_name": _norm(r.get("business_line_name")),
+        }
+
+    def _load_product_options(business_line_id: int | None) -> list[str]:
+        if not business_line_id:
+            return [""]
+        df = query_df(
+            """
+            SELECT product_id, article_number, description
+            FROM items
+            WHERE is_active IS TRUE
+              AND business_line_id = :blid
+            ORDER BY COALESCE(article_number, product_id)
+            """,
+            {"blid": int(business_line_id)},
+        )
+        labels = [""]
+        if not df.empty:
+            for _, r in df.iterrows():
+                article = r["article_number"] if pd.notna(r["article_number"]) else r["product_id"]
+                desc = str(r["description"]).strip() if pd.notna(r["description"]) else ""
+                labels.append(f"{article} — {desc}" if desc else f"{article}")
+        return labels
+
+    def _product_id_from_label(business_line_id: int, label: str) -> str | None:
+        label = _norm(label)
+        if not label:
+            return None
+        df = query_df(
+            """
+            SELECT product_id, article_number, description
+            FROM items
+            WHERE is_active IS TRUE
+              AND business_line_id = :blid
+            """,
+            {"blid": int(business_line_id)},
+        )
+        if df.empty:
+            return None
+        for _, r in df.iterrows():
+            article = r["article_number"] if pd.notna(r["article_number"]) else r["product_id"]
+            desc = str(r["description"]).strip() if pd.notna(r["description"]) else ""
+            lbl = f"{article} — {desc}" if desc else f"{article}"
+            if _norm(lbl) == label:
+                return str(r["product_id"])
+        return None
+
+    # ============================================================
+    # Objectives (Role-based)
+    # ============================================================
+    def _objective_name_for_id(objective_id: int) -> str:
+        df = query_df(
+            """
+            SELECT name
+            FROM objectives
+            WHERE objective_id = :oid
+            LIMIT 1
+            """,
+            {"oid": int(objective_id)},
+        )
+        return _norm(df.iloc[0]["name"]) if not df.empty else ""
+
+    def _load_objective_options_for_role(role_name: str) -> list[str]:
+        if role_name in {"admin", "manager"}:
+            df = query_df(
+                """
+                SELECT name
+                FROM objectives
+                WHERE COALESCE(is_active, TRUE) IS TRUE
+                ORDER BY name
+                """
+            )
+        else:
+            df = query_df(
+                """
+                SELECT o.name
+                FROM objectives o
+                JOIN role_objectives ro ON ro.objective_id = o.objective_id
+                WHERE COALESCE(o.is_active, TRUE) IS TRUE
+                  AND COALESCE(ro.is_active, TRUE) IS TRUE
+                  AND ro.role = :role
+                ORDER BY o.name
+                """,
+                {"role": role_name},
+            )
+        return [""] + (df["name"].astype(str).tolist() if not df.empty else [])
+
+    def _objective_id_from_name(obj_name: str) -> int | None:
+        obj_name = _norm(obj_name)
+        if not obj_name:
+            return None
+        df = query_df(
+            """
+            SELECT objective_id
+            FROM objectives
+            WHERE trim(name) = :n
+            LIMIT 1
+            """,
+            {"n": obj_name},
+        )
+        return int(df.iloc[0]["objective_id"]) if not df.empty else None
+
+    # ============================================================
+    # Location view
+    # ============================================================
+    def _render_location_view(lat, lon, acc):
+        st.markdown("### 1️⃣ Visit Location")
+        st.text_input("Latitude", value=str(lat or ""), disabled=True, key=f"{PAGE_NS}/lat_view")
+        st.text_input("Longitude", value=str(lon or ""), disabled=True, key=f"{PAGE_NS}/lon_view")
+        st.text_input("Accuracy (m)", value=str(acc or ""), disabled=True, key=f"{PAGE_NS}/acc_view")
+
+        if lat is None or lon is None:
+            st.info("No location captured for this visit.")
+            return
+
+        try:
+            m = folium.Map(location=[float(lat), float(lon)], zoom_start=15, control_scale=True)
+            folium.Marker([float(lat), float(lon)], tooltip="Visit Location").add_to(m)
+            st_folium(m, width="100%", height=280)
+        except Exception:
+            st.info("Map preview unavailable (lat/lon invalid).")
+
+    # ============================================================
+    # Insert request + details
+    # ============================================================
+    def _insert_request_and_details(visit_id: int, requested_by: int, note: str, details: list[dict]) -> int:
+        sql_req = text(
+            """
+            INSERT INTO request_changes
+              (visit_id, change_source, requested_by, request_note, status, request_date)
+            VALUES
+              (:visit_id, 'REQUEST', :requested_by, :request_note, 'IN_REVIEW', NOW())
+            RETURNING request_id
+            """
+        )
+        sql_det = text(
+            """
+            INSERT INTO request_change_details
+              (request_id, field, old_value, new_value)
+            VALUES
+              (:request_id, :field, :old_value, :new_value)
+            """
+        )
+
+        with engine.begin() as conn:
+            chk = conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM request_changes
+                    WHERE visit_id = :vid AND status = 'IN_REVIEW'
+                    LIMIT 1
+                    """
+                ),
+                {"vid": int(visit_id)},
+            ).fetchone()
+            if chk:
+                raise ValueError("There is already an IN_REVIEW request for this visit.")
+
+            request_id = conn.execute(
+                sql_req,
+                {"visit_id": int(visit_id), "requested_by": int(requested_by), "request_note": str(note)},
+            ).scalar_one()
+
+            for d in details:
+                conn.execute(
+                    sql_det,
+                    {
+                        "request_id": int(request_id),
+                        "field": str(d["field"]),
+                        "old_value": d.get("old_value"),
+                        "new_value": d.get("new_value"),
+                    },
+                )
+
+        return int(request_id)
+
+    # ============================================================
+    # Cascading reset callbacks (guarded by prefill phase)
+    # ============================================================
+    def _in_prefill_phase() -> bool:
+        return bool(st.session_state.get(f"{PAGE_NS}/prefill_phase", False))
+
+    def _clear_from_bu():
+        if _in_prefill_phase():
+            return
+        st.session_state[f"{PAGE_NS}/cat_sel"] = ""
+        st.session_state[f"{PAGE_NS}/bl_sel"] = ""
+        st.session_state[f"{PAGE_NS}/prod_sel"] = ""
+        st.session_state.pop(f"{PAGE_NS}/sm_editor", None)
+
+    def _clear_from_cat():
+        if _in_prefill_phase():
+            return
+        st.session_state[f"{PAGE_NS}/bl_sel"] = ""
+        st.session_state[f"{PAGE_NS}/prod_sel"] = ""
+        st.session_state.pop(f"{PAGE_NS}/sm_editor", None)
+
+    def _clear_from_bl():
+        if _in_prefill_phase():
+            return
+        st.session_state[f"{PAGE_NS}/prod_sel"] = ""
+
+    # ✅ Department -> Position dependency
+    def _clear_from_ota_dept():
+        if _in_prefill_phase():
+            return
+        st.session_state[f"{PAGE_NS}/ota_pos"] = ""
+
+    # ============================================================
+    # Keys to clear when searching a new visit
+    # ============================================================
+    PREFILL_KEYS = [
+        f"{PAGE_NS}/snap",
+        f"{PAGE_NS}/prefilled_vid",
+        f"{PAGE_NS}/pending_vid",
+        f"{PAGE_NS}/prefill_phase",
+        f"{PAGE_NS}/active_visit_id",
+
+        f"{PAGE_NS}/aud_sel",
+        f"{PAGE_NS}/bu_sel", f"{PAGE_NS}/cat_sel", f"{PAGE_NS}/bl_sel", f"{PAGE_NS}/prod_sel",
+        f"{PAGE_NS}/obj_sel", f"{PAGE_NS}/eval_sel",
+        f"{PAGE_NS}/notes",
+
+        f"{PAGE_NS}/ota_title", f"{PAGE_NS}/ota_name", f"{PAGE_NS}/ota_dept", f"{PAGE_NS}/ota_pos",
+        f"{PAGE_NS}/ota_phone", f"{PAGE_NS}/ota_email",
+
+        f"{PAGE_NS}/hv_name", f"{PAGE_NS}/hv_phone", f"{PAGE_NS}/hv_serial",
+
+        f"{PAGE_NS}/sm_editor",
+        f"{PAGE_NS}/req_note",
+    ]
+
+    # ============================================================
+    # Tabs
+    # ============================================================
+    tab_new, tab_view = st.tabs(["➕ New Request", "📄 View Requests"])
+
+    # ============================================================
+    # TAB 1 — New Request
+    # ============================================================
+    with tab_new:
+        st.markdown(
+            '<div style="margin:.25rem 0 1rem 0;">'
+            'Fields marked with <span style="color:#d00000;font-weight:700">*</span> are required.'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("### Select Visit")
+        vcol1, vcol2 = st.columns([2, 1])
+        with vcol1:
+            visit_id_str = st.text_input(
+                "Input Visit ID you are wishing to request a change for:",
+                key=f"{PAGE_NS}/visit_id_in",
+            )
+        with vcol2:
+            search_click = st.button("Search", type="primary", key=f"{PAGE_NS}/search_btn")
+
+        if search_click:
+            vid = _safe_int(visit_id_str)
+            if not vid:
+                st.error("Enter a valid Visit ID.")
+                st.stop()
+
+            # clear previous state
+            for k in PREFILL_KEYS:
+                st.session_state.pop(k, None)
+
+            st.session_state[f"{PAGE_NS}/pending_vid"] = int(vid)
+            st.rerun()
+
+        pending_vid = st.session_state.pop(f"{PAGE_NS}/pending_vid", None)
+        if pending_vid:
+            snap = _load_visit_snapshot(int(pending_vid))
+            if not snap:
+                st.error("Visit ID not found.")
+                st.stop()
+
+            if int(snap["visit"]["user_id"]) != uid and role not in {"admin", "manager"}:
+                st.error("You can only request changes for your own visits.")
+                st.stop()
+
+            if _has_open_request_for_visit(int(pending_vid)):
+                st.error("This visit already has an IN_REVIEW request.")
+                st.stop()
+
+            v = snap["visit"]
+
+            # ---- PRE-FILL PHASE ON ----
+            st.session_state[f"{PAGE_NS}/prefill_phase"] = True
+
+            # Audience label
+            aud_label = ""
+            if v.get("audience_id"):
+                aud_label = _audience_label_for_id(int(v["audience_id"]))
+            elif _norm(v.get("other_audience_name")):
+                aud_label = "Other"
+            st.session_state[f"{PAGE_NS}/aud_sel"] = aud_label
+
+            # Infer BU/Category/BL from BLID
+            blid = _safe_int(v.get("business_line_id"))
+            infer = _infer_bu_cat_bl_from_blid(blid) if blid else {"bu_name": "", "category": "", "bl_name": ""}
+            st.session_state[f"{PAGE_NS}/bu_sel"] = _norm(infer.get("bu_name"))
+            st.session_state[f"{PAGE_NS}/cat_sel"] = _norm(infer.get("category"))
+            st.session_state[f"{PAGE_NS}/bl_sel"] = _norm(infer.get("bl_name"))
+
+            # Product label lookup (bind pid as text)
+            prod_lbl = ""
+            pid_txt = _norm(v.get("product_id"))
+            if pid_txt:
+                dfp = query_df(
+                    """
+                    SELECT product_id, article_number, description
+                    FROM items
+                    WHERE product_id = :pid
+                    LIMIT 1
+                    """,
+                    {"pid": pid_txt},
+                )
+                if not dfp.empty:
+                    r = dfp.iloc[0]
+                    article = r["article_number"] if pd.notna(r["article_number"]) else r["product_id"]
+                    desc = str(r["description"]).strip() if pd.notna(r["description"]) else ""
+                    prod_lbl = f"{article} — {desc}" if desc else f"{article}"
+            st.session_state[f"{PAGE_NS}/prod_sel"] = _norm(prod_lbl)
+
+            # Objective + eval
+            obj_lbl = ""
+            oid = _safe_int(v.get("objective_id"))
+            if oid:
+                obj_lbl = _objective_name_for_id(int(oid))
+            st.session_state[f"{PAGE_NS}/obj_sel"] = _norm(obj_lbl)
+            st.session_state[f"{PAGE_NS}/eval_sel"] = _norm(v.get("evaluation"))
+
+            # Notes
+            st.session_state[f"{PAGE_NS}/active_visit_id"] = int(pending_vid)
+            st.session_state[f"{PAGE_NS}/notes"] = _norm(v.get("notes"))
+
+            # Other TA fields
+            st.session_state[f"{PAGE_NS}/ota_title"] = _norm(v.get("other_audience_title"))
+            st.session_state[f"{PAGE_NS}/ota_name"] = _norm(v.get("other_audience_name"))
+            st.session_state[f"{PAGE_NS}/ota_dept"] = _norm(v.get("other_audience_department"))
+            st.session_state[f"{PAGE_NS}/ota_pos"] = _norm(v.get("other_audience_position"))
+            st.session_state[f"{PAGE_NS}/ota_phone"] = _norm(v.get("other_audience_phone"))
+            st.session_state[f"{PAGE_NS}/ota_email"] = _norm(v.get("other_audience_email"))
+
+            # Home visit fields
+            hv0 = snap["home_visit"] or {}
+            st.session_state[f"{PAGE_NS}/hv_name"] = _norm(hv0.get("patient_name"))
+            st.session_state[f"{PAGE_NS}/hv_phone"] = _norm(hv0.get("patient_phone"))
+            st.session_state[f"{PAGE_NS}/hv_serial"] = _norm(hv0.get("serial_no"))
+
+            st.session_state[f"{PAGE_NS}/snap"] = snap
+            st.session_state[f"{PAGE_NS}/prefilled_vid"] = int(pending_vid)
+
+            st.rerun()
+
+        snap = st.session_state.get(f"{PAGE_NS}/snap")
+        if not snap:
+            st.info("Search for a Visit ID to start.")
+            st.stop()
+
+        v = snap["visit"]
+
+        # keep notes synced if visit changes
+        current_vid = int(v.get("visit_id") or 0)
+        if st.session_state.get(f"{PAGE_NS}/active_visit_id") != current_vid:
+            st.session_state[f"{PAGE_NS}/active_visit_id"] = current_vid
+            st.session_state[f"{PAGE_NS}/notes"] = _norm(v.get("notes"))
+
+        # =====================================================
+        # SECTION 1 — Visit Location (VIEW ONLY)
+        # =====================================================
+        _render_location_view(v.get("latitude"), v.get("longitude"), v.get("accuracy_m"))
+
+        # =====================================================
+        # SECTION 3 — Customer & Target Audience
+        # =====================================================
+        st.markdown("### 3️⃣ Customer & Target Audience")
+        customer_id = int(v.get("customer_id") or 0)
+        cust = _get_customer_locked_fields(customer_id)
+
+        st.text_input("Region *", value=_norm(cust.get("region")), disabled=True, key=f"{PAGE_NS}/region_view")
+        st.text_input("City *", value=_norm(cust.get("city")), disabled=True, key=f"{PAGE_NS}/city_view")
+        st.text_input("Sector *", value=_norm(cust.get("sector")), disabled=True, key=f"{PAGE_NS}/sector_view")
+        st.text_input("Customer *", value=_norm(cust.get("account_name")), disabled=True, key=f"{PAGE_NS}/cust_view")
+
+        aud_labels = _load_audience_options(customer_id)
+        _prefill_selectbox(
+            "Target Audience *",
+            aud_labels,
+            key=f"{PAGE_NS}/aud_sel",
+            prefill_value=st.session_state.get(f"{PAGE_NS}/aud_sel", ""),
+        )
+
+        aud_choice = st.session_state.get(f"{PAGE_NS}/aud_sel", "")
+        is_other_aud = (aud_choice == "Other")
+        is_home_visit = _is_home_visit_label(aud_choice)
+
+        if is_other_aud:
+            st.markdown("##### ➕ New Target Audience Details")
+            _prefill_selectbox(
+                "Title (optional)",
+                TITLE_OPTIONS,
+                key=f"{PAGE_NS}/ota_title",
+                prefill_value=st.session_state.get(f"{PAGE_NS}/ota_title", ""),
+            )
+            st.text_input("Target Audience Name *", key=f"{PAGE_NS}/ota_name")
+
+            dept_opts = _load_other_dept_options()
+            _prefill_selectbox(
+                "Department *",
+                dept_opts,
+                key=f"{PAGE_NS}/ota_dept",
+                prefill_value=st.session_state.get(f"{PAGE_NS}/ota_dept", ""),
+                on_change=_clear_from_ota_dept,   # ✅ makes position dependent
+            )
+
+            selected_dept = st.session_state.get(f"{PAGE_NS}/ota_dept", "")
+            pos_opts = _load_other_position_options(selected_dept)
+            _prefill_selectbox(
+                "Position *",
+                pos_opts,
+                key=f"{PAGE_NS}/ota_pos",
+                prefill_value=st.session_state.get(f"{PAGE_NS}/ota_pos", ""),
+                disabled=(not selected_dept),
+            )
+
+            st.text_input("Phone # (optional)", key=f"{PAGE_NS}/ota_phone")
+            st.text_input("Email (optional)", key=f"{PAGE_NS}/ota_email")
+
+        if is_home_visit:
+            st.markdown("##### 🏠 Home Visit Details")
+            st.text_input("Patient Name *", key=f"{PAGE_NS}/hv_name")
+            st.text_input("Patient Phone # *", key=f"{PAGE_NS}/hv_phone")
+            st.text_input("Device Serial # *", key=f"{PAGE_NS}/hv_serial")
+
+        # =====================================================
+        # SECTION 4 — Product Details (RESTORED)
+        # =====================================================
+        st.markdown("### 4️⃣ Product Details")
+
+        bu_names = _load_bu_options()
+        st.selectbox(
+            "Business Unit *",
+            bu_names,
+            index=bu_names.index(st.session_state.get(f"{PAGE_NS}/bu_sel", "")) if st.session_state.get(f"{PAGE_NS}/bu_sel", "") in bu_names else 0,
+            key=f"{PAGE_NS}/bu_sel",
+            on_change=_clear_from_bu,
+        )
+        bu_choice = st.session_state.get(f"{PAGE_NS}/bu_sel", "")
+        bu_id = _bu_id_from_name(bu_choice) if bu_choice else None
+
+        cat_names = _load_category_options(bu_id)
+        st.selectbox(
+            "Category *",
+            cat_names,
+            index=cat_names.index(st.session_state.get(f"{PAGE_NS}/cat_sel", "")) if st.session_state.get(f"{PAGE_NS}/cat_sel", "") in cat_names else 0,
+            key=f"{PAGE_NS}/cat_sel",
+            disabled=(bu_id is None),
+            on_change=_clear_from_cat,
+        )
+        cat_choice = st.session_state.get(f"{PAGE_NS}/cat_sel", "")
+
+        bl_names = _load_bl_options(bu_id, cat_choice)
+        st.selectbox(
+            "Business Line *",
+            bl_names,
+            index=bl_names.index(st.session_state.get(f"{PAGE_NS}/bl_sel", "")) if st.session_state.get(f"{PAGE_NS}/bl_sel", "") in bl_names else 0,
+            key=f"{PAGE_NS}/bl_sel",
+            disabled=(bu_id is None) or (not cat_choice),
+            on_change=_clear_from_bl,
+        )
+        bl_choice = st.session_state.get(f"{PAGE_NS}/bl_sel", "")
+
+        new_business_line_id = (
+            _bl_id_from_name(bu_id, cat_choice, bl_choice) if (bu_id and cat_choice and bl_choice) else None
+        )
+
+        prod_labels = _load_product_options(new_business_line_id)
+        st.selectbox(
+            "Article Number/Product (optional)",
+            prod_labels,
+            index=prod_labels.index(st.session_state.get(f"{PAGE_NS}/prod_sel", "")) if st.session_state.get(f"{PAGE_NS}/prod_sel", "") in prod_labels else 0,
+            key=f"{PAGE_NS}/prod_sel",
+            disabled=(new_business_line_id is None),
+        )
+        prod_choice = st.session_state.get(f"{PAGE_NS}/prod_sel", "")
+
+        # =====================================================
+        # SECTION 5 — Objective, Notes, Evaluation
+        # =====================================================
+        st.markdown("### 5️⃣ Visit Details & Outcome")
+
+        obj_names = _load_objective_options_for_role(role)
+        _prefill_selectbox(
+            "Business Objective *",
+            obj_names,
+            key=f"{PAGE_NS}/obj_sel",
+            prefill_value=st.session_state.get(f"{PAGE_NS}/obj_sel", ""),
+        )
+        obj_choice = st.session_state.get(f"{PAGE_NS}/obj_sel", "")
+        is_shelf = _is_shelf_objective(obj_choice)
+
+        # Notes
+        prefilled_notes = st.session_state.get(f"{PAGE_NS}/notes", "")
+        notes = st.text_area("Notes (optional)", value=prefilled_notes, key=f"{PAGE_NS}/notes")
+
+        _prefill_selectbox(
+            "Evaluation *",
+            ["", "Positive", "Negative", "Neutral"],
+            key=f"{PAGE_NS}/eval_sel",
+            prefill_value=st.session_state.get(f"{PAGE_NS}/eval_sel", ""),
+        )
+        evaluation_choice = st.session_state.get(f"{PAGE_NS}/eval_sel", "")
+
+        # turn off prefill phase after first render
+        if st.session_state.get(f"{PAGE_NS}/prefill_phase"):
+            st.session_state[f"{PAGE_NS}/prefill_phase"] = False
+
+        # =====================================================
+        # LIVE Changes Preview
+        # =====================================================
+        details: list[dict] = []
+
+        new_audience_id = _resolve_audience_id_from_label(customer_id, aud_choice)
+        new_objective_id = _objective_id_from_name(obj_choice)
+
+        new_product_id = None
+        if (not is_shelf) and new_business_line_id and prod_choice:
+            new_product_id = _product_id_from_label(new_business_line_id, prod_choice)
+
+        _add_detail(details, "visits.audience_id", v.get("audience_id"), new_audience_id)
+        _add_detail(details, "visits.business_line_id", v.get("business_line_id"), new_business_line_id)
+        _add_detail(details, "visits.product_id", v.get("product_id"), (None if is_shelf else new_product_id))
+        _add_detail(details, "visits.objective_id", v.get("objective_id"), new_objective_id)
+        _add_detail(details, "visits.notes", v.get("notes"), (notes.strip() if notes else None))
+        _add_detail(details, "visits.evaluation", v.get("evaluation"), (evaluation_choice or None))
+
+        # include other-audience fields in preview if Other
+        if is_other_aud:
+            _add_detail(details, "visits.other_audience_title", v.get("other_audience_title"), (st.session_state.get(f"{PAGE_NS}/ota_title") or None))
+            _add_detail(details, "visits.other_audience_name", v.get("other_audience_name"), (st.session_state.get(f"{PAGE_NS}/ota_name") or None))
+            _add_detail(details, "visits.other_audience_department", v.get("other_audience_department"), (st.session_state.get(f"{PAGE_NS}/ota_dept") or None))
+            _add_detail(details, "visits.other_audience_position", v.get("other_audience_position"), (st.session_state.get(f"{PAGE_NS}/ota_pos") or None))
+            _add_detail(details, "visits.other_audience_phone", v.get("other_audience_phone"), (st.session_state.get(f"{PAGE_NS}/ota_phone") or None))
+            _add_detail(details, "visits.other_audience_email", v.get("other_audience_email"), (st.session_state.get(f"{PAGE_NS}/ota_email") or None))
+
+        st.markdown("### 🔎 Live Changes Preview")
+        if not details:
+            st.info("No changes yet.")
+        else:
+            preview_df = pd.DataFrame(
+                [{"Field": d["field"], "Old Value": d.get("old_value"), "New Value": d.get("new_value")} for d in details]
+            )
+            st.dataframe(preview_df, use_container_width=True)
+
+        # =====================================================
+        # Request note + Submit
+        # =====================================================
+        st.markdown("### Change Request Note")
+        st.text_area(
+            "Change Request Note (required) *",
+            key=f"{PAGE_NS}/req_note",
+            placeholder="Explain what you changed and why.",
+        )
+        req_note = st.session_state.get(f"{PAGE_NS}/req_note", "")
+
+        submit_click = st.button(
+            "Submit Change Request",
+            type="primary",
+            disabled=(len(details) == 0),
+            key=f"{PAGE_NS}/submit_btn",
+        )
+        if submit_click:
+            if not req_note or not req_note.strip():
+                st.error("Change Request Note is required.")
+                st.stop()
+
+            try:
+                req_id = _insert_request_and_details(
+                    visit_id=int(v["visit_id"]),
+                    requested_by=uid,
+                    note=req_note.strip(),
+                    details=details,
+                )
+                st.success(f"Request submitted ✅ (Request ID: {req_id})")
+
+                # clear loaded state
+                for k in PREFILL_KEYS:
+                    st.session_state.pop(k, None)
+
+                st.rerun()
+            except Exception as e:
+                st.error("Could not submit your request.")
+                st.caption(str(e))
+
+    # ============================================================
+    # TAB 2 — View Requests
+    # ============================================================
+    with tab_view:
+        st.subheader("📄 View Requests")
+
+        df = query_df(
+            """
+            SELECT
+              request_id,
+              request_date,
+              visit_id,
+              change_source,
+              status,
+              resolve_date,
+              reject_note
+            FROM request_changes
+            WHERE requested_by = :uid
+            ORDER BY request_date DESC
+            """,
+            {"uid": int(uid)},
+        )
+
+        if df.empty:
+            st.info("No requests yet.")
+            return
+
+        req_ids = df["request_id"].astype(int).tolist()
+        placeholders = ", ".join([f":id{i}" for i in range(len(req_ids))])
+        det_params = {f"id{i}": int(rid) for i, rid in enumerate(req_ids)}
+
+        det = query_df(
+            f"""
+            SELECT request_id, field
+            FROM request_change_details
+            WHERE request_id IN ({placeholders})
+            """,
+            det_params,
+        )
+
+        if not det.empty:
+            summary = (
+                det.groupby("request_id")["field"]
+                .apply(lambda s: ", ".join(sorted(set(map(str, s)))))
+                .to_dict()
+            )
+            df["changes"] = df["request_id"].map(summary)
+        else:
+            df["changes"] = ""
+
+        show_cols = [
+            "request_id",
+            "request_date",
+            "visit_id",
+            "status",
+            "change_source",
+            "changes",
+            "resolve_date",
+            "reject_note",
+        ]
+        show_cols = [c for c in show_cols if c in df.columns]
+
+        st.dataframe(df[show_cols], width="stretch")
+
 # =============================
 # Footer
 # =============================
@@ -9640,5 +10784,7 @@ else:
         page_review_target_audiences()
     elif page == "Review Other Customers":
         page_review_other_customers()
+    elif page == "Visit Change Requests":
+        page_change_request()
 
     show_footer()
