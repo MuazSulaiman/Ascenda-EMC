@@ -747,7 +747,7 @@ def page_submit_visit():
     shelf_df    = pd.DataFrame()
     shelf_editor = None
     if is_shelf_movement:
-        st.subheader("🧾 Shelf Movement — Quantities Checked")
+        st.subheader("Shelf Movement — Quantities Checked")
         if not bu_id:
             st.info("Select a Business Unit to load items.")
         elif not cat_choice:

@@ -161,34 +161,34 @@ def login_block():
                 "Sign in", use_container_width=True, type="primary"
             )
 
-    if submitted:
-        em = (email or "").strip().lower()
-        if not em or not pw:
-            st.error("Please enter both email and password.")
-            return
+        if submitted:
+            em = (email or "").strip().lower()
+            if not em or not pw:
+                st.error("Please enter both email and password.")
+                return
 
-        u = get_user_by_email(em)
-        if not u:
-            st.error("User not found.")
-            return
+            u = get_user_by_email(em)
+            if not u:
+                st.error("User not found.")
+                return
 
-        if not bool(u.get("is_active", True)):
-            st.error("Your account is inactive. Please contact the administrator.")
-            return
+            if not bool(u.get("is_active", True)):
+                st.error("Your account is inactive. Please contact the administrator.")
+                return
 
-        if not pbkdf2_sha256.verify(pw, u["password_hash"]):
-            st.error("Invalid password.")
-            return
+            if not pbkdf2_sha256.verify(pw, u["password_hash"]):
+                st.error("Invalid password.")
+                return
 
-        st.session_state.user = u
-        sid = create_session(int(u["user_id"]), u.get("role"))
-        set_url_session_param(sid)
+            st.session_state.user = u
+            sid = create_session(int(u["user_id"]), u.get("role"))
+            set_url_session_param(sid)
 
-        st.session_state["_current_page"] = "Submit Visit"
-        set_url_param("page", "Submit Visit")
+            st.session_state["_current_page"] = "Submit Visit"
+            set_url_param("page", "Submit Visit")
 
-        st.success(f"Welcome, {u.get('name') or u.get('email')}!")
-        st.rerun()
+            st.success(f"Welcome, {u.get('name') or u.get('email')}!")
+            st.rerun()
 
 
 def logout_button():

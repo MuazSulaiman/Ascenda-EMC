@@ -5,7 +5,7 @@ import streamlit.components.v1 as components
 def inject_theme():
     components.html("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
 </style>
 <script>
 (function() {
@@ -28,9 +28,9 @@ def inject_theme():
     '  --status-danger-bg: #fdeceb;  --status-danger-text: #c83333;',
     '  --status-info-bg: #e8f4fd;    --status-info-text: #1565c0;',
     '  --status-neutral-bg: #f0f0f0; --status-neutral-text: #444444;',
-    '  --font-body: "Geist", "Inter", system-ui, sans-serif;',
+    '  --font-body: "Inter", system-ui, sans-serif;',
     '  --font-display: "Inter Tight", "Inter", sans-serif;',
-    '  --font-mono: "Geist Mono", "Fira Code", ui-monospace, monospace;',
+    '  --font-mono: "Fira Code", ui-monospace, monospace;',
     '  --radius-sm: 6px;',
     '  --radius-md: 10px;',
     '  --radius-lg: 14px;',
