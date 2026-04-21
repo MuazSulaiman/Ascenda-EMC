@@ -232,6 +232,11 @@ CREATE INDEX IF NOT EXISTS idx_home_visits_phone ON home_visits(patient_phone);
 CREATE INDEX IF NOT EXISTS idx_smv_hdr_visit ON shelf_movement_headers(visit_id);
 CREATE INDEX IF NOT EXISTS idx_smv_lines_movement ON shelf_movement_lines(movement_id);
 CREATE INDEX IF NOT EXISTS idx_smv_lines_product ON shelf_movement_lines(product_id);
+
+CREATE INDEX IF NOT EXISTS idx_req_changes_visit        ON request_changes(visit_id);
+CREATE INDEX IF NOT EXISTS idx_req_changes_requested_by ON request_changes(requested_by);
+CREATE INDEX IF NOT EXISTS idx_req_changes_status       ON request_changes(status);
+CREATE INDEX IF NOT EXISTS idx_req_change_details_req   ON request_change_details(request_id);
 """
 
 #SEED_BUSINESS_UNITS = [
