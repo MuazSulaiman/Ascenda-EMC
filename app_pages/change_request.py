@@ -1049,63 +1049,69 @@ def page_change_request():
 
         if df.empty:
             st.info("No change requests submitted yet.")
-            return
-
-        # Fetch field summaries for all requests
-        req_ids = df["request_id"].astype(int).tolist()
-        placeholders = ", ".join([f":id{i}" for i in range(len(req_ids))])
-        det_params = {f"id{i}": int(rid) for i, rid in enumerate(req_ids)}
-        det = query_df(
-            f"SELECT request_id, field FROM request_change_details "
-            f"WHERE request_id IN ({placeholders})",
-            det_params,
-        )
-        summary = {}
-        if not det.empty:
-            summary = (
-                det.groupby("request_id")["field"]
-                .apply(lambda s: ", ".join(sorted(set(str(x).split(".")[-1] for x in s))))
-                .to_dict()
+        else:
+            # Fetch field summaries for all requests
+            req_ids = df["request_id"].astype(int).tolist()
+            placeholders = ", ".join([f":id{i}" for i in range(len(req_ids))])
+            det_params = {f"id{i}": int(rid) for i, rid in enumerate(req_ids)}
+            det = query_df(
+                f"SELECT request_id, field FROM request_change_details "
+                f"WHERE request_id IN ({placeholders})",
+                det_params,
             )
+            summary = {}
+            if not det.empty:
+                summary = (
+                    det.groupby("request_id")["field"]
+                    .apply(lambda s: ", ".join(sorted(set(str(x).split(".")[-1] for x in s))))
+                    .to_dict()
+                )
 
-        _BADGE_MAP = {
-            "IN_REVIEW": "warning",
-            "APPROVED":  "success",
-            "REJECTED":  "danger",
-            "WITHDRAWN": "neutral",
-        }
+            _BADGE_MAP = {
+                "IN_REVIEW": "warning",
+                "APPROVED":  "success",
+                "REJECTED":  "danger",
+                "WITHDRAWN": "neutral",
+            }
 
-        withdraw_success_key = f"{PAGE_NS}_withdraw_success"
-        if st.session_state.get(withdraw_success_key):
-            st.success(st.session_state.pop(withdraw_success_key))
+            withdraw_success_key = f"{PAGE_NS}_withdraw_success"
+            if st.session_state.get(withdraw_success_key):
+                st.success(st.session_state.pop(withdraw_success_key))
 
-        for _, row in df.iterrows():
-            rid = int(row["request_id"])
-            status_val = str(row["status"])
-            badge_html = status_badge(status_val, _BADGE_MAP.get(status_val, "neutral"))
-            fields_changed = summary.get(rid, "—")
-            req_date = pd.to_datetime(row["request_date"]).strftime("%d/%m/%Y %H:%M") if pd.notna(row["request_date"]) else "—"
+            for _, row in df.iterrows():
+                rid = int(row["request_id"])
+                status_val = str(row["status"])
+                badge_html = status_badge(status_val, _BADGE_MAP.get(status_val, "neutral"))
+                fields_changed = summary.get(rid, "—")
+                req_date = pd.to_datetime(row["request_date"]).strftime("%d/%m/%Y %H:%M") if pd.notna(row["request_date"]) else "—"
 
-            with st.expander(f"Request #{rid} — Visit #{int(row['visit_id'])} — {req_date}"):
-                col_a, col_b = st.columns([3, 1])
-                with col_a:
-                    st.markdown(f"**Status:** {badge_html}", unsafe_allow_html=True)
-                    st.caption(f"Fields changed: {fields_changed}")
-                    if status_val == "REJECTED" and row.get("reject_note"):
-                        st.warning(f"Rejection reason: {row['reject_note']}")
-                with col_b:
-                    if status_val == "IN_REVIEW":
-                        if st.button("Withdraw", key=f"{PAGE_NS}/withdraw_{rid}", type="secondary"):
-                            exec_sql(
-                                """
-                                UPDATE request_changes
-                                SET status = 'WITHDRAWN', resolve_date = NOW()
-                                WHERE request_id = :rid AND requested_by = :uid
-                                """,
-                                {"rid": rid, "uid": uid},
-                            )
-                            st.session_state[withdraw_success_key] = f"Request #{rid} withdrawn."
-                            st.rerun()
+                with st.expander(f"Request #{rid} — Visit #{int(row['visit_id'])} — {status_val} — {req_date}"):
+                    col_a, col_b = st.columns([3, 1])
+                    with col_a:
+                        st.markdown(f"**Status:** {badge_html}", unsafe_allow_html=True)
+                        st.caption(f"Fields changed: {fields_changed}")
+                        if status_val == "REJECTED" and pd.notna(row["reject_note"]) and row["reject_note"]:
+                            st.warning(f"Rejection reason: {row['reject_note']}")
+                    with col_b:
+                        if status_val == "IN_REVIEW":
+                            if st.button("Withdraw", key=f"{PAGE_NS}/withdraw_{rid}", type="secondary"):
+                                with engine.begin() as conn:
+                                    result = conn.execute(
+                                        text("""
+                                            UPDATE request_changes
+                                            SET status = 'WITHDRAWN', resolve_date = NOW()
+                                            WHERE request_id = :rid
+                                              AND requested_by = :uid
+                                              AND status = 'IN_REVIEW'
+                                        """),
+                                        {"rid": rid, "uid": int(uid)},
+                                    )
+                                if result.rowcount == 0:
+                                    st.warning("Could not withdraw — request may already be resolved.")
+                                    st.rerun()
+                                else:
+                                    st.session_state[withdraw_success_key] = f"Request #{rid} withdrawn."
+                                    st.rerun()
 
 # =============================
 # Footer
