@@ -36,7 +36,11 @@ def _apply_changes(request_id: int, visit_id: int, admin_uid: int):
         {"rid": request_id},
     )
 
+    if detail_rows.empty:
+        return False, "No change details found for this request."
+
     # Whitelist check before opening transaction
+    # Fields are stored as "visits.columnname" — must match ALLOWED_VISIT_FIELDS exactly.
     for _, r in detail_rows.iterrows():
         if r["field"] not in ALLOWED_VISIT_FIELDS:
             return False, f"Field not in allowed list: {r['field']}"
@@ -163,7 +167,11 @@ def page_admin_change_requests():
         st.warning("You do not have access to this page.")
         return
 
-    admin_uid = int(u.get("user_id") or u.get("id"))
+    uid_raw = u.get("user_id") or u.get("id")
+    if not uid_raw:
+        st.error("Session user ID could not be resolved.")
+        return
+    admin_uid = int(uid_raw)
 
     section_header("Review Change Requests", "Approve or reject visit change requests submitted by reps")
 
@@ -190,7 +198,7 @@ def page_admin_change_requests():
             st.markdown("")
 
             def _label(row) -> str:
-                date_str = pd.to_datetime(row["request_date"]).strftime("%b %-d") if pd.notna(row["request_date"]) else "?"
+                date_str = pd.to_datetime(row["request_date"]).strftime("%b %d") if pd.notna(row["request_date"]) else "?"
                 n = int(row["fields_changed"])
                 return f"Request #{int(row['request_id'])} — Visit #{int(row['visit_id'])} — {row['rep_name']} — {date_str} ({n} field{'s' if n != 1 else ''})"
 
@@ -289,7 +297,9 @@ def _render_history_tab():
         JOIN users rep ON rep.user_id = rc.requested_by
         LEFT JOIN users resolver ON resolver.user_id = rc.changed_by
         LEFT JOIN request_change_details rcd ON rcd.request_id = rc.request_id
-        GROUP BY rc.request_id, rep.name, resolver.name
+        GROUP BY rc.request_id, rc.visit_id, rep.name, rc.request_date, rc.status,
+                 rc.applied_at, rc.apply_error, rc.request_note, rc.reject_note,
+                 rc.resolve_date, resolver.name
         ORDER BY rc.request_date DESC
         """
     )
