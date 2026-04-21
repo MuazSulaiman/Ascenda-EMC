@@ -42,8 +42,6 @@ def page_change_request():
     display_name = u.get("name") or u.get("email") or f"User #{uid}"
     display_region = u.get("region") or "—"
     display_role = u.get("role") or "—"
-    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
-
     PAGE_NS = "change_request"
     TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
 
