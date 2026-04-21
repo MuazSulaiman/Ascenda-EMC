@@ -301,6 +301,7 @@ def sidebar_nav():
 
     # ── Badge counts (cached 60 s) ────────────────────────────────────────────
     mv_count = 0
+    cr_pending = 0
     uid = (user.get("user_id") or user.get("id")) if user else None
     if uid:
         if time.time() - st.session_state.get("_nav_counts_ts", 0) > 60:
@@ -308,10 +309,14 @@ def sidebar_nav():
                 from db_ops import query_df as _qdf
                 _r = _qdf("SELECT COUNT(*) AS cnt FROM visits WHERE user_id = :u", {"u": int(uid)})
                 st.session_state["_nav_mv_count"] = int(_r.iloc[0]["cnt"]) if not _r.empty else 0
+                if (user.get("role") or "").lower().strip() == "admin":
+                    _cr = _qdf("SELECT COUNT(*) AS cnt FROM request_changes WHERE status = 'IN_REVIEW'")
+                    st.session_state["_nav_cr_pending"] = int(_cr.iloc[0]["cnt"]) if not _cr.empty else 0
             except Exception:
                 pass
             st.session_state["_nav_counts_ts"] = time.time()
         mv_count = st.session_state.get("_nav_mv_count", 0)
+        cr_pending = st.session_state.get("_nav_cr_pending", 0)
 
     # ── Build page list ───────────────────────────────────────────────────────
     st.sidebar.markdown("### MAIN")
@@ -334,6 +339,7 @@ def sidebar_nav():
             "Review Target Audiences",
             "Review Other Customers",
             "Visit Change Requests",
+            "Review Change Requests",
         ]
 
     # ── Resolve current page ──────────────────────────────────────────────────
@@ -362,6 +368,8 @@ def sidebar_nav():
     def _fmt(page: str) -> str:
         if page == "My Visits" and mv_count > 0:
             return f"My Visits  {mv_count}"
+        if page == "Review Change Requests" and cr_pending > 0:
+            return f"Review Change Requests  {cr_pending}"
         return page
 
     # ── Navigation radio ──────────────────────────────────────────────────────
