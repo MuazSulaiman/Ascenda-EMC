@@ -13,6 +13,7 @@ from streamlit_folium import st_folium
 from auth import resolve_session_user
 from config import TIMEZONE
 from db_ops import query_df, exec_sql
+from db import engine
 from utils import _utcnow_iso, _local_now_str, _utcnow
 from widgets import get_location_block, _reset_geo_on_user_or_page_change, set_current_page
 from ui import section_header, status_badge, compare_row
@@ -42,8 +43,6 @@ def page_change_request():
     display_name = u.get("name") or u.get("email") or f"User #{uid}"
     display_region = u.get("region") or "—"
     display_role = u.get("role") or "—"
-    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
-
     PAGE_NS = "change_request"
     TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
 
@@ -1029,7 +1028,7 @@ def page_change_request():
     # TAB 2 — View Requests
     # ============================================================
     with tab_view:
-        section_header("View Requests")
+        section_header("My Change Requests")
 
         df = query_df(
             """
@@ -1049,45 +1048,70 @@ def page_change_request():
         )
 
         if df.empty:
-            st.info("No requests yet.")
-            return
-
-        req_ids = df["request_id"].astype(int).tolist()
-        placeholders = ", ".join([f":id{i}" for i in range(len(req_ids))])
-        det_params = {f"id{i}": int(rid) for i, rid in enumerate(req_ids)}
-
-        det = query_df(
-            f"""
-            SELECT request_id, field
-            FROM request_change_details
-            WHERE request_id IN ({placeholders})
-            """,
-            det_params,
-        )
-
-        if not det.empty:
-            summary = (
-                det.groupby("request_id")["field"]
-                .apply(lambda s: ", ".join(sorted(set(map(str, s)))))
-                .to_dict()
-            )
-            df["changes"] = df["request_id"].map(summary)
+            st.info("No change requests submitted yet.")
         else:
-            df["changes"] = ""
+            # Fetch field summaries for all requests
+            req_ids = df["request_id"].astype(int).tolist()
+            placeholders = ", ".join([f":id{i}" for i in range(len(req_ids))])
+            det_params = {f"id{i}": int(rid) for i, rid in enumerate(req_ids)}
+            det = query_df(
+                f"SELECT request_id, field FROM request_change_details "
+                f"WHERE request_id IN ({placeholders})",
+                det_params,
+            )
+            summary = {}
+            if not det.empty:
+                summary = (
+                    det.groupby("request_id")["field"]
+                    .apply(lambda s: ", ".join(sorted(set(str(x).split(".")[-1] for x in s))))
+                    .to_dict()
+                )
 
-        show_cols = [
-            "request_id",
-            "request_date",
-            "visit_id",
-            "status",
-            "change_source",
-            "changes",
-            "resolve_date",
-            "reject_note",
-        ]
-        show_cols = [c for c in show_cols if c in df.columns]
+            _BADGE_MAP = {
+                "IN_REVIEW": "warning",
+                "APPROVED":  "success",
+                "REJECTED":  "danger",
+                "WITHDRAWN": "neutral",
+            }
 
-        st.dataframe(df[show_cols], width="stretch")
+            withdraw_success_key = f"{PAGE_NS}_withdraw_success"
+            if st.session_state.get(withdraw_success_key):
+                st.success(st.session_state.pop(withdraw_success_key))
+
+            for _, row in df.iterrows():
+                rid = int(row["request_id"])
+                status_val = str(row["status"])
+                badge_html = status_badge(status_val, _BADGE_MAP.get(status_val, "neutral"))
+                fields_changed = summary.get(rid, "—")
+                req_date = pd.to_datetime(row["request_date"]).strftime("%d/%m/%Y %H:%M") if pd.notna(row["request_date"]) else "—"
+
+                with st.expander(f"Request #{rid} — Visit #{int(row['visit_id'])} — {status_val} — {req_date}"):
+                    col_a, col_b = st.columns([3, 1])
+                    with col_a:
+                        st.markdown(f"**Status:** {badge_html}", unsafe_allow_html=True)
+                        st.caption(f"Fields changed: {fields_changed}")
+                        if status_val == "REJECTED" and pd.notna(row["reject_note"]) and row["reject_note"]:
+                            st.warning(f"Rejection reason: {row['reject_note']}")
+                    with col_b:
+                        if status_val == "IN_REVIEW":
+                            if st.button("Withdraw", key=f"{PAGE_NS}/withdraw_{rid}", type="secondary"):
+                                with engine.begin() as conn:
+                                    result = conn.execute(
+                                        text("""
+                                            UPDATE request_changes
+                                            SET status = 'WITHDRAWN', resolve_date = NOW()
+                                            WHERE request_id = :rid
+                                              AND requested_by = :uid
+                                              AND status = 'IN_REVIEW'
+                                        """),
+                                        {"rid": rid, "uid": int(uid)},
+                                    )
+                                if result.rowcount == 0:
+                                    st.warning("Could not withdraw — request may already be resolved.")
+                                    st.rerun()
+                                else:
+                                    st.session_state[withdraw_success_key] = f"Request #{rid} withdrawn."
+                                    st.rerun()
 
 # =============================
 # Footer
