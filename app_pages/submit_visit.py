@@ -28,7 +28,7 @@ from widgets import (
     _reset_geo_on_user_or_page_change,
     set_current_page,
 )
-from ui import section_header, stepper
+from ui import section_header, required_legend
 
 try:
     from psycopg.errors import UniqueViolation
@@ -37,8 +37,7 @@ except Exception:
 
 
 def page_submit_visit():
-    section_header("Submit Visit", "Record a customer field visit")
-    stepper(["Customer", "Visit Info", "Products", "Outcomes", "Submit"], 0)
+    section_header("Submit Visit", "Log a new customer visit.")
 
     # ---- tiny CSS for floating submit ----
     st.markdown(
@@ -54,13 +53,7 @@ def page_submit_visit():
         unsafe_allow_html=True,
     )
 
-    # ---- Red asterisk legend ----
-    st.markdown(
-        '<div style="margin:.25rem 0 1rem 0;">'
-        'Fields marked with <span style="color:#d00000;font-weight:700">*</span> are required.'
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(required_legend(), unsafe_allow_html=True)
 
     PAGE_NS = "submit_visit"
     nonce_key        = f"_{PAGE_NS}_form_nonce"
@@ -155,8 +148,6 @@ def page_submit_visit():
     display_name   = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
     display_region = u.get("region") or "—"
     display_role   = u.get("role") or "—"
-    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
-
     _reset_geo_on_user_or_page_change(PAGE_NS, uid)
 
     if st.session_state.pop(saved_ok_key, False):

@@ -34,7 +34,7 @@ def page_project_view():
     display_role   = u.get("role") or "—"
     display_region = u.get("region") or "—"
 
-    section_header("Projects", f"Logged in as {display_name} · {display_region} · {display_role}")
+    section_header("Projects", "Browse and manage your active projects.")
 
     # --- Simple view state: list or detail ---
     st.session_state.setdefault(k("mode"), "list")

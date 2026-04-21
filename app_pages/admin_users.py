@@ -12,7 +12,10 @@ from ui import section_header, status_badge as _status_badge
 def page_admin_users():
     section_header("Admin — Users", "Create, manage, and deactivate user accounts")
     set_current_page("admin_users")
-    st.subheader("Add a user")
+    st.markdown(
+        '<h3 style="font-size:1.125rem;font-weight:600;color:#0d1117;margin:1.25rem 0 0.5rem;">Add a user</h3>',
+        unsafe_allow_html=True,
+    )
 
     # --- Temp Password Generator (outside the form) ---
     st.session_state.setdefault("create_user_tmp_pw", "")
@@ -73,7 +76,10 @@ def page_admin_users():
                 st.caption(str(e))
 
     # ---- All users (with BU) ----
-    st.subheader("All Users")
+    st.markdown(
+        '<h3 style="font-size:1.125rem;font-weight:600;color:#0d1117;margin:1.25rem 0 0.5rem;">All Users</h3>',
+        unsafe_allow_html=True,
+    )
     df = query_df("""
         SELECT u.user_id,
                u.email,

@@ -49,9 +49,6 @@ def page_review_target_audiences():
     display_role   = u.get("role") or "—"
 
     section_header("Review Target Audiences", "Manage visits that used an 'Other' target audience")
-    st.caption(
-        f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**"
-    )
 
     # Show any success message from last rerun
     last_msg = st.session_state.get(success_key) or ""

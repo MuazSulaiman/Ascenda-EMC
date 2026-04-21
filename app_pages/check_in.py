@@ -13,19 +13,13 @@ from config import TIMEZONE, DUP_MINUTES
 from db_ops import query_df, exec_sql, insert_visit_atomic
 from utils import _utcnow_iso, _local_now_str, _client_ip, _utcnow
 from widgets import get_location_block, _reset_geo_on_user_or_page_change, set_current_page, customer_quick_find_module, customer_cascading_selectors
-from ui import section_header
+from ui import section_header, required_legend
 
 
 def page_check_in():
     section_header("Check-In", "Log a quick customer check-in")
 
-    # ---- Red asterisk legend ----
-    st.markdown(
-        '<div style="margin:.25rem 0 1rem 0;">'
-        'Fields marked with <span style="color:#d00000;font-weight:700">*</span> are required.'
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(required_legend(), unsafe_allow_html=True)
 
     PAGE_NS = "check_in"
     nonce_key         = f"_{PAGE_NS}_form_nonce"
@@ -94,8 +88,6 @@ def page_check_in():
     display_name   = u.get("name") or u.get("email") or f"User #{u.get('user_id', '?')}"
     display_region = u.get("region") or "—"
     display_role   = u.get("role") or "—"
-    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
-
     if st.session_state.pop(saved_ok_key, False):
         st.success("Checked in ✅ — fields cleared.")
 

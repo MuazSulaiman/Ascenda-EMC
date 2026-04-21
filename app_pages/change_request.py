@@ -668,361 +668,351 @@ def page_change_request():
             vid = _safe_int(visit_id_str)
             if not vid:
                 st.error("Enter a valid Visit ID.")
-                st.stop()
-
-            # clear previous state
-            for k in PREFILL_KEYS:
-                st.session_state.pop(k, None)
-
-            st.session_state[f"{PAGE_NS}/pending_vid"] = int(vid)
-            st.rerun()
+            else:
+                for k in PREFILL_KEYS:
+                    st.session_state.pop(k, None)
+                st.session_state[f"{PAGE_NS}/pending_vid"] = int(vid)
+                st.rerun()
 
         pending_vid = st.session_state.pop(f"{PAGE_NS}/pending_vid", None)
         if pending_vid:
             snap = _load_visit_snapshot(int(pending_vid))
             if not snap:
                 st.error("Visit ID not found.")
-                st.stop()
-
-            if int(snap["visit"]["user_id"]) != uid and role not in {"admin", "manager"}:
+            elif int(snap["visit"]["user_id"]) != uid and role not in {"admin", "manager"}:
                 st.error("You can only request changes for your own visits.")
-                st.stop()
-
-            if _has_open_request_for_visit(int(pending_vid)):
+            elif _has_open_request_for_visit(int(pending_vid)):
                 st.error("This visit already has an IN_REVIEW request.")
-                st.stop()
+            else:
+                v = snap["visit"]
 
-            v = snap["visit"]
+                # ---- PRE-FILL PHASE ON ----
+                st.session_state[f"{PAGE_NS}/prefill_phase"] = True
 
-            # ---- PRE-FILL PHASE ON ----
-            st.session_state[f"{PAGE_NS}/prefill_phase"] = True
+                # Audience label
+                aud_label = ""
+                if v.get("audience_id"):
+                    aud_label = _audience_label_for_id(int(v["audience_id"]))
+                elif _norm(v.get("other_audience_name")):
+                    aud_label = "Other"
+                st.session_state[f"{PAGE_NS}/aud_sel"] = aud_label
 
-            # Audience label
-            aud_label = ""
-            if v.get("audience_id"):
-                aud_label = _audience_label_for_id(int(v["audience_id"]))
-            elif _norm(v.get("other_audience_name")):
-                aud_label = "Other"
-            st.session_state[f"{PAGE_NS}/aud_sel"] = aud_label
+                # Infer BU/Category/BL from BLID
+                blid = _safe_int(v.get("business_line_id"))
+                infer = _infer_bu_cat_bl_from_blid(blid) if blid else {"bu_name": "", "category": "", "bl_name": ""}
+                st.session_state[f"{PAGE_NS}/bu_sel"] = _norm(infer.get("bu_name"))
+                st.session_state[f"{PAGE_NS}/cat_sel"] = _norm(infer.get("category"))
+                st.session_state[f"{PAGE_NS}/bl_sel"] = _norm(infer.get("bl_name"))
 
-            # Infer BU/Category/BL from BLID
-            blid = _safe_int(v.get("business_line_id"))
-            infer = _infer_bu_cat_bl_from_blid(blid) if blid else {"bu_name": "", "category": "", "bl_name": ""}
-            st.session_state[f"{PAGE_NS}/bu_sel"] = _norm(infer.get("bu_name"))
-            st.session_state[f"{PAGE_NS}/cat_sel"] = _norm(infer.get("category"))
-            st.session_state[f"{PAGE_NS}/bl_sel"] = _norm(infer.get("bl_name"))
+                # Product label lookup (bind pid as text)
+                prod_lbl = ""
+                pid_txt = _norm(v.get("product_id"))
+                if pid_txt:
+                    dfp = query_df(
+                        """
+                        SELECT product_id, article_number, description
+                        FROM items
+                        WHERE product_id = :pid
+                        LIMIT 1
+                        """,
+                        {"pid": pid_txt},
+                    )
+                    if not dfp.empty:
+                        r = dfp.iloc[0]
+                        article = r["article_number"] if pd.notna(r["article_number"]) else r["product_id"]
+                        desc = str(r["description"]).strip() if pd.notna(r["description"]) else ""
+                        prod_lbl = f"{article} — {desc}" if desc else f"{article}"
+                st.session_state[f"{PAGE_NS}/prod_sel"] = _norm(prod_lbl)
 
-            # Product label lookup (bind pid as text)
-            prod_lbl = ""
-            pid_txt = _norm(v.get("product_id"))
-            if pid_txt:
-                dfp = query_df(
-                    """
-                    SELECT product_id, article_number, description
-                    FROM items
-                    WHERE product_id = :pid
-                    LIMIT 1
-                    """,
-                    {"pid": pid_txt},
-                )
-                if not dfp.empty:
-                    r = dfp.iloc[0]
-                    article = r["article_number"] if pd.notna(r["article_number"]) else r["product_id"]
-                    desc = str(r["description"]).strip() if pd.notna(r["description"]) else ""
-                    prod_lbl = f"{article} — {desc}" if desc else f"{article}"
-            st.session_state[f"{PAGE_NS}/prod_sel"] = _norm(prod_lbl)
+                # Objective + eval
+                obj_lbl = ""
+                oid = _safe_int(v.get("objective_id"))
+                if oid:
+                    obj_lbl = _objective_name_for_id(int(oid))
+                st.session_state[f"{PAGE_NS}/obj_sel"] = _norm(obj_lbl)
+                st.session_state[f"{PAGE_NS}/eval_sel"] = _norm(v.get("evaluation"))
 
-            # Objective + eval
-            obj_lbl = ""
-            oid = _safe_int(v.get("objective_id"))
-            if oid:
-                obj_lbl = _objective_name_for_id(int(oid))
-            st.session_state[f"{PAGE_NS}/obj_sel"] = _norm(obj_lbl)
-            st.session_state[f"{PAGE_NS}/eval_sel"] = _norm(v.get("evaluation"))
+                # Notes
+                st.session_state[f"{PAGE_NS}/active_visit_id"] = int(pending_vid)
+                st.session_state[f"{PAGE_NS}/notes"] = _norm(v.get("notes"))
 
-            # Notes
-            st.session_state[f"{PAGE_NS}/active_visit_id"] = int(pending_vid)
-            st.session_state[f"{PAGE_NS}/notes"] = _norm(v.get("notes"))
+                # Other TA fields
+                st.session_state[f"{PAGE_NS}/ota_title"] = _norm(v.get("other_audience_title"))
+                st.session_state[f"{PAGE_NS}/ota_name"] = _norm(v.get("other_audience_name"))
+                st.session_state[f"{PAGE_NS}/ota_dept"] = _norm(v.get("other_audience_department"))
+                st.session_state[f"{PAGE_NS}/ota_pos"] = _norm(v.get("other_audience_position"))
+                st.session_state[f"{PAGE_NS}/ota_phone"] = _norm(v.get("other_audience_phone"))
+                st.session_state[f"{PAGE_NS}/ota_email"] = _norm(v.get("other_audience_email"))
 
-            # Other TA fields
-            st.session_state[f"{PAGE_NS}/ota_title"] = _norm(v.get("other_audience_title"))
-            st.session_state[f"{PAGE_NS}/ota_name"] = _norm(v.get("other_audience_name"))
-            st.session_state[f"{PAGE_NS}/ota_dept"] = _norm(v.get("other_audience_department"))
-            st.session_state[f"{PAGE_NS}/ota_pos"] = _norm(v.get("other_audience_position"))
-            st.session_state[f"{PAGE_NS}/ota_phone"] = _norm(v.get("other_audience_phone"))
-            st.session_state[f"{PAGE_NS}/ota_email"] = _norm(v.get("other_audience_email"))
+                # Home visit fields
+                hv0 = snap["home_visit"] or {}
+                st.session_state[f"{PAGE_NS}/hv_name"] = _norm(hv0.get("patient_name"))
+                st.session_state[f"{PAGE_NS}/hv_phone"] = _norm(hv0.get("patient_phone"))
+                st.session_state[f"{PAGE_NS}/hv_serial"] = _norm(hv0.get("serial_no"))
 
-            # Home visit fields
-            hv0 = snap["home_visit"] or {}
-            st.session_state[f"{PAGE_NS}/hv_name"] = _norm(hv0.get("patient_name"))
-            st.session_state[f"{PAGE_NS}/hv_phone"] = _norm(hv0.get("patient_phone"))
-            st.session_state[f"{PAGE_NS}/hv_serial"] = _norm(hv0.get("serial_no"))
+                st.session_state[f"{PAGE_NS}/snap"] = snap
+                st.session_state[f"{PAGE_NS}/prefilled_vid"] = int(pending_vid)
 
-            st.session_state[f"{PAGE_NS}/snap"] = snap
-            st.session_state[f"{PAGE_NS}/prefilled_vid"] = int(pending_vid)
-
-            st.rerun()
+                st.rerun()
 
         snap = st.session_state.get(f"{PAGE_NS}/snap")
         if not snap:
             st.info("Search for a Visit ID to start.")
-            st.stop()
-
-        v = snap["visit"]
-
-        # keep notes synced if visit changes
-        current_vid = int(v.get("visit_id") or 0)
-        if st.session_state.get(f"{PAGE_NS}/active_visit_id") != current_vid:
-            st.session_state[f"{PAGE_NS}/active_visit_id"] = current_vid
-            st.session_state[f"{PAGE_NS}/notes"] = _norm(v.get("notes"))
-
-        # =====================================================
-        # SECTION 1 — Visit Location (VIEW ONLY)
-        # =====================================================
-        _render_location_view(v.get("latitude"), v.get("longitude"), v.get("accuracy_m"))
-
-        # =====================================================
-        # SECTION 3 — Customer & Target Audience
-        # =====================================================
-        st.markdown("### 3️⃣ Customer & Target Audience")
-        customer_id = int(v.get("customer_id") or 0)
-        cust = _get_customer_locked_fields(customer_id)
-
-        st.text_input("Region *", value=_norm(cust.get("region")), disabled=True, key=f"{PAGE_NS}/region_view")
-        st.text_input("City *", value=_norm(cust.get("city")), disabled=True, key=f"{PAGE_NS}/city_view")
-        st.text_input("Sector *", value=_norm(cust.get("sector")), disabled=True, key=f"{PAGE_NS}/sector_view")
-        st.text_input("Customer *", value=_norm(cust.get("account_name")), disabled=True, key=f"{PAGE_NS}/cust_view")
-
-        aud_labels = _load_audience_options(customer_id)
-        _prefill_selectbox(
-            "Target Audience *",
-            aud_labels,
-            key=f"{PAGE_NS}/aud_sel",
-            prefill_value=st.session_state.get(f"{PAGE_NS}/aud_sel", ""),
-        )
-
-        aud_choice = st.session_state.get(f"{PAGE_NS}/aud_sel", "")
-        is_other_aud = (aud_choice == "Other")
-        is_home_visit = _is_home_visit_label(aud_choice)
-
-        if is_other_aud:
-            st.markdown("##### ➕ New Target Audience Details")
-            _prefill_selectbox(
-                "Title (optional)",
-                TITLE_OPTIONS,
-                key=f"{PAGE_NS}/ota_title",
-                prefill_value=st.session_state.get(f"{PAGE_NS}/ota_title", ""),
-            )
-            st.text_input("Target Audience Name *", key=f"{PAGE_NS}/ota_name")
-
-            dept_opts = _load_other_dept_options()
-            _prefill_selectbox(
-                "Department *",
-                dept_opts,
-                key=f"{PAGE_NS}/ota_dept",
-                prefill_value=st.session_state.get(f"{PAGE_NS}/ota_dept", ""),
-            )
-
-            pos_opts = _load_other_position_options()
-            _prefill_selectbox(
-                "Position *",
-                pos_opts,
-                key=f"{PAGE_NS}/ota_pos",
-                prefill_value=st.session_state.get(f"{PAGE_NS}/ota_pos", ""),
-            )
-
-            st.text_input("Phone # (optional)", key=f"{PAGE_NS}/ota_phone")
-            st.text_input("Email (optional)", key=f"{PAGE_NS}/ota_email")
-
-        if is_home_visit:
-            st.markdown("##### 🏠 Home Visit Details")
-            st.text_input("Patient Name *", key=f"{PAGE_NS}/hv_name")
-            st.text_input("Patient Phone # *", key=f"{PAGE_NS}/hv_phone")
-            st.text_input("Device Serial # *", key=f"{PAGE_NS}/hv_serial")
-
-        # =====================================================
-        # SECTION 4 — Product Details (RESTORED)
-        # =====================================================
-        st.markdown("### 4️⃣ Product Details")
-
-        bu_names = _load_bu_options()
-        st.selectbox(
-            "Business Unit *",
-            bu_names,
-            index=bu_names.index(st.session_state.get(f"{PAGE_NS}/bu_sel", "")) if st.session_state.get(f"{PAGE_NS}/bu_sel", "") in bu_names else 0,
-            key=f"{PAGE_NS}/bu_sel",
-            on_change=_clear_from_bu,
-        )
-        bu_choice = st.session_state.get(f"{PAGE_NS}/bu_sel", "")
-        bu_id = _bu_id_from_name(bu_choice) if bu_choice else None
-
-        cat_names = _load_category_options(bu_id)
-        st.selectbox(
-            "Category *",
-            cat_names,
-            index=cat_names.index(st.session_state.get(f"{PAGE_NS}/cat_sel", "")) if st.session_state.get(f"{PAGE_NS}/cat_sel", "") in cat_names else 0,
-            key=f"{PAGE_NS}/cat_sel",
-            disabled=(bu_id is None),
-            on_change=_clear_from_cat,
-        )
-        cat_choice = st.session_state.get(f"{PAGE_NS}/cat_sel", "")
-
-        bl_names = _load_bl_options(bu_id, cat_choice)
-        st.selectbox(
-            "Business Line *",
-            bl_names,
-            index=bl_names.index(st.session_state.get(f"{PAGE_NS}/bl_sel", "")) if st.session_state.get(f"{PAGE_NS}/bl_sel", "") in bl_names else 0,
-            key=f"{PAGE_NS}/bl_sel",
-            disabled=(bu_id is None) or (not cat_choice),
-            on_change=_clear_from_bl,
-        )
-        bl_choice = st.session_state.get(f"{PAGE_NS}/bl_sel", "")
-
-        new_business_line_id = (
-            _bl_id_from_name(bu_id, cat_choice, bl_choice) if (bu_id and cat_choice and bl_choice) else None
-        )
-
-        prod_labels = _load_product_options(new_business_line_id)
-        st.selectbox(
-            "Article Number/Product (optional)",
-            prod_labels,
-            index=prod_labels.index(st.session_state.get(f"{PAGE_NS}/prod_sel", "")) if st.session_state.get(f"{PAGE_NS}/prod_sel", "") in prod_labels else 0,
-            key=f"{PAGE_NS}/prod_sel",
-            disabled=(new_business_line_id is None),
-        )
-        prod_choice = st.session_state.get(f"{PAGE_NS}/prod_sel", "")
-
-        # =====================================================
-        # SECTION 5 — Objective, Notes, Evaluation
-        # =====================================================
-        st.markdown("### 5️⃣ Visit Details & Outcome")
-
-        obj_names = _load_objective_options_for_role(role)
-        _prefill_selectbox(
-            "Business Objective *",
-            obj_names,
-            key=f"{PAGE_NS}/obj_sel",
-            prefill_value=st.session_state.get(f"{PAGE_NS}/obj_sel", ""),
-        )
-        obj_choice = st.session_state.get(f"{PAGE_NS}/obj_sel", "")
-        is_shelf = _is_shelf_objective(obj_choice)
-
-        # Notes
-        prefilled_notes = st.session_state.get(f"{PAGE_NS}/notes", "")
-        notes = st.text_area("Notes (optional)", value=prefilled_notes, key=f"{PAGE_NS}/notes")
-
-        _prefill_selectbox(
-            "Evaluation *",
-            ["", "Positive", "Negative", "Neutral"],
-            key=f"{PAGE_NS}/eval_sel",
-            prefill_value=st.session_state.get(f"{PAGE_NS}/eval_sel", ""),
-        )
-        evaluation_choice = st.session_state.get(f"{PAGE_NS}/eval_sel", "")
-
-        # turn off prefill phase after first render
-        if st.session_state.get(f"{PAGE_NS}/prefill_phase"):
-            st.session_state[f"{PAGE_NS}/prefill_phase"] = False
-
-        # =====================================================
-        # LIVE Changes Preview
-        # =====================================================
-        details: list[dict] = []
-
-        new_audience_id = _resolve_audience_id_from_label(customer_id, aud_choice)
-        new_objective_id = _objective_id_from_name(obj_choice)
-
-        new_product_id = None
-        if (not is_shelf) and new_business_line_id and prod_choice:
-            new_product_id = _product_id_from_label(new_business_line_id, prod_choice)
-
-        _add_detail(details, "visits.audience_id", v.get("audience_id"), new_audience_id)
-        _add_detail(details, "visits.business_line_id", v.get("business_line_id"), new_business_line_id)
-        _add_detail(details, "visits.product_id", v.get("product_id"), (None if is_shelf else new_product_id))
-        _add_detail(details, "visits.objective_id", v.get("objective_id"), new_objective_id)
-        _add_detail(details, "visits.notes", v.get("notes"), (notes.strip() if notes else None))
-        _add_detail(details, "visits.evaluation", v.get("evaluation"), (evaluation_choice or None))
-
-        # include other-audience fields in preview if Other
-        if is_other_aud:
-            _add_detail(details, "visits.other_audience_title", v.get("other_audience_title"), (st.session_state.get(f"{PAGE_NS}/ota_title") or None))
-            _add_detail(details, "visits.other_audience_name", v.get("other_audience_name"), (st.session_state.get(f"{PAGE_NS}/ota_name") or None))
-            _add_detail(details, "visits.other_audience_department", v.get("other_audience_department"), (st.session_state.get(f"{PAGE_NS}/ota_dept") or None))
-            _add_detail(details, "visits.other_audience_position", v.get("other_audience_position"), (st.session_state.get(f"{PAGE_NS}/ota_pos") or None))
-            _add_detail(details, "visits.other_audience_phone", v.get("other_audience_phone"), (st.session_state.get(f"{PAGE_NS}/ota_phone") or None))
-            _add_detail(details, "visits.other_audience_email", v.get("other_audience_email"), (st.session_state.get(f"{PAGE_NS}/ota_email") or None))
-
-        section_header("Live Changes Preview")
-        if not details:
-            st.info("No changes yet.")
         else:
-            rows_html = "".join(
-                compare_row(
-                    d["field"],
-                    str(d.get("old_value") or "—"),
-                    str(d.get("new_value") or "—"),
-                    changed=True,
-                )
-                for d in details
+            v = snap["visit"]
+
+            # keep notes synced if visit changes
+            current_vid = int(v.get("visit_id") or 0)
+            if st.session_state.get(f"{PAGE_NS}/active_visit_id") != current_vid:
+                st.session_state[f"{PAGE_NS}/active_visit_id"] = current_vid
+                st.session_state[f"{PAGE_NS}/notes"] = _norm(v.get("notes"))
+
+            # =====================================================
+            # SECTION 1 — Visit Location (VIEW ONLY)
+            # =====================================================
+            _render_location_view(v.get("latitude"), v.get("longitude"), v.get("accuracy_m"))
+
+            # =====================================================
+            # SECTION 3 — Customer & Target Audience
+            # =====================================================
+            st.markdown("### 3️⃣ Customer & Target Audience")
+            customer_id = int(v.get("customer_id") or 0)
+            cust = _get_customer_locked_fields(customer_id)
+
+            st.text_input("Region *", value=_norm(cust.get("region")), disabled=True, key=f"{PAGE_NS}/region_view")
+            st.text_input("City *", value=_norm(cust.get("city")), disabled=True, key=f"{PAGE_NS}/city_view")
+            st.text_input("Sector *", value=_norm(cust.get("sector")), disabled=True, key=f"{PAGE_NS}/sector_view")
+            st.text_input("Customer *", value=_norm(cust.get("account_name")), disabled=True, key=f"{PAGE_NS}/cust_view")
+
+            aud_labels = _load_audience_options(customer_id)
+            _prefill_selectbox(
+                "Target Audience *",
+                aud_labels,
+                key=f"{PAGE_NS}/aud_sel",
+                prefill_value=st.session_state.get(f"{PAGE_NS}/aud_sel", ""),
             )
-            st.markdown(
-                f"""
-                <table style="width:100%;border-collapse:collapse;border:1px solid #e4e8ec;
-                              border-radius:10px;overflow:hidden;font-size:0.875rem;">
-                  <thead>
-                    <tr style="background:#f6f8fa;">
-                      <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                                 border-bottom:1px solid #e4e8ec;width:30%;">Field</th>
-                      <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                                 border-bottom:1px solid #e4e8ec;">Original</th>
-                      <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                                 border-bottom:1px solid #e4e8ec;">Requested</th>
-                    </tr>
-                  </thead>
-                  <tbody>{rows_html}</tbody>
-                </table>
-                """,
-                unsafe_allow_html=True,
+
+            aud_choice = st.session_state.get(f"{PAGE_NS}/aud_sel", "")
+            is_other_aud = (aud_choice == "Other")
+            is_home_visit = _is_home_visit_label(aud_choice)
+
+            if is_other_aud:
+                st.markdown("##### ➕ New Target Audience Details")
+                _prefill_selectbox(
+                    "Title (optional)",
+                    TITLE_OPTIONS,
+                    key=f"{PAGE_NS}/ota_title",
+                    prefill_value=st.session_state.get(f"{PAGE_NS}/ota_title", ""),
+                )
+                st.text_input("Target Audience Name *", key=f"{PAGE_NS}/ota_name")
+
+                dept_opts = _load_other_dept_options()
+                _prefill_selectbox(
+                    "Department *",
+                    dept_opts,
+                    key=f"{PAGE_NS}/ota_dept",
+                    prefill_value=st.session_state.get(f"{PAGE_NS}/ota_dept", ""),
+                )
+
+                pos_opts = _load_other_position_options()
+                _prefill_selectbox(
+                    "Position *",
+                    pos_opts,
+                    key=f"{PAGE_NS}/ota_pos",
+                    prefill_value=st.session_state.get(f"{PAGE_NS}/ota_pos", ""),
+                )
+
+                st.text_input("Phone # (optional)", key=f"{PAGE_NS}/ota_phone")
+                st.text_input("Email (optional)", key=f"{PAGE_NS}/ota_email")
+
+            if is_home_visit:
+                st.markdown("##### 🏠 Home Visit Details")
+                st.text_input("Patient Name *", key=f"{PAGE_NS}/hv_name")
+                st.text_input("Patient Phone # *", key=f"{PAGE_NS}/hv_phone")
+                st.text_input("Device Serial # *", key=f"{PAGE_NS}/hv_serial")
+
+            # =====================================================
+            # SECTION 4 — Product Details (RESTORED)
+            # =====================================================
+            st.markdown("### 4️⃣ Product Details")
+
+            bu_names = _load_bu_options()
+            st.selectbox(
+                "Business Unit *",
+                bu_names,
+                index=bu_names.index(st.session_state.get(f"{PAGE_NS}/bu_sel", "")) if st.session_state.get(f"{PAGE_NS}/bu_sel", "") in bu_names else 0,
+                key=f"{PAGE_NS}/bu_sel",
+                on_change=_clear_from_bu,
+            )
+            bu_choice = st.session_state.get(f"{PAGE_NS}/bu_sel", "")
+            bu_id = _bu_id_from_name(bu_choice) if bu_choice else None
+
+            cat_names = _load_category_options(bu_id)
+            st.selectbox(
+                "Category *",
+                cat_names,
+                index=cat_names.index(st.session_state.get(f"{PAGE_NS}/cat_sel", "")) if st.session_state.get(f"{PAGE_NS}/cat_sel", "") in cat_names else 0,
+                key=f"{PAGE_NS}/cat_sel",
+                disabled=(bu_id is None),
+                on_change=_clear_from_cat,
+            )
+            cat_choice = st.session_state.get(f"{PAGE_NS}/cat_sel", "")
+
+            bl_names = _load_bl_options(bu_id, cat_choice)
+            st.selectbox(
+                "Business Line *",
+                bl_names,
+                index=bl_names.index(st.session_state.get(f"{PAGE_NS}/bl_sel", "")) if st.session_state.get(f"{PAGE_NS}/bl_sel", "") in bl_names else 0,
+                key=f"{PAGE_NS}/bl_sel",
+                disabled=(bu_id is None) or (not cat_choice),
+                on_change=_clear_from_bl,
+            )
+            bl_choice = st.session_state.get(f"{PAGE_NS}/bl_sel", "")
+
+            new_business_line_id = (
+                _bl_id_from_name(bu_id, cat_choice, bl_choice) if (bu_id and cat_choice and bl_choice) else None
             )
 
-        # =====================================================
-        # Request note + Submit
-        # =====================================================
-        st.markdown("### Change Request Note")
-        st.text_area(
-            "Change Request Note (required) *",
-            key=f"{PAGE_NS}/req_note",
-            placeholder="Explain what you changed and why.",
-        )
-        req_note = st.session_state.get(f"{PAGE_NS}/req_note", "")
+            prod_labels = _load_product_options(new_business_line_id)
+            st.selectbox(
+                "Article Number/Product (optional)",
+                prod_labels,
+                index=prod_labels.index(st.session_state.get(f"{PAGE_NS}/prod_sel", "")) if st.session_state.get(f"{PAGE_NS}/prod_sel", "") in prod_labels else 0,
+                key=f"{PAGE_NS}/prod_sel",
+                disabled=(new_business_line_id is None),
+            )
+            prod_choice = st.session_state.get(f"{PAGE_NS}/prod_sel", "")
 
-        submit_click = st.button(
-            "Submit Change Request",
-            type="primary",
-            disabled=(len(details) == 0),
-            key=f"{PAGE_NS}/submit_btn",
-        )
-        if submit_click:
-            if not req_note or not req_note.strip():
-                st.error("Change Request Note is required.")
-                st.stop()
+            # =====================================================
+            # SECTION 5 — Objective, Notes, Evaluation
+            # =====================================================
+            st.markdown("### 5️⃣ Visit Details & Outcome")
 
-            try:
-                req_id = _insert_request_and_details(
-                    visit_id=int(v["visit_id"]),
-                    requested_by=uid,
-                    note=req_note.strip(),
-                    details=details,
+            obj_names = _load_objective_options_for_role(role)
+            _prefill_selectbox(
+                "Business Objective *",
+                obj_names,
+                key=f"{PAGE_NS}/obj_sel",
+                prefill_value=st.session_state.get(f"{PAGE_NS}/obj_sel", ""),
+            )
+            obj_choice = st.session_state.get(f"{PAGE_NS}/obj_sel", "")
+            is_shelf = _is_shelf_objective(obj_choice)
+
+            # Notes
+            prefilled_notes = st.session_state.get(f"{PAGE_NS}/notes", "")
+            notes = st.text_area("Notes (optional)", value=prefilled_notes, key=f"{PAGE_NS}/notes")
+
+            _prefill_selectbox(
+                "Evaluation *",
+                ["", "Positive", "Negative", "Neutral"],
+                key=f"{PAGE_NS}/eval_sel",
+                prefill_value=st.session_state.get(f"{PAGE_NS}/eval_sel", ""),
+            )
+            evaluation_choice = st.session_state.get(f"{PAGE_NS}/eval_sel", "")
+
+            # turn off prefill phase after first render
+            if st.session_state.get(f"{PAGE_NS}/prefill_phase"):
+                st.session_state[f"{PAGE_NS}/prefill_phase"] = False
+
+            # =====================================================
+            # LIVE Changes Preview
+            # =====================================================
+            details: list[dict] = []
+
+            new_audience_id = _resolve_audience_id_from_label(customer_id, aud_choice)
+            new_objective_id = _objective_id_from_name(obj_choice)
+
+            new_product_id = None
+            if (not is_shelf) and new_business_line_id and prod_choice:
+                new_product_id = _product_id_from_label(new_business_line_id, prod_choice)
+
+            _add_detail(details, "visits.audience_id", v.get("audience_id"), new_audience_id)
+            _add_detail(details, "visits.business_line_id", v.get("business_line_id"), new_business_line_id)
+            _add_detail(details, "visits.product_id", v.get("product_id"), (None if is_shelf else new_product_id))
+            _add_detail(details, "visits.objective_id", v.get("objective_id"), new_objective_id)
+            _add_detail(details, "visits.notes", v.get("notes"), (notes.strip() if notes else None))
+            _add_detail(details, "visits.evaluation", v.get("evaluation"), (evaluation_choice or None))
+
+            # include other-audience fields in preview if Other
+            if is_other_aud:
+                _add_detail(details, "visits.other_audience_title", v.get("other_audience_title"), (st.session_state.get(f"{PAGE_NS}/ota_title") or None))
+                _add_detail(details, "visits.other_audience_name", v.get("other_audience_name"), (st.session_state.get(f"{PAGE_NS}/ota_name") or None))
+                _add_detail(details, "visits.other_audience_department", v.get("other_audience_department"), (st.session_state.get(f"{PAGE_NS}/ota_dept") or None))
+                _add_detail(details, "visits.other_audience_position", v.get("other_audience_position"), (st.session_state.get(f"{PAGE_NS}/ota_pos") or None))
+                _add_detail(details, "visits.other_audience_phone", v.get("other_audience_phone"), (st.session_state.get(f"{PAGE_NS}/ota_phone") or None))
+                _add_detail(details, "visits.other_audience_email", v.get("other_audience_email"), (st.session_state.get(f"{PAGE_NS}/ota_email") or None))
+
+            section_header("Live Changes Preview")
+            if not details:
+                st.info("No changes yet.")
+            else:
+                rows_html = "".join(
+                    compare_row(
+                        d["field"],
+                        str(d.get("old_value") or "—"),
+                        str(d.get("new_value") or "—"),
+                        changed=True,
+                    )
+                    for d in details
                 )
-                st.success(f"Request submitted ✅ (Request ID: {req_id})")
+                st.markdown(
+                    f"""
+                    <table style="width:100%;border-collapse:collapse;border:1px solid #e4e8ec;
+                                  border-radius:10px;overflow:hidden;font-size:0.875rem;">
+                      <thead>
+                        <tr style="background:#f6f8fa;">
+                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
+                                     border-bottom:1px solid #e4e8ec;width:30%;">Field</th>
+                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
+                                     border-bottom:1px solid #e4e8ec;">Original</th>
+                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
+                                     border-bottom:1px solid #e4e8ec;">Requested</th>
+                        </tr>
+                      </thead>
+                      <tbody>{rows_html}</tbody>
+                    </table>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
-                # clear loaded state
-                for k in PREFILL_KEYS:
-                    st.session_state.pop(k, None)
+            # =====================================================
+            # Request note + Submit
+            # =====================================================
+            st.markdown("### Change Request Note")
+            st.text_area(
+                "Change Request Note (required) *",
+                key=f"{PAGE_NS}/req_note",
+                placeholder="Explain what you changed and why.",
+            )
+            req_note = st.session_state.get(f"{PAGE_NS}/req_note", "")
 
-                st.rerun()
-            except Exception as e:
-                st.error("Could not submit your request.")
-                st.caption(str(e))
+            submit_click = st.button(
+                "Submit Change Request",
+                type="primary",
+                disabled=(len(details) == 0),
+                key=f"{PAGE_NS}/submit_btn",
+            )
+            if submit_click:
+                if not req_note or not req_note.strip():
+                    st.error("Change Request Note is required.")
+                else:
+                    try:
+                        req_id = _insert_request_and_details(
+                            visit_id=int(v["visit_id"]),
+                            requested_by=uid,
+                            note=req_note.strip(),
+                            details=details,
+                        )
+                        st.success(f"Request submitted ✅ (Request ID: {req_id})")
+
+                        # clear loaded state
+                        for k in PREFILL_KEYS:
+                            st.session_state.pop(k, None)
+
+                        st.rerun()
+                    except Exception as e:
+                        st.error("Could not submit your request.")
+                        st.caption(str(e))
 
     # ============================================================
     # TAB 2 — View Requests

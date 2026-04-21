@@ -34,7 +34,10 @@ def page_user_settings():
     row = me.iloc[0]
 
     # Read-only profile block
-    st.subheader("My Profile")
+    st.markdown(
+        '<h3 style="font-size:1.125rem;font-weight:600;color:#0d1117;margin:0 0 0.5rem;">My Profile</h3>',
+        unsafe_allow_html=True,
+    )
     c1, c2 = st.columns(2)
     with c1:
         st.text_input("Name", value=row.get("name") or "", disabled=True)
@@ -48,7 +51,10 @@ def page_user_settings():
     st.divider()
 
     # Change password form
-    st.subheader("Change Password")
+    st.markdown(
+        '<h3 style="font-size:1.125rem;font-weight:600;color:#0d1117;margin:0 0 0.5rem;">Change Password</h3>',
+        unsafe_allow_html=True,
+    )
     with st.form("change_pw_form", clear_on_submit=True):
         old_pw = st.text_input("Current Password *", type="password")
         new_pw = st.text_input("New Password *", type="password", help="Min 8 chars, include a letter and a number.")

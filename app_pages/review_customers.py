@@ -50,7 +50,6 @@ def page_review_other_customers():
     display_role   = u.get("role") or "—"
 
     section_header("Review Other Customers", "Manage visits where the customer was recorded as 'Other'")
-    st.caption(f"Logged in as **{display_name}** · Region: **{display_region}** · Role: **{display_role}**")
 
     last_msg = st.session_state.get(success_key) or ""
     if last_msg:
