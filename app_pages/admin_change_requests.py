@@ -57,7 +57,7 @@ def _apply_changes(request_id: int, visit_id: int, admin_uid: int):
                 text(
                     """
                     UPDATE request_changes
-                    SET status = 'APPROVED', applied_at = NOW(), changed_by = :admin_uid
+                    SET status = 'APPROVED', applied_at = NOW(), resolve_date = NOW(), changed_by = :admin_uid
                     WHERE request_id = :rid
                     """
                 ),

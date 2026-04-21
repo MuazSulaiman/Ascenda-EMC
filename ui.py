@@ -323,11 +323,11 @@ def sidebar_nav():
     pages = ["Dashboard", "Submit Visit", "Check-In", "My Visits"]
 
     if role == "rep":
-        pages += ["Active Projects"]
+        pages += ["Active Projects", "Visit Change Requests"]
     if role == "maintenance":
         pages += ["Active Projects"]
     if role in ("sales manager", "biomedical manager"):
-        pages += ["Project Creation", "Project Management", "Active Projects"]
+        pages += ["Project Creation", "Project Management", "Active Projects", "Visit Change Requests"]
     if role == "admin":
         pages += [
             "Project Creation",

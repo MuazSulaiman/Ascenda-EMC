@@ -50,7 +50,7 @@ def page_dashboard():
     # ── Greeting header ───────────────────────────────────────────────────────
     try:
         now_local = _local_now()
-        date_str  = now_local.strftime("%A, %B %-d")
+        date_str  = f"{now_local.strftime('%A, %B')} {now_local.day}"
     except Exception:
         date_str = datetime.now().strftime("%A, %B %d")
 
