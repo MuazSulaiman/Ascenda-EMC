@@ -469,4 +469,48 @@ def _render_history_tab():
         ascending=[False, False, True],
     )
 
-    _render_visit_groups(all_df)
+    # ── Pagination (by visit group) ───────────────────────────────────────────
+    PAGE_SIZE = 10
+    visit_ids_ordered = list(dict.fromkeys(all_df["visit_id"].tolist()))
+    total_visits = len(visit_ids_ordered)
+
+    filter_key = status_filter
+    if st.session_state.get("_hist_filter_key") != filter_key:
+        st.session_state["_hist_filter_key"] = filter_key
+        st.session_state["_hist_page"] = 0
+
+    current_page = st.session_state.get("_hist_page", 0)
+    total_pages  = max(1, (total_visits + PAGE_SIZE - 1) // PAGE_SIZE)
+    current_page = min(current_page, total_pages - 1)
+
+    start_idx = current_page * PAGE_SIZE
+    end_idx   = min(start_idx + PAGE_SIZE, total_visits)
+    page_visit_ids = visit_ids_ordered[start_idx:end_idx]
+
+    st.markdown(
+        f'<p style="font-size:0.8rem;color:#8b949e;margin:6px 0 8px;">'
+        f'Showing visits {start_idx + 1}–{end_idx} of {total_visits:,}</p>',
+        unsafe_allow_html=True,
+    )
+
+    page_df = all_df[all_df["visit_id"].isin(page_visit_ids)]
+    _render_visit_groups(page_df)
+
+    if total_pages > 1:
+        col_prev, col_info, col_next = st.columns([1, 2, 1])
+        with col_prev:
+            if st.button("← Prev", key="hist_prev", disabled=(current_page == 0),
+                         use_container_width=True):
+                st.session_state["_hist_page"] = current_page - 1
+                st.rerun()
+        with col_info:
+            st.markdown(
+                f'<p style="text-align:center;font-size:0.85rem;color:#57606a;'
+                f'padding-top:0.4rem;">Page {current_page + 1} of {total_pages}</p>',
+                unsafe_allow_html=True,
+            )
+        with col_next:
+            if st.button("Next →", key="hist_next", disabled=(current_page >= total_pages - 1),
+                         use_container_width=True):
+                st.session_state["_hist_page"] = current_page + 1
+                st.rerun()
