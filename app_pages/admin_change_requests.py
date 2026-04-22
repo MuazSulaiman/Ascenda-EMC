@@ -308,7 +308,7 @@ def _render_visit_groups(df: pd.DataFrame) -> None:
         rep       = str(first.get("rep_name") or "—")
         visit_dt  = first.get("visit_date")
         visit_date_str = (
-            pd.to_datetime(visit_dt).strftime("%d %b %Y")
+            pd.to_datetime(visit_dt, errors="coerce").strftime("%d %b %Y")
             if pd.notna(visit_dt) else "—"
         )
         summary = _visit_status_summary(group)
@@ -330,13 +330,13 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
         "WITHDRAWN": "neutral",
     }
 
-    rows = list(group.iterrows())
-    for i, (_, row) in enumerate(rows):
+    total = len(group)
+    for i, (_, row) in enumerate(group.iterrows()):
         request_id  = int(row["request_id"])
         status_val  = str(row["status"])
         req_date    = row["request_date"]
         req_date_str = (
-            pd.to_datetime(req_date).strftime("%d %b %Y, %H:%M")
+            pd.to_datetime(req_date, errors="coerce").strftime("%d %b %Y, %H:%M")
             if pd.notna(req_date) else "—"
         )
 
@@ -372,7 +372,7 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
         # ── Resolution line ───────────────────────────────────────────────────
         if status_val == "APPROVED":
             applied_str = (
-                pd.to_datetime(row.get("applied_at")).strftime("%d %b %Y, %H:%M")
+                pd.to_datetime(row.get("applied_at"), errors="coerce").strftime("%d %b %Y, %H:%M")
                 if pd.notna(row.get("applied_at")) else "—"
             )
             resolver = str(row.get("resolved_by") or "—")
@@ -390,7 +390,7 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
 
         elif status_val == "WITHDRAWN":
             resolve_str = (
-                pd.to_datetime(row.get("resolve_date")).strftime("%d %b %Y")
+                pd.to_datetime(row.get("resolve_date"), errors="coerce").strftime("%d %b %Y")
                 if pd.notna(row.get("resolve_date")) else "—"
             )
             st.caption(f"Withdrawn on {resolve_str}")
@@ -399,7 +399,7 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
             st.warning(f"Apply error: {row['apply_error']}")
 
         # ── Divider between requests (not after last) ─────────────────────────
-        if i < len(rows) - 1:
+        if i < total - 1:
             st.markdown(
                 '<hr style="border:none;border-top:1px solid #e4e8ec;margin:12px 0;">',
                 unsafe_allow_html=True,
