@@ -45,6 +45,11 @@ def _apply_changes(request_id: int, visit_id: int, admin_uid: int):
         if r["field"] not in ALLOWED_VISIT_FIELDS:
             return False, f"Field not in allowed list: {r['field']}"
 
+    NULLABLE_VISIT_FIELDS = {"visits.notes", "visits.product_id", "visits.audience_id", "visits.project_id"}
+    for _, r in detail_rows.iterrows():
+        if r["field"] not in NULLABLE_VISIT_FIELDS and (r["new_value"] is None or r["new_value"] == ""):
+            return False, f"Field '{r['field']}' cannot be set to an empty value."
+
     try:
         with engine.begin() as conn:
             for _, r in detail_rows.iterrows():
@@ -277,29 +282,157 @@ def page_admin_change_requests():
         _render_history_tab()
 
 
+_STATUS_LABEL = {
+    "APPROVED":  "Approved",
+    "REJECTED":  "Rejected",
+    "IN_REVIEW": "In Review",
+    "WITHDRAWN": "Withdrawn",
+}
+
+
+def _visit_status_summary(visit_rows: pd.DataFrame) -> str:
+    counts = visit_rows["status"].value_counts()
+    parts = []
+    for status in ["IN_REVIEW", "APPROVED", "REJECTED", "WITHDRAWN"]:
+        n = counts.get(status, 0)
+        if n:
+            label = _STATUS_LABEL.get(status, status)
+            parts.append(f"{n} {label}")
+    return " · ".join(parts) if parts else ""
+
+
+def _render_visit_groups(df: pd.DataFrame) -> None:
+    for visit_id, group in df.groupby("visit_id", sort=False):
+        first = group.iloc[0]
+        customer  = str(first.get("customer_name") or "—")
+        rep       = str(first.get("rep_name") or "—")
+        visit_dt  = first.get("visit_date")
+        visit_date_str = (
+            pd.to_datetime(visit_dt).strftime("%d %b %Y")
+            if pd.notna(visit_dt) else "—"
+        )
+        summary = _visit_status_summary(group)
+
+        expander_label = (
+            f"V-{visit_id}  ·  {customer}  ·  {rep}  ·  {visit_date_str}"
+            + (f"        {summary}" if summary else "")
+        )
+
+        with st.expander(expander_label):
+            _render_request_timeline(group)
+
+
+def _render_request_timeline(group: pd.DataFrame) -> None:
+    _BADGE_VARIANT = {
+        "APPROVED":  "success",
+        "REJECTED":  "danger",
+        "IN_REVIEW": "warning",
+        "WITHDRAWN": "neutral",
+    }
+
+    rows = list(group.iterrows())
+    for i, (_, row) in enumerate(rows):
+        request_id  = int(row["request_id"])
+        status_val  = str(row["status"])
+        req_date    = row["request_date"]
+        req_date_str = (
+            pd.to_datetime(req_date).strftime("%d %b %Y, %H:%M")
+            if pd.notna(req_date) else "—"
+        )
+
+        # ── Request header ────────────────────────────────────────────────────
+        badge = status_badge(status_val, _BADGE_VARIANT.get(status_val, "neutral"))
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:10px;'
+            f'margin-bottom:6px;">'
+            f'<span style="font-size:0.875rem;font-weight:600;color:#0d1117;">'
+            f'Request #{request_id}</span>'
+            f'<span style="font-size:0.8rem;color:#8b949e;">{req_date_str}</span>'
+            f'{badge}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Rep note ──────────────────────────────────────────────────────────
+        req_note = str(row.get("request_note") or "").strip()
+        if req_note:
+            st.markdown(
+                f'<p style="font-size:0.85rem;color:#57606a;'
+                f'font-style:italic;margin:0 0 8px 0;">"{req_note}"</p>',
+                unsafe_allow_html=True,
+            )
+
+        # ── Diff table ────────────────────────────────────────────────────────
+        diff_df = _load_diff(request_id)
+        if not diff_df.empty:
+            _render_diff_table(diff_df)
+        else:
+            st.caption("No field details recorded.")
+
+        # ── Resolution line ───────────────────────────────────────────────────
+        if status_val == "APPROVED":
+            applied_str = (
+                pd.to_datetime(row.get("applied_at")).strftime("%d %b %Y, %H:%M")
+                if pd.notna(row.get("applied_at")) else "—"
+            )
+            resolver = str(row.get("resolved_by") or "—")
+            st.success(f"Approved by {resolver} on {applied_str}")
+
+        elif status_val == "REJECTED":
+            reject_note = str(row.get("reject_note") or "").strip()
+            if reject_note:
+                st.error(f"Rejected: {reject_note}")
+            else:
+                st.error("Rejected.")
+
+        elif status_val == "IN_REVIEW":
+            st.info("Pending review")
+
+        elif status_val == "WITHDRAWN":
+            resolve_str = (
+                pd.to_datetime(row.get("resolve_date")).strftime("%d %b %Y")
+                if pd.notna(row.get("resolve_date")) else "—"
+            )
+            st.caption(f"Withdrawn on {resolve_str}")
+
+        if pd.notna(row.get("apply_error")) and str(row.get("apply_error")).strip():
+            st.warning(f"Apply error: {row['apply_error']}")
+
+        # ── Divider between requests (not after last) ─────────────────────────
+        if i < len(rows) - 1:
+            st.markdown(
+                '<hr style="border:none;border-top:1px solid #e4e8ec;margin:12px 0;">',
+                unsafe_allow_html=True,
+            )
+
+
 def _render_history_tab():
     all_df = query_df(
         """
         SELECT
           rc.request_id,
           rc.visit_id,
-          rep.name            AS rep_name,
+          rep.name             AS rep_name,
           rc.request_date,
           rc.status,
           COUNT(rcd.detail_id) AS fields_changed,
-          resolver.name       AS resolved_by,
+          resolver.name        AS resolved_by,
           rc.resolve_date,
           rc.applied_at,
           rc.apply_error,
           rc.request_note,
-          rc.reject_note
+          rc.reject_note,
+          c.account_name       AS customer_name,
+          v.submitted_at_local AS visit_date
         FROM request_changes rc
         JOIN users rep ON rep.user_id = rc.requested_by
         LEFT JOIN users resolver ON resolver.user_id = rc.changed_by
         LEFT JOIN request_change_details rcd ON rcd.request_id = rc.request_id
+        JOIN visits v ON v.visit_id = rc.visit_id
+        JOIN customers c ON c.customer_id = v.customer_id
         GROUP BY rc.request_id, rc.visit_id, rep.name, rc.request_date, rc.status,
                  rc.applied_at, rc.apply_error, rc.request_note, rc.reject_note,
-                 rc.resolve_date, resolver.name
+                 rc.resolve_date, resolver.name, c.account_name, v.submitted_at_local
         ORDER BY rc.request_date DESC
         """
     )
@@ -308,64 +441,32 @@ def _render_history_tab():
         st.info("No change requests found.")
         return
 
+    # ── Status filter ─────────────────────────────────────────────────────────
     status_opts = ["All"] + sorted(all_df["status"].unique().tolist())
     status_filter = st.selectbox("Filter by status:", status_opts, key=f"{PAGE_NS}_hist_filter")
+
     if status_filter != "All":
-        all_df = all_df[all_df["status"] == status_filter]
+        # Keep only visits that have at least one request with this status
+        visit_ids_with_status = all_df[all_df["status"] == status_filter]["visit_id"].unique()
+        all_df = all_df[all_df["visit_id"].isin(visit_ids_with_status)]
 
     if all_df.empty:
         st.info(f"No requests with status: {status_filter}")
         return
 
-    display_df = all_df[["request_id", "visit_id", "rep_name", "request_date",
-                          "fields_changed", "status", "resolved_by", "resolve_date"]].copy()
-    display_df["request_date"] = pd.to_datetime(display_df["request_date"], errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
-    display_df["resolve_date"] = pd.to_datetime(display_df["resolve_date"], errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
-    display_df = display_df.rename(columns={
-        "request_id": "Req #", "visit_id": "Visit #", "rep_name": "Rep",
-        "request_date": "Submitted", "fields_changed": "# Fields",
-        "status": "Status", "resolved_by": "Resolved By", "resolve_date": "Resolved Date",
-    })
-    st.dataframe(display_df, hide_index=True, use_container_width=True)
+    # ── Group by visit ────────────────────────────────────────────────────────
+    # Sort so most-recently-active visit comes first; within each visit,
+    # requests are oldest→newest for the timeline.
+    all_df["request_date"] = pd.to_datetime(all_df["request_date"], errors="coerce")
+    all_df["visit_date"]   = pd.to_datetime(all_df["visit_date"],   errors="coerce")
 
-    req_options = {
-        f"Request #{int(r['request_id'])} — Visit #{int(r['visit_id'])} — {r['rep_name']} ({r['status']})": r
-        for _, r in all_df.iterrows()
-    }
-    chosen = st.selectbox("Select a request to view details:", list(req_options.keys()), key=f"{PAGE_NS}_hist_sel")
-    sel = req_options[chosen]
-    request_id = int(sel["request_id"])
-    visit_id = int(sel["visit_id"])
+    latest_per_visit = (
+        all_df.groupby("visit_id")["request_date"].max().rename("latest_req_date")
+    )
+    all_df = all_df.join(latest_per_visit, on="visit_id")
+    all_df = all_df.sort_values(
+        ["latest_req_date", "visit_id", "request_date"],
+        ascending=[False, False, True],
+    )
 
-    ctx = _load_visit_context(visit_id)
-    if ctx:
-        date_str = pd.to_datetime(ctx.get("submitted_at_local")).strftime("%d/%m/%Y") if pd.notna(ctx.get("submitted_at_local")) else "—"
-        st.info(
-            f"**Visit #{visit_id}**  \n"
-            f"Customer: {ctx.get('customer_name', '—')}  \n"
-            f"Rep: {ctx.get('rep_name', '—')}  \n"
-            f"Date: {date_str}  \n"
-            f"Business Line: {ctx.get('business_line', '—')}"
-        )
-
-    if pd.notna(sel.get("request_note")) and sel.get("request_note"):
-        st.markdown(f"**Rep note:** \"{sel['request_note']}\"")
-
-    diff_df = _load_diff(request_id)
-    if not diff_df.empty:
-        _render_diff_table(diff_df)
-
-    status_val = str(sel["status"])
-    if status_val == "REJECTED" and pd.notna(sel.get("reject_note")) and sel.get("reject_note"):
-        st.error(f"**Rejection reason:** {sel['reject_note']}")
-
-    if status_val == "APPROVED":
-        applied_str = pd.to_datetime(sel.get("applied_at")).strftime("%d/%m/%Y %H:%M") if pd.notna(sel.get("applied_at")) else "—"
-        st.success(f"Approved and applied at {applied_str} by {sel.get('resolved_by') or '—'}")
-
-    if pd.notna(sel.get("apply_error")) and sel.get("apply_error"):
-        st.warning(f"Apply error (request remains IN_REVIEW): {sel['apply_error']}")
-
-    req_date_str = pd.to_datetime(sel["request_date"]).strftime("%d/%m/%Y %H:%M") if pd.notna(sel["request_date"]) else "?"
-    resolve_str = pd.to_datetime(sel["resolve_date"]).strftime("%d/%m/%Y %H:%M") if pd.notna(sel.get("resolve_date")) else "Pending"
-    st.caption(f"Timeline: Requested {req_date_str} → Resolved {resolve_str} ({status_val})")
+    _render_visit_groups(all_df)
