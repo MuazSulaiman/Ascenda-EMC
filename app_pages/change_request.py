@@ -965,6 +965,13 @@ def page_change_request():
                 _add_detail(details, "visits.other_audience_phone", v.get("other_audience_phone"), (st.session_state.get(f"{PAGE_NS}/ota_phone") or None))
                 _add_detail(details, "visits.other_audience_email", v.get("other_audience_email"), (st.session_state.get(f"{PAGE_NS}/ota_email") or None))
 
+            # include home visit fields in preview if Home Visit
+            if is_home_visit:
+                hv0 = snap.get("home_visit") or {}
+                _add_detail(details, "home_visits.patient_name", hv0.get("patient_name"), (st.session_state.get(f"{PAGE_NS}/hv_name") or None))
+                _add_detail(details, "home_visits.patient_phone", hv0.get("patient_phone"), (st.session_state.get(f"{PAGE_NS}/hv_phone") or None))
+                _add_detail(details, "home_visits.serial_no", hv0.get("serial_no"), (st.session_state.get(f"{PAGE_NS}/hv_serial") or None))
+
             section_header("Live Changes Preview")
             if not details:
                 st.info("No changes yet.")
@@ -1016,8 +1023,70 @@ def page_change_request():
                 key=f"{PAGE_NS}/submit_btn",
             )
             if submit_click:
+                cr_errors = []
+
                 if not req_note or not req_note.strip():
-                    st.error("Change Request Note is required.")
+                    cr_errors.append("Change Request Note is required.")
+
+                # Audience required
+                if not aud_choice:
+                    cr_errors.append("Please choose a **Target Audience**.")
+                elif is_other_aud:
+                    ota_name_val  = (st.session_state.get(f"{PAGE_NS}/ota_name",  "") or "").strip()
+                    ota_dept_val  = (st.session_state.get(f"{PAGE_NS}/ota_dept",  "") or "").strip()
+                    ota_pos_val   = (st.session_state.get(f"{PAGE_NS}/ota_pos",   "") or "").strip()
+                    ota_phone_val = (st.session_state.get(f"{PAGE_NS}/ota_phone", "") or "").strip()
+                    ota_email_val = (st.session_state.get(f"{PAGE_NS}/ota_email", "") or "").strip()
+                    if not ota_name_val:
+                        cr_errors.append("For **Other Target Audience**, please enter **Target Audience Name**.")
+                    if not ota_dept_val:
+                        cr_errors.append("For **Other Target Audience**, please select a **Department**.")
+                    if not ota_pos_val:
+                        cr_errors.append("For **Other Target Audience**, please select a **Position**.")
+                    if ota_phone_val and not re.fullmatch(r"(?:\+966|00966|0)?5\d{8}", ota_phone_val):
+                        cr_errors.append(
+                            "For **Other Target Audience**, **Phone #** looks invalid "
+                            "(expected KSA mobile like 05XXXXXXXX)."
+                        )
+                    if ota_email_val and not re.fullmatch(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", ota_email_val):
+                        cr_errors.append("For **Other Target Audience**, **Email** looks invalid.")
+
+                # Home visit required fields
+                if is_home_visit:
+                    hv_name_val   = (st.session_state.get(f"{PAGE_NS}/hv_name",  "") or "").strip()
+                    hv_phone_val  = (st.session_state.get(f"{PAGE_NS}/hv_phone", "") or "").strip()
+                    hv_serial_val = (st.session_state.get(f"{PAGE_NS}/hv_serial","") or "").strip()
+                    if not hv_name_val:
+                        cr_errors.append("For **Home Visit**, please enter **Patient Name**.")
+                    if not hv_phone_val:
+                        cr_errors.append("For **Home Visit**, please enter **Patient Phone #**.")
+                    elif not re.fullmatch(r"(?:\+966|00966|0)?5\d{8}", hv_phone_val):
+                        cr_errors.append(
+                            "**Patient Phone #** looks invalid (expected KSA mobile like 05XXXXXXXX)."
+                        )
+                    if not hv_serial_val:
+                        cr_errors.append("For **Home Visit**, please enter **Device Serial #**.")
+
+                # Product hierarchy required
+                if not bu_choice:
+                    cr_errors.append("Please choose a **Business Unit**.")
+                if not cat_choice:
+                    cr_errors.append("Please choose a **Category**.")
+                if not new_business_line_id:
+                    cr_errors.append("Please choose a **Business Line**.")
+
+                # Objective required
+                if not obj_choice:
+                    cr_errors.append("Please choose a **Business Objective**.")
+
+                # Evaluation cannot be cleared
+                eval_detail = next((d for d in details if d["field"] == "visits.evaluation"), None)
+                if eval_detail is not None and eval_detail.get("new_value") is None:
+                    cr_errors.append("Evaluation cannot be cleared — please choose Positive, Negative, or Neutral.")
+
+                if cr_errors:
+                    for msg in cr_errors:
+                        st.error(msg)
                 else:
                     try:
                         req_id = _insert_request_and_details(

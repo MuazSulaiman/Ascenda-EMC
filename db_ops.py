@@ -18,6 +18,13 @@ def query_df(sql: str, params: Optional[dict] = None) -> pd.DataFrame:
         return pd.read_sql_query(text(sql), conn, params=params or {})
 
 
+def query_scalar(sql: str, params: Optional[dict] = None):
+    """Run a query and return the first scalar value (e.g. for COUNT queries)."""
+    with engine.begin() as conn:
+        row = conn.execute(text(sql), params or {}).fetchone()
+        return row[0] if row is not None else None
+
+
 def exec_sql(sql: str, params: Optional[dict] = None):
     """Execute a write DDL/DML statement (PostgreSQL)."""
     with engine.begin() as conn:

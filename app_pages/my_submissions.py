@@ -355,16 +355,34 @@ def page_my_submissions():
         )
         visible = visible[mask]
 
+    # ── Pagination ────────────────────────────────────────────────────────────
+    PAGE_SIZE = 10
+    total_visible = len(visible)
+
+    # Reset to page 1 when filter or search changes
+    filter_key = (active_filter, search_q)
+    if st.session_state.get("mv_filter_key") != filter_key:
+        st.session_state["mv_filter_key"] = filter_key
+        st.session_state["mv_page"] = 0
+
+    current_page = st.session_state.get("mv_page", 0)
+    total_pages  = max(1, (total_visible + PAGE_SIZE - 1) // PAGE_SIZE)
+    current_page = min(current_page, total_pages - 1)
+
+    start_idx = current_page * PAGE_SIZE
+    end_idx   = min(start_idx + PAGE_SIZE, total_visible)
+    page_df   = visible.iloc[start_idx:end_idx]
+
     st.markdown(
         f'<p style="font-size:0.8rem;color:#8b949e;margin:6px 0 8px;">'
-        f'Showing {len(visible):,} of {cnt_total:,} visits</p>',
+        f'Showing {start_idx + 1}–{end_idx} of {total_visible:,} visits</p>',
         unsafe_allow_html=True,
     )
 
     # ── Build card HTML ───────────────────────────────────────────────────────
     _sid = st.query_params.get("sid", "")
     cards_html = ""
-    for _, row in visible.iterrows():
+    for _, row in page_df.iterrows():
         eval_val = row.get("evaluation") or ""
         variant  = _EVAL_VARIANT.get(eval_val, "neutral")
         label    = _EVAL_LABEL.get(eval_val, "Unrated")
@@ -392,6 +410,26 @@ def page_my_submissions():
         st.markdown(cards_html, unsafe_allow_html=True)
     else:
         st.info("No visits match your search or filter.")
+
+    # ── Pagination controls ───────────────────────────────────────────────────
+    if total_pages > 1:
+        col_prev, col_info, col_next = st.columns([1, 2, 1])
+        with col_prev:
+            if st.button("← Prev", key="mv_prev", disabled=(current_page == 0),
+                         use_container_width=True):
+                st.session_state["mv_page"] = current_page - 1
+                st.rerun()
+        with col_info:
+            st.markdown(
+                f'<p style="text-align:center;font-size:0.85rem;color:#57606a;'
+                f'padding-top:0.4rem;">Page {current_page + 1} of {total_pages}</p>',
+                unsafe_allow_html=True,
+            )
+        with col_next:
+            if st.button("Next →", key="mv_next", disabled=(current_page >= total_pages - 1),
+                         use_container_width=True):
+                st.session_state["mv_page"] = current_page + 1
+                st.rerun()
 
     # ── Download CSV (collapsed) ──────────────────────────────────────────────
     with st.expander("Export data"):

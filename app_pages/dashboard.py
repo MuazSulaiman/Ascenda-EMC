@@ -54,7 +54,7 @@ def page_dashboard():
     except Exception:
         date_str = datetime.now().strftime("%A, %B %d")
 
-    section_header(f"Welcome back, {first_name}", f"Here's what's happening in the field today, {date_str}.")
+    section_header(f"Welcome back, {first_name}", f"Here's what's happening in the field, {date_str}.")
 
     # ── Period filter ─────────────────────────────────────────────────────────
     period = st.radio(

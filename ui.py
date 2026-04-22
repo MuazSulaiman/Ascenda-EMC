@@ -366,10 +366,6 @@ def sidebar_nav():
 
     # ── Format function: append live count to My Visits label ─────────────────
     def _fmt(page: str) -> str:
-        if page == "My Visits" and mv_count > 0:
-            return f"My Visits  {mv_count}"
-        if page == "Review Change Requests" and cr_pending > 0:
-            return f"Review Change Requests  {cr_pending}"
         return page
 
     # ── Navigation radio ──────────────────────────────────────────────────────
@@ -660,10 +656,11 @@ def visit_card(
     import pandas as pd
     try:
         dt = pd.to_datetime(date_obj, errors="coerce")
-        day = str(dt.day) if dt is not None and not pd.isnull(dt) else "—"
+        day   = str(dt.day)            if dt is not None and not pd.isnull(dt) else "—"
         month = dt.strftime("%b").upper() if dt is not None and not pd.isnull(dt) else "—"
+        year  = str(dt.year)           if dt is not None and not pd.isnull(dt) else ""
     except Exception:
-        day, month = "—", "—"
+        day, month, year = "—", "—", ""
 
     badge = status_badge(status, status_variant)
     card = (
@@ -675,6 +672,7 @@ def visit_card(
         f'<div style="font-size:1.125rem;font-weight:700;color:#0d1117;line-height:1;">{day}</div>'
         f'<div style="font-size:0.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;'
         f'margin-top:2px;letter-spacing:0.04em;">{month}</div>'
+        f'<div style="font-size:0.65rem;color:#b0b8c1;margin-top:1px;letter-spacing:0.02em;">{year}</div>'
         f'</div>'
         f'<div style="flex:1;min-width:0;">'
         f'<div style="font-size:0.9375rem;font-weight:600;color:#0d1117;'
