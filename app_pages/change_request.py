@@ -181,6 +181,30 @@ def page_change_request():
             "movement_lines": movement_lines,
         }
 
+    def _load_user_visits(user_id: int) -> list[dict]:
+        df = query_df(
+            """
+            SELECT v.visit_id, v.submitted_at_local, c.account_name
+            FROM visits v
+            JOIN customers c ON c.customer_id = v.customer_id
+            WHERE v.user_id = :uid
+            ORDER BY v.submitted_at_utc DESC
+            LIMIT 300
+            """,
+            {"uid": int(user_id)},
+        )
+        if df.empty:
+            return []
+        rows = []
+        for _, r in df.iterrows():
+            date_str = ""
+            if pd.notna(r["submitted_at_local"]):
+                date_str = str(r["submitted_at_local"])[:10]
+            customer = str(r["account_name"]).strip() if pd.notna(r["account_name"]) else "—"
+            label = f"#{int(r['visit_id'])} — {customer} — {date_str}"
+            rows.append({"visit_id": int(r["visit_id"]), "label": label})
+        return rows
+
     def _get_customer_locked_fields(customer_id: int) -> dict:
         df = query_df(
             """
@@ -655,24 +679,23 @@ def page_change_request():
         )
 
         st.markdown("### Select Visit")
-        vcol1, vcol2 = st.columns([2, 1])
-        with vcol1:
-            visit_id_str = st.text_input(
-                "Input Visit ID you are wishing to request a change for:",
-                key=f"{PAGE_NS}/visit_id_in",
-            )
-        with vcol2:
-            search_click = st.button("Search", type="primary", key=f"{PAGE_NS}/search_btn")
+        user_visits = _load_user_visits(uid)
+        visit_labels = [""] + [v["label"] for v in user_visits]
+        visit_id_map = {v["label"]: v["visit_id"] for v in user_visits}
 
-        if search_click:
-            vid = _safe_int(visit_id_str)
-            if not vid:
-                st.error("Enter a valid Visit ID.")
-            else:
-                for k in PREFILL_KEYS:
-                    st.session_state.pop(k, None)
-                st.session_state[f"{PAGE_NS}/pending_vid"] = int(vid)
-                st.rerun()
+        def _on_visit_select():
+            sel = st.session_state.get(f"{PAGE_NS}/visit_sel", "")
+            for k in PREFILL_KEYS:
+                st.session_state.pop(k, None)
+            if sel and sel in visit_id_map:
+                st.session_state[f"{PAGE_NS}/pending_vid"] = visit_id_map[sel]
+
+        st.selectbox(
+            "Select a visit to request a change for:",
+            visit_labels,
+            key=f"{PAGE_NS}/visit_sel",
+            on_change=_on_visit_select,
+        )
 
         pending_vid = st.session_state.pop(f"{PAGE_NS}/pending_vid", None)
         if pending_vid:
@@ -757,7 +780,7 @@ def page_change_request():
 
         snap = st.session_state.get(f"{PAGE_NS}/snap")
         if not snap:
-            st.info("Search for a Visit ID to start.")
+            st.info("Select a visit above to start.")
         else:
             v = snap["visit"]
 

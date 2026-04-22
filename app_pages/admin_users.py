@@ -1,4 +1,5 @@
 # pages/admin_users.py
+import pandas as pd
 import streamlit as st
 from passlib.hash import pbkdf2_sha256
 from sqlalchemy import text

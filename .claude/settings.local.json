@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from db_ops import query_df, exec_sql, insert_visit_atomic, insert_project, recent_visit_minutes; print\\('ok'\\)\")",
+      "Bash(python -c \"from auth import resolve_session_user, create_session, delete_session, revoke_session, get_user_by_email, set_url_param, get_url_param; print\\('ok'\\)\")",
+      "Bash(py -3.9 -c \"import streamlit; print\\('ok'\\)\")",
+      "Bash(py -3.9 -m pip list)",
+      "Bash(py -3.9 -m py_compile ui.py)",
+      "Bash(python3 -)",
+      "Bash(py -3.9 -m py_compile pages/admin_data.py pages/admin_users.py)",
+      "Read(//c/Users/muazs/.claude/skills/ui-ux-pro-max/**)",
+      "Bash(python scripts/search.py \"sales operations field tracking business CRM dashboard\" --design-system -p \"Ascenda\" -f markdown)",
+      "Bash(python -c \"import sys; sys.stdout.buffer.write\\(sys.stdin.buffer.read\\(\\)\\)\")",
+      "Bash(python -c \" import subprocess, sys r = subprocess.run\\(['python', 'scripts/search.py', 'sales operations field tracking business CRM dashboard', '--design-system', '-p', 'Ascenda', '-f', 'markdown'], capture_output=True, cwd=r'C:\\\\Users\\\\muazs\\\\.claude\\\\skills\\\\ui-ux-pro-max'\\) sys.stdout.buffer.write\\(r.stdout\\) \")",
+      "Bash(grep -E \"\\\\.\\(py|css|json\\)$\")",
+      "Bash(python .claude/skills/ui-ux-pro-max/scripts/search.py \"operational field visit SaaS dashboard mobile-first clean premium\" --design-system -p \"Ascenda\" -f markdown)",
+      "Bash(python3 .claude/skills/ui-ux-pro-max/scripts/search.py \"operational field visit SaaS dashboard mobile-first clean premium\" --design-system -p \"Ascenda\" -f markdown)",
+      "Bash(python .claude/skills/ui-ux-pro-max/scripts/search.py \"field sales SaaS operational dashboard mobile-first\" --design-system -p \"Ascenda\" -f markdown)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git stash *)",
+      "Bash(git merge *)"
+    ]
+  }
+}

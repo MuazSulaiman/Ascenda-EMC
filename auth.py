@@ -1,0 +1,208 @@
+# auth.py
+import json
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
+
+import streamlit as st
+from sqlalchemy import text, bindparam
+from sqlalchemy.dialects.postgresql import JSONB
+
+from db import engine
+from config import SESSION_TTL_MIN
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _user_agent() -> Optional[str]:
+    return st.session_state.get("user_agent")
+
+
+def _client_ip() -> Optional[str]:
+    return st.session_state.get("client_ip")
+
+
+def _log_event(conn, sid: str, evt: str, details=None):
+    if details is None:
+        details = {}
+    stmt = text("""
+        INSERT INTO app_session_events(session_id, event_type, ip, user_agent, details)
+        VALUES (:sid, :evt, :ip, :ua, :details)
+    """).bindparams(bindparam("details", type_=JSONB))
+    conn.execute(stmt, {
+        "sid": sid,
+        "evt": evt,
+        "ip": _client_ip(),
+        "ua": _user_agent(),
+        "details": details,
+    })
+
+
+def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT * FROM users WHERE email = :email"),
+            {"email": email},
+        ).mappings().first()
+        return dict(row) if row else None
+
+
+def get_user_by_id(uid: int) -> Optional[Dict[str, Any]]:
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT * FROM users WHERE user_id = :uid"),
+            {"uid": uid},
+        ).mappings().first()
+        return dict(row) if row else None
+
+
+def create_session(user_id: int, role: str | None = None) -> str:
+    """
+    Create a new app session for the given user.
+    Normal users: TTL = SESSION_TTL_MIN. Admins: TTL = 720 minutes (12 hours).
+    """
+    sid = uuid.uuid4().hex
+    now = _utcnow()
+    ttl_minutes = 720 if role and str(role).lower().strip() == "admin" else SESSION_TTL_MIN
+    exp = now + timedelta(minutes=ttl_minutes)
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO app_sessions(
+                    session_id, user_id, created_at_utc, expires_at_utc,
+                    last_seen_utc, ip, user_agent
+                )
+                VALUES (:sid, :uid, :created, :expires, :last_seen, :ip, :ua)
+            """),
+            {
+                "sid": sid, "uid": user_id, "created": now, "expires": exp,
+                "last_seen": now, "ip": _client_ip(), "ua": _user_agent(),
+            },
+        )
+        _log_event(conn, sid, "created", {"ttl_min": ttl_minutes})
+    return sid
+
+
+def purge_expired_sessions() -> None:
+    """Mark expired sessions as closed, idempotently."""
+    with engine.begin() as conn:
+        res = conn.execute(
+            text("""
+                UPDATE app_sessions
+                SET revoked_at_utc = NOW(), closed_reason = 'expired'
+                WHERE expires_at_utc < NOW() AND revoked_at_utc IS NULL
+                RETURNING session_id
+            """)
+        )
+        for (sid,) in res.fetchall():
+            _log_event(conn, sid, "expired", {"batch": True})
+
+
+def revoke_session(sid: str, reason: str = "manual_revoke") -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                UPDATE app_sessions
+                SET revoked_at_utc = :now, closed_reason = :reason
+                WHERE session_id = :sid AND revoked_at_utc IS NULL
+            """),
+            {"sid": sid, "now": _utcnow(), "reason": reason},
+        )
+        _log_event(conn, sid, "revoked", {"reason": reason})
+
+
+def delete_session(sid: str) -> None:
+    revoke_session(sid, reason="manual_revoke")
+
+
+def _ensure_sessions_table_exists():
+    ddl = """
+    CREATE TABLE IF NOT EXISTS app_sessions (
+      session_id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+      created_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at_utc TIMESTAMPTZ NOT NULL
+    )
+    """
+    with engine.begin() as conn:
+        conn.execute(text(ddl))
+
+
+def set_url_param(name: str, value: str | None):
+    if value is None:
+        st.query_params.pop(name, None)
+    else:
+        st.query_params[name] = value
+
+
+def get_url_param(name: str, default: str | None = None) -> str | None:
+    return st.query_params.get(name, default)
+
+
+def set_url_session_param(sid: Optional[str]):
+    if sid:
+        st.query_params["sid"] = sid
+    else:
+        st.query_params.pop("sid", None)
+
+
+def resolve_session_user():
+    sid = st.query_params.get("sid") or st.query_params.get("_sid")
+    if st.query_params.get("_sid"):
+        st.query_params["sid"] = st.query_params["_sid"]
+        st.query_params.pop("_sid", None)
+        sid = st.query_params.get("sid")
+    if not sid:
+        return None
+
+    now = _utcnow()
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("""
+                SELECT s.session_id, s.user_id, s.expires_at_utc, s.revoked_at_utc,
+                       u.name, u.region, u.role, u.email
+                FROM app_sessions s
+                JOIN users u ON u.user_id = s.user_id
+                WHERE s.session_id = :sid
+            """),
+            {"sid": sid},
+        ).mappings().first()
+
+        if not row:
+            _log_event(conn, sid, "failed_validation", {"reason": "not_found"})
+            st.query_params.pop("sid", None)
+            return None
+
+        if row["revoked_at_utc"] is not None or row["expires_at_utc"] <= now:
+            conn.execute(
+                text("""
+                    UPDATE app_sessions
+                    SET revoked_at_utc = GREATEST(COALESCE(revoked_at_utc, NOW()), NOW()),
+                        closed_reason = CASE
+                            WHEN expires_at_utc <= :now THEN 'expired'
+                            ELSE 'revoked'
+                        END
+                    WHERE session_id = :sid
+                """),
+                {"sid": sid, "now": now},
+            )
+            _log_event(conn, sid, "expired" if row["expires_at_utc"] <= now else "revoked")
+            st.query_params.pop("sid", None)
+            return None
+
+        conn.execute(
+            text("UPDATE app_sessions SET last_seen_utc = :now WHERE session_id = :sid"),
+            {"now": now, "sid": sid},
+        )
+        _log_event(conn, sid, "validated", {"note": "ok"})
+
+        return {
+            "session_id": row["session_id"],
+            "user_id": int(row["user_id"]),
+            "name": row.get("name"),
+            "region": row.get("region"),
+            "role": row.get("role"),
+            "email": row.get("email"),
+        }
