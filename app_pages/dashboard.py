@@ -49,6 +49,14 @@ _ICON_BUILDING = (
 )
 
 
+def _safe_count(sql: str, params: dict = None) -> int:
+    try:
+        r = query_df(sql, params or {})
+        return int(r.iloc[0, 0]) if not r.empty else 0
+    except Exception:
+        return 0
+
+
 def page_dashboard():
     set_current_page("dashboard")
 
@@ -90,13 +98,6 @@ def page_dashboard():
         "This month": "AND v.submitted_at_local >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Riyadh')",
         "All time":   "",
     }.get(period, "")
-
-    def _safe_count(sql: str, params: dict = None) -> int:
-        try:
-            r = query_df(sql, params or {})
-            return int(r.iloc[0, 0]) if not r.empty else 0
-        except Exception:
-            return 0
 
     # Today's visits
     today_count = _safe_count(
@@ -223,13 +224,6 @@ def _render_admin_dashboard(uid: int, first_name: str) -> None:
         "All time":   "",
     }.get(period, "")
 
-    def _safe_count(sql: str, params: dict = None) -> int:
-        try:
-            r = query_df(sql, params or {})
-            return int(r.iloc[0, 0]) if not r.empty else 0
-        except Exception:
-            return 0
-
     # ── Field Activity KPIs ───────────────────────────────────────────────────
     st.markdown("#### Field Activity")
 
@@ -273,7 +267,7 @@ def _render_admin_dashboard(uid: int, first_name: str) -> None:
             kpi_card_v2(
                 label="Active Reps",
                 value=str(active_reps),
-                delta=f"Submitted ≥1 visit",
+                delta="Submitted ≥1 visit",
                 delta_positive=True,
                 icon_svg=_ICON_USERS,
                 icon_bg="#eef2ff",
