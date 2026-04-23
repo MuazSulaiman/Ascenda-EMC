@@ -72,7 +72,7 @@ def page_dashboard():
     role = (u.get("role") or "").lower().strip()
 
     if role == "admin":
-        _render_admin_dashboard(uid, first_name)
+        _render_admin_dashboard()
         return
 
     # ── Greeting header ───────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ def page_dashboard():
         )
 
 
-def _render_admin_dashboard(uid: int, first_name: str) -> None:
+def _render_admin_dashboard() -> None:
     """Admin command-center dashboard. Called from page_dashboard() when role==admin."""
 
     # ── Header ────────────────────────────────────────────────────────────────
