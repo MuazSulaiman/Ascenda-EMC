@@ -779,6 +779,10 @@ def page_change_request():
                 st.rerun()
 
         snap = st.session_state.get(f"{PAGE_NS}/snap")
+        if snap and int(snap["visit"].get("user_id", -1)) != uid:
+            for k in PREFILL_KEYS:
+                st.session_state.pop(k, None)
+            snap = None
         if not snap:
             st.info("Select a visit above to start.")
         else:

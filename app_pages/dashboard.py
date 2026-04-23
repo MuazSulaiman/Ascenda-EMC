@@ -410,5 +410,5 @@ def _render_admin_pending_reviews() -> None:
                 key=f"admin_review_{row['type']}_{int(row['item_id'])}",
                 use_container_width=True,
             ):
-                st.session_state["_current_page"] = target
+                st.query_params["page"] = target
                 st.rerun()

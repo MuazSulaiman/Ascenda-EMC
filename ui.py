@@ -181,10 +181,18 @@ def login_block():
             st.rerun()
 
 
+def _clear_page_session_state():
+    """Clear all page-scoped session state keys so they don't leak across user sessions."""
+    page_prefixes = ("change_request/", "submit_visit/", "check_in/")
+    stale = [k for k in st.session_state if any(k.startswith(p) for p in page_prefixes)]
+    for k in stale:
+        del st.session_state[k]
+
+
 def logout_button():
     if st.sidebar.button("Logout"):
-        # Clear submit page geo state when logging out
         _reset_location_state_for_page("submit_visit")
+        _clear_page_session_state()
 
         sid = st.query_params.get("sid")
         if sid:
@@ -192,7 +200,7 @@ def logout_button():
         set_url_session_param(None)
         st.session_state.user = None
         st.session_state.pop("_current_page", None)
-        st.session_state.pop("__current_page", None)  # ensure page tracker is cleared
+        st.session_state.pop("__current_page", None)
         set_url_param("page", None)
         st.rerun()
 
@@ -210,40 +218,59 @@ def sidebar_nav():
 
         .ascenda-logo-wrap {
             display: flex; justify-content: center; align-items: center;
-            padding: 0.75rem 1rem 0.5rem !important;
+            padding: 1rem 1rem 1rem !important;
+            border-bottom: 1px solid #f0f2f5 !important;
+            margin-bottom: 0.5rem !important;
         }
 
-        section[data-testid="stSidebar"] h1,
-        section[data-testid="stSidebar"] h2,
-        section[data-testid="stSidebar"] h3 {
-            margin-top: 1rem !important; margin-bottom: 0.2rem !important;
-            padding: 0 4px !important; font-size: 0.72rem !important;
-            font-weight: 700 !important; color: #8b949e !important;
-            text-transform: uppercase !important; letter-spacing: 0.07em !important;
+        /* Collapse Streamlit's default element margins inside sidebar */
+        section[data-testid="stSidebar"] .stMarkdown {
+            margin-bottom: 0 !important;
         }
 
-        /* Remove radio circle in sidebar only */
-        section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child {
-            display: none !important;
+        /* ── Section labels ─────────────────────────────────────────────────── */
+        .nav-section-label {
+            display: block; padding: 0.65rem 12px 0.2rem;
+            font-size: 0.68rem !important; font-weight: 700 !important;
+            color: #8b949e !important; text-transform: uppercase !important;
+            letter-spacing: 0.09em !important; user-select: none !important;
         }
+        .nav-section-label:first-child { padding-top: 0.1rem !important; }
 
-        section[data-testid="stSidebar"] div[role="radiogroup"] > label {
-            display: flex !important; align-items: center !important;
-            width: 100% !important; padding: 7px 14px !important; margin: 1px 0 !important;
+        /* ── Nav items (HTML anchor links) ──────────────────────────────────── */
+        .nav-section-items {
+            display: flex; flex-direction: column; gap: 1px; padding: 0 4px;
+        }
+        a.nav-item {
+            display: flex !important; align-items: center !important; gap: 10px !important;
+            width: 100% !important; padding: 9px 12px !important; min-height: 44px !important;
             border-radius: 10px !important; cursor: pointer !important;
-            font-size: 0.9rem !important; font-weight: 500 !important;
-            color: #57606a !important; box-sizing: border-box !important;
+            font-size: 0.875rem !important; font-weight: 500 !important;
+            color: #57606a !important; text-decoration: none !important;
+            box-sizing: border-box !important;
             border-left: 3px solid transparent !important;
-            transition: background 0.15s ease, color 0.15s ease !important;
+            transition: background 150ms ease-out, color 150ms ease-out !important;
+            line-height: 1.3 !important;
         }
-        section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
+        a.nav-item:hover {
             background: #f6f8fa !important; color: #0d1117 !important;
+            text-decoration: none !important;
         }
-        section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
-            background: #eef2ff !important; border-left: 3px solid #2667ff !important;
-            color: #2667ff !important; font-weight: 600 !important;
+        a.nav-item:focus-visible {
+            outline: 2px solid #2563EB !important; outline-offset: -2px !important;
+        }
+        a.nav-item.active {
+            background: #EEF2FF !important; color: #2563EB !important;
+            font-weight: 600 !important; border-left: 3px solid transparent !important;
+        }
+        a.nav-item svg {
+            width: 16px !important; height: 16px !important; flex-shrink: 0 !important;
+            stroke: currentColor !important; fill: none !important;
+            stroke-width: 1.75 !important; stroke-linecap: round !important;
+            stroke-linejoin: round !important;
         }
 
+        /* ── User footer ─────────────────────────────────────────────────────── */
         .sidebar-user-footer {
             border-top: 1px solid #e4e8ec; padding: 12px 14px 10px;
             display: flex; align-items: center; gap: 10px; margin-top: 0.75rem;
@@ -252,7 +279,7 @@ def sidebar_nav():
         }
         .sidebar-user-footer:hover { background: #f6f8fa; }
         .sidebar-user-avatar {
-            width: 34px; height: 34px; border-radius: 50%; background: #2667ff;
+            width: 34px; height: 34px; border-radius: 50%; background: #2563EB;
             display: flex; align-items: center; justify-content: center;
             font-size: 0.8rem; font-weight: 700; color: #fff; flex-shrink: 0;
         }
@@ -264,7 +291,8 @@ def sidebar_nav():
             font-size: 0.72rem; color: #8b949e;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;
         }
-        /* Sign out button */
+
+        /* ── Sign out button ─────────────────────────────────────────────────── */
         section[data-testid="stSidebar"] .stButton > button {
             background: transparent !important; border: none !important;
             color: #c83333 !important; font-size: 0.8rem !important;
@@ -282,26 +310,41 @@ def sidebar_nav():
         unsafe_allow_html=True,
     )
 
-    # ── Logo ─────────────────────────────────────────────────────────────────
+    # ── Page icons (Heroicons outline, 24×24 viewBox) ─────────────────────────
+    _ICONS = {
+        "Dashboard":               '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+        "Submit Visit":            '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>',
+        "Check-In":                '<svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
+        "My Visits":               '<svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
+        "Visit Change Requests":   '<svg viewBox="0 0 24 24"><path d="M7 16V4m0 0L3 8m4-4 4 4M17 8v12m0 0 4-4m-4 4-4-4"/></svg>',
+        "Active Projects":         '<svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+        "Project Creation":        '<svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>',
+        "Project Management":      '<svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
+        "Review Target Audiences": '<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+        "Review Other Customers":  '<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>',
+        "Review Change Requests":  '<svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12l2 2 4-4"/></svg>',
+        "Admin: Import Lookups":   '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
+        "Admin: Data Browser":     '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
+        "Admin: Users":            '<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+    }
+    _ICON_DEFAULT = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg>'
+
+    # ── Logo (built into nav block below to avoid Streamlit element gap) ────
     logo_b64 = get_logo_base64()
     if logo_b64:
-        st.sidebar.markdown(
+        _logo_html = (
             f'<div class="ascenda-logo-wrap">'
             f'<img src="data:image/png;base64,{logo_b64}" alt="Ascenda"'
-            f' style="width:150px;height:auto;" /></div>',
-            unsafe_allow_html=True,
+            f' style="width:150px;height:auto;" /></div>'
         )
     else:
-        st.sidebar.markdown("### Ascenda")
-
+        _logo_html = '<div class="ascenda-logo-wrap"><strong style="font-size:1.1rem;color:#0d1117;">Ascenda</strong></div>'
 
     # ── User & role ───────────────────────────────────────────────────────────
     user = st.session_state.get("user")
     role = (user.get("role") if user else "").lower().strip()
 
     # ── Badge counts (cached 60 s) ────────────────────────────────────────────
-    mv_count = 0
-    cr_pending = 0
     uid = (user.get("user_id") or user.get("id")) if user else None
     if uid:
         if time.time() - st.session_state.get("_nav_counts_ts", 0) > 60:
@@ -309,42 +352,47 @@ def sidebar_nav():
                 from db_ops import query_df as _qdf
                 _r = _qdf("SELECT COUNT(*) AS cnt FROM visits WHERE user_id = :u", {"u": int(uid)})
                 st.session_state["_nav_mv_count"] = int(_r.iloc[0]["cnt"]) if not _r.empty else 0
-                if (user.get("role") or "").lower().strip() == "admin":
+                if role == "admin":
                     _cr = _qdf("SELECT COUNT(*) AS cnt FROM request_changes WHERE status = 'IN_REVIEW'")
                     st.session_state["_nav_cr_pending"] = int(_cr.iloc[0]["cnt"]) if not _cr.empty else 0
             except Exception:
                 pass
             st.session_state["_nav_counts_ts"] = time.time()
-        mv_count = st.session_state.get("_nav_mv_count", 0)
-        cr_pending = st.session_state.get("_nav_cr_pending", 0)
 
-    # ── Build page list ───────────────────────────────────────────────────────
-    st.sidebar.markdown("### MAIN")
-    pages = ["Dashboard", "Submit Visit", "Check-In", "My Visits"]
+    # ── Build grouped page sections by role ──────────────────────────────────
+    main_pages = ["Dashboard"]
 
-    if role == "rep":
-        pages += ["Active Projects", "Visit Change Requests"]
-    if role == "maintenance":
-        pages += ["Active Projects"]
-    if role in ("sales manager", "biomedical manager"):
-        pages += ["Project Creation", "Project Management", "Active Projects", "Visit Change Requests"]
+    field_pages = ["Submit Visit", "Check-In", "My Visits"]
+    if role in ("rep", "maintenance", "sales manager", "biomedical manager", "admin"):
+        field_pages.append("Visit Change Requests")
+
+    project_pages: list = []
+    if role in ("rep", "maintenance"):
+        project_pages = ["Active Projects"]
+    elif role in ("sales manager", "biomedical manager", "admin"):
+        project_pages = ["Project Creation", "Project Management", "Active Projects"]
+
+    review_pages: list = []
     if role == "admin":
-        pages += [
-            "Project Creation",
-            "Project Management",
-            "Active Projects",
-            "Admin: Import Lookups",
-            "Admin: Data Browser",
-            "Admin: Users",
-            "Review Target Audiences",
-            "Review Other Customers",
-            "Visit Change Requests",
-            "Review Change Requests",
-        ]
+        review_pages = ["Review Target Audiences", "Review Other Customers", "Review Change Requests"]
+
+    admin_pages: list = []
+    if role == "admin":
+        admin_pages = ["Admin: Import Lookups", "Admin: Data Browser", "Admin: Users"]
+
+    sections = [("MAIN", main_pages), ("FIELD ACTIVITY", field_pages)]
+    if project_pages:
+        sections.append(("PROJECTS", project_pages))
+    if review_pages:
+        sections.append(("REVIEWS", review_pages))
+    if admin_pages:
+        sections.append(("ADMINISTRATION", admin_pages))
+
+    all_pages = [p for _, pgs in sections for p in pgs]
 
     # ── Resolve current page ──────────────────────────────────────────────────
-    url_page = get_url_param("page")
-    sess_page = st.session_state.get("_current_page")
+    prev_page = st.session_state.get("_current_page")
+    url_page  = get_url_param("page")
 
     _on_settings = (
         st.session_state.get("_goto_user_settings", False)
@@ -352,57 +400,48 @@ def sidebar_nav():
     )
 
     if _on_settings:
-        idx = None
-        current = sess_page if sess_page in pages else pages[0]
-    elif url_page in pages:
+        current = prev_page if prev_page in all_pages else all_pages[0]
+    elif url_page in all_pages:
         current = url_page
-        idx = pages.index(current)
-    elif sess_page in pages:
-        current = sess_page
-        idx = pages.index(current)
+    elif prev_page in all_pages:
+        current = prev_page
     else:
-        current = pages[0]
-        idx = 0
+        current = all_pages[0]
 
-    # ── Format function: append live count to My Visits label ─────────────────
-    def _fmt(page: str) -> str:
-        return page
+    # ── Submit Visit geo-state cleanup on departure ───────────────────────────
+    if prev_page == "Submit Visit" and current != "Submit Visit":
+        _reset_location_state_for_page("submit_visit")
 
-    # ── Navigation radio ──────────────────────────────────────────────────────
-    def _on_change():
-        old = st.session_state.get("_current_page")
-        chosen = st.session_state["_nav_choice"]
-        st.session_state["_current_page"] = chosen
-        set_url_param("page", chosen)
-        if old == "Submit Visit" and chosen != "Submit Visit":
-            _reset_location_state_for_page("submit_visit")
-
-    choice = st.sidebar.radio(
-        "",
-        pages,
-        index=idx,
-        key="_nav_choice",
-        on_change=_on_change,
-        label_visibility="collapsed",
-        format_func=_fmt,
-    )
-
-    # ── Navigation bypass: User Settings (not in radio list) ─────────────────
+    # ── Update session / URL state ────────────────────────────────────────────
     _goto_settings = bool(st.session_state.pop("_goto_user_settings", False)) or _on_settings
-
     if not _goto_settings:
-        if st.session_state.get("_current_page") != choice:
-            st.session_state["_current_page"] = choice
-        if get_url_param("page") != choice:
-            set_url_param("page", choice)
+        st.session_state["_current_page"] = current
+        if get_url_param("page") != current:
+            set_url_param("page", current)
+
+    # ── Render logo + full nav as one HTML block (no Streamlit element gap) ──
+    _sid = st.query_params.get("sid", "")
+    nav_html = _logo_html + '<nav>'
+    for sec_label, sec_pages in sections:
+        nav_html += f'<span class="nav-section-label">{sec_label}</span>'
+        nav_html += '<div class="nav-section-items">'
+        for page in sec_pages:
+            icon       = _ICONS.get(page, _ICON_DEFAULT)
+            is_active  = (page == current) and not _on_settings
+            cls        = "nav-item active" if is_active else "nav-item"
+            page_param = page.replace(" ", "+")
+            href       = f"?page={page_param}&sid={_sid}" if _sid else f"?page={page_param}"
+            nav_html  += f'<a href="{href}" target="_self" class="{cls}">{icon}<span>{page}</span></a>'
+        nav_html += '</div>'
+    nav_html += '</nav>'
+    st.sidebar.markdown(nav_html, unsafe_allow_html=True)
 
     # ── User profile footer ───────────────────────────────────────────────────
     if user:
-        _name = user.get("name") or user.get("email") or "User"
-        _role = user.get("role") or ""
-        _region = user.get("region") or ""
+        _name     = user.get("name") or user.get("email") or "User"
+        _role     = user.get("role") or ""
+        _region   = user.get("region") or ""
         _initials = "".join(w[0].upper() for w in (_name or "U").split()[:2])
-        _sid = st.query_params.get("sid", "")
         _settings_href = f"?page=User+Settings&sid={_sid}" if _sid else "?page=User+Settings"
         st.sidebar.markdown(
             f'<a href="{_settings_href}" target="_self" style="text-decoration:none;display:block;">'
@@ -420,6 +459,7 @@ def sidebar_nav():
         )
         if st.sidebar.button("Sign out", key="_nav_logout_btn", use_container_width=True):
             _reset_location_state_for_page("submit_visit")
+            _clear_page_session_state()
             sid = st.query_params.get("sid")
             if sid:
                 delete_session(sid)
@@ -433,7 +473,7 @@ def sidebar_nav():
     if _goto_settings:
         st.session_state["_current_page"] = "User Settings"
         return "User Settings"
-    return choice
+    return current
 
 
 def get_almadar_logo_base64() -> str:

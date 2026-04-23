@@ -2810,9 +2810,11 @@ def page_admin_import():
         # ---------------------------------------------------
         # MODE 1 — ADD / IMPORT
         # ---------------------------------------------------
+        _ALL_ROLES = ["rep", "maintenance", "supervisor", "sales manager", "biomedical manager"]
+
         if mode == "➕ Add / Import":
             st.markdown("### ➕ Add new Objective")
-            st.caption("Required fields: **Name**. Category is optional.")
+            st.caption("Required fields: **Name**. Category is optional. Admin always sees all objectives.")
 
             # init state
             st.session_state.setdefault("obj_add_name", "")
@@ -2837,6 +2839,14 @@ def page_admin_import():
                 cat_other = st.text_input("Other category", key="obj_add_cat_other")
             else:
                 cat_other = st.session_state.get("obj_add_cat_other", "")
+
+            # Role visibility
+            obj_add_roles = st.multiselect(
+                "Visible to roles (admin always sees all)",
+                options=_ALL_ROLES,
+                default=_ALL_ROLES,
+                key="obj_add_roles",
+            )
 
             # Save objective
             if st.button("Save Objective", type="primary", key="obj_add_save"):
@@ -2864,17 +2874,32 @@ def page_admin_import():
                                         WHERE lower(name)=lower(:n)
                                         AND lower(coalesce(category,''))=lower(coalesce(:c,''))
                                     )
+                                    RETURNING objective_id
                                 """),
                                 {"n": name_v, "c": cat_v}
                             )
+                            row_inserted = res.fetchone()
 
-                        if (res.rowcount or 0) > 0:
+                        if row_inserted:
+                            new_oid = row_inserted[0]
+                            if obj_add_roles:
+                                with engine.begin() as conn:
+                                    for r in obj_add_roles:
+                                        conn.execute(
+                                            text("""
+                                                INSERT INTO role_objectives(role, objective_id, is_active)
+                                                VALUES (:r, :oid, TRUE)
+                                                ON CONFLICT (role, objective_id) DO NOTHING
+                                            """),
+                                            {"r": r, "oid": new_oid}
+                                        )
                             st.success("Objective added ✅")
                             # Reset widget-backed keys safely
                             for key in (
                                 "obj_add_name",
                                 "obj_add_cat_opt",
                                 "obj_add_cat_other",
+                                "obj_add_roles",
                             ):
                                 st.session_state.pop(key, None)
                             st.rerun()
@@ -3033,6 +3058,22 @@ def page_admin_import():
                         key=f"{base_key}_active",
                     )
 
+                    # ---- Role Visibility ----
+                    st.markdown("**Visible to roles** *(admin always sees all)*")
+                    ro_df = query_df("""
+                        SELECT role FROM role_objectives
+                        WHERE objective_id = :oid
+                          AND COALESCE(is_active, TRUE) IS TRUE
+                    """, {"oid": oid})
+                    current_roles = ro_df["role"].tolist() if not ro_df.empty else []
+                    roles_edit = st.multiselect(
+                        "Roles",
+                        options=_ALL_ROLES,
+                        default=[r for r in current_roles if r in _ALL_ROLES],
+                        key=f"{base_key}_roles",
+                        label_visibility="collapsed",
+                    )
+
                     # Save changes
                     if st.button("Save changes", type="primary", key=f"{base_key}_save"):
                         if not name_edit.strip():
@@ -3061,18 +3102,44 @@ def page_admin_import():
                                 st.error("An objective with the same name and category already exists.")
                             else:
                                 try:
-                                    exec_sql("""
-                                        UPDATE objectives
-                                        SET name=:n,
-                                            category=:c,
-                                            is_active=:b
-                                        WHERE objective_id=:id
-                                    """, {
-                                        "n": nm_clean,
-                                        "c": cat_v,
-                                        "b": bool(active_edit),
-                                        "id": oid
-                                    })
+                                    with engine.begin() as conn:
+                                        conn.execute(
+                                            text("""
+                                                UPDATE objectives
+                                                SET name=:n,
+                                                    category=:c,
+                                                    is_active=:b
+                                                WHERE objective_id=:id
+                                            """),
+                                            {
+                                                "n": nm_clean,
+                                                "c": cat_v,
+                                                "b": bool(active_edit),
+                                                "id": oid
+                                            }
+                                        )
+                                        # sync role_objectives: delete removed, insert added
+                                        conn.execute(
+                                            text("""
+                                                DELETE FROM role_objectives
+                                                WHERE objective_id = :oid
+                                                  AND role = ANY(:removed)
+                                            """),
+                                            {
+                                                "oid": oid,
+                                                "removed": [r for r in _ALL_ROLES if r not in roles_edit]
+                                            }
+                                        )
+                                        for r in roles_edit:
+                                            conn.execute(
+                                                text("""
+                                                    INSERT INTO role_objectives(role, objective_id, is_active)
+                                                    VALUES (:r, :oid, TRUE)
+                                                    ON CONFLICT (role, objective_id)
+                                                    DO UPDATE SET is_active = TRUE
+                                                """),
+                                                {"r": r, "oid": oid}
+                                            )
                                     st.success("Objective updated ✅")
                                 except Exception as e:
                                     st.error("Could not update objective.")
