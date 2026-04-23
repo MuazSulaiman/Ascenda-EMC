@@ -410,5 +410,6 @@ def _render_admin_pending_reviews() -> None:
                 key=f"admin_review_{row['type']}_{int(row['item_id'])}",
                 use_container_width=True,
             ):
+                st.session_state["_admin_preselect_id"] = int(row["item_id"])
                 st.query_params["page"] = target
                 st.rerun()

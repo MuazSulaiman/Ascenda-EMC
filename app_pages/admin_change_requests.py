@@ -208,6 +208,12 @@ def page_admin_change_requests():
                 return f"Request #{int(row['request_id'])} — Visit #{int(row['visit_id'])} — {row['rep_name']} — {date_str} ({n} field{'s' if n != 1 else ''})"
 
             options = {_label(row): row for _, row in pending_df.iterrows()}
+            preselect_id = st.session_state.pop("_admin_preselect_id", None)
+            if preselect_id is not None:
+                for lbl in options:
+                    if f"Request #{preselect_id}" in lbl:
+                        st.session_state[f"{PAGE_NS}_sel"] = lbl
+                        break
             chosen_label = st.selectbox(
                 "Select a request to review:",
                 list(options.keys()),

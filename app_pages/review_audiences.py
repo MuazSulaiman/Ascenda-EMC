@@ -228,6 +228,12 @@ def page_review_target_audiences():
         visit_id_map[label] = int(row["visit_id"])
 
     visit_select_options = [""] + visit_labels
+    preselect_id = st.session_state.pop("_admin_preselect_id", None)
+    if preselect_id is not None:
+        for lbl, vid in visit_id_map.items():
+            if vid == preselect_id:
+                st.session_state[f"{PAGE_NS}_visit_sel"] = lbl
+                break
 
     selected_visit_label = st.selectbox(
         "Select a visit to review",
