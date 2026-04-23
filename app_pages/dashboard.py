@@ -5,9 +5,11 @@ from datetime import datetime
 from auth import resolve_session_user
 from config import TIMEZONE
 from db_ops import query_df
-from ui import kpi_card_v2, section_header
+from ui import kpi_card_v2, section_header, status_badge
 from widgets import set_current_page
 from utils import _local_now
+
+import pandas as pd
 
 
 # SVG icons for KPI cards (inline, monochrome, stroked)
@@ -46,6 +48,11 @@ def page_dashboard():
     uid  = int(u.get("user_id") or u.get("id"))
     name = u.get("name") or u.get("email") or "there"
     first_name = name.split()[0] if name else "there"
+    role = (u.get("role") or "").lower().strip()
+
+    if role == "admin":
+        _render_admin_dashboard(uid, first_name)
+        return
 
     # ── Greeting header ───────────────────────────────────────────────────────
     try:
@@ -175,3 +182,8 @@ def page_dashboard():
             ),
             unsafe_allow_html=True,
         )
+
+
+def _render_admin_dashboard(uid: int, first_name: str) -> None:
+    """Admin command-center dashboard. Called from page_dashboard() when role==admin."""
+    pass
