@@ -2,14 +2,14 @@
 import streamlit as st
 from datetime import datetime
 
+import pandas as pd
+
 from auth import resolve_session_user
 from config import TIMEZONE
 from db_ops import query_df
 from ui import kpi_card_v2, section_header, status_badge
 from widgets import set_current_page
 from utils import _local_now
-
-import pandas as pd
 
 
 # SVG icons for KPI cards (inline, monochrome, stroked)
