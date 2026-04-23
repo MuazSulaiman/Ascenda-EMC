@@ -1,4 +1,5 @@
 # pages/dashboard.py — Ascenda Dashboard
+import html
 import streamlit as st
 from datetime import datetime
 
@@ -367,7 +368,7 @@ def _render_admin_pending_reviews() -> None:
         return
 
     if items_df.empty:
-        st.success("No pending reviews — all clear.")
+        st.info("Pending items could not be loaded.")
         return
 
     items_df["submitted_at"] = pd.to_datetime(items_df["submitted_at"], errors="coerce")
@@ -383,9 +384,11 @@ def _render_admin_pending_reviews() -> None:
             row["submitted_at"].strftime("%d %b %Y")
             if pd.notna(row["submitted_at"]) else "—"
         )
-        variant = _TYPE_VARIANT.get(str(row["type"]), "neutral")
-        badge   = status_badge(str(row["type"]), variant)
-        target  = str(row["target_page"])
+        variant    = _TYPE_VARIANT.get(str(row["type"]), "neutral")
+        badge      = status_badge(html.escape(str(row["type"])), variant)
+        target     = str(row["target_page"])
+        identifier = html.escape(str(row["identifier"]))
+        rep_name   = html.escape(str(row["rep_name"]))
 
         col_info, col_btn = st.columns([5, 1])
         with col_info:
@@ -394,9 +397,9 @@ def _render_admin_pending_reviews() -> None:
                 f'padding:10px 0;border-bottom:1px solid #e4e8ec;">'
                 f'{badge}'
                 f'<span style="font-weight:600;font-size:0.9rem;color:#0d1117;">'
-                f'{row["identifier"]}</span>'
+                f'{identifier}</span>'
                 f'<span style="font-size:0.85rem;color:#57606a;">'
-                f'{row["rep_name"]}</span>'
+                f'{rep_name}</span>'
                 f'<span style="font-size:0.8rem;color:#8b949e;">{date_str}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
