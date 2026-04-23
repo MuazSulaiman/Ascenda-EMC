@@ -282,4 +282,130 @@ def _render_admin_dashboard(uid: int, first_name: str) -> None:
 
 
 def _render_admin_pending_reviews() -> None:
-    pass
+    """Render the pending reviews section: summary badges + unified action list."""
+
+    st.markdown("#### Pending Reviews")
+
+    # ── Summary counts ────────────────────────────────────────────────────────
+    cr_count = _safe_count(
+        "SELECT COUNT(*) FROM request_changes WHERE status = 'IN_REVIEW'"
+    )
+    ta_count = _safe_count(
+        """
+        SELECT COUNT(*) FROM visits
+        WHERE audience_id IS NULL
+          AND customer_id <> 807
+          AND other_audience_name IS NOT NULL
+          AND trim(other_audience_name) <> ''
+        """
+    )
+    oc_count = _safe_count(
+        "SELECT COUNT(*) FROM visits WHERE customer_id = 807"
+    )
+
+    total_pending = cr_count + ta_count + oc_count
+
+    badges_html = (
+        f'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:1rem;">'
+        f'{status_badge(f"Change Requests: {cr_count}", "warning")}'
+        f'{status_badge(f"Target Audiences: {ta_count}", "info")}'
+        f'{status_badge(f"Other Customers: {oc_count}", "primary")}'
+        f'</div>'
+    )
+    st.markdown(badges_html, unsafe_allow_html=True)
+
+    if total_pending == 0:
+        st.success("No pending reviews — all clear.")
+        return
+
+    # ── Unified action list ───────────────────────────────────────────────────
+    try:
+        items_df = query_df(
+            """
+            SELECT 'Change Request' AS type,
+                   rc.request_id   AS item_id,
+                   'Visit #' || rc.visit_id AS identifier,
+                   u.name          AS rep_name,
+                   rc.request_date AS submitted_at,
+                   'Review Change Requests' AS target_page
+            FROM request_changes rc
+            JOIN users u ON u.user_id = rc.requested_by
+            WHERE rc.status = 'IN_REVIEW'
+
+            UNION ALL
+
+            SELECT 'Target Audience'      AS type,
+                   v.visit_id             AS item_id,
+                   'Visit #' || v.visit_id AS identifier,
+                   u.name                 AS rep_name,
+                   v.submitted_at_local   AS submitted_at,
+                   'Review Target Audiences' AS target_page
+            FROM visits v
+            JOIN users u ON u.user_id = v.user_id
+            WHERE v.audience_id IS NULL
+              AND v.customer_id <> 807
+              AND v.other_audience_name IS NOT NULL
+              AND trim(v.other_audience_name) <> ''
+
+            UNION ALL
+
+            SELECT 'Other Customer'        AS type,
+                   v.visit_id              AS item_id,
+                   'Visit #' || v.visit_id  AS identifier,
+                   u.name                  AS rep_name,
+                   v.submitted_at_local    AS submitted_at,
+                   'Review Other Customers' AS target_page
+            FROM visits v
+            JOIN users u ON u.user_id = v.user_id
+            WHERE v.customer_id = 807
+
+            ORDER BY submitted_at ASC
+            """
+        )
+    except Exception as e:
+        st.warning(f"Could not load pending items: {e}")
+        return
+
+    if items_df.empty:
+        st.success("No pending reviews — all clear.")
+        return
+
+    items_df["submitted_at"] = pd.to_datetime(items_df["submitted_at"], errors="coerce")
+
+    _TYPE_VARIANT = {
+        "Change Request":  "warning",
+        "Target Audience": "info",
+        "Other Customer":  "primary",
+    }
+
+    for _, row in items_df.iterrows():
+        date_str = (
+            row["submitted_at"].strftime("%d %b %Y")
+            if pd.notna(row["submitted_at"]) else "—"
+        )
+        variant = _TYPE_VARIANT.get(str(row["type"]), "neutral")
+        badge   = status_badge(str(row["type"]), variant)
+        target  = str(row["target_page"])
+
+        col_info, col_btn = st.columns([5, 1])
+        with col_info:
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:10px;'
+                f'padding:10px 0;border-bottom:1px solid #e4e8ec;">'
+                f'{badge}'
+                f'<span style="font-weight:600;font-size:0.9rem;color:#0d1117;">'
+                f'{row["identifier"]}</span>'
+                f'<span style="font-size:0.85rem;color:#57606a;">'
+                f'{row["rep_name"]}</span>'
+                f'<span style="font-size:0.8rem;color:#8b949e;">{date_str}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with col_btn:
+            if st.button(
+                "Review →",
+                key=f"admin_review_{row['type']}_{int(row['item_id'])}",
+                use_container_width=True,
+            ):
+                st.session_state["_current_page"] = target
+                st.rerun()
