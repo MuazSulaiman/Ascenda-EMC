@@ -35,6 +35,18 @@ _ICON_ALERT = (
     '<line x1="12" y1="8" x2="12" y2="12"/>'
     '<line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
 )
+_ICON_USERS = (
+    '<svg width="18" height="18" fill="none" stroke="#2667ff" stroke-width="2" '
+    'viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>'
+    '<circle cx="9" cy="7" r="4"/>'
+    '<path d="M23 21v-2a4 4 0 0 0-3-3.87"/>'
+    '<path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>'
+)
+_ICON_BUILDING = (
+    '<svg width="18" height="18" fill="none" stroke="#0e8a4f" stroke-width="2" '
+    'viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/>'
+    '<path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>'
+)
 
 
 def page_dashboard():
@@ -186,4 +198,94 @@ def page_dashboard():
 
 def _render_admin_dashboard(uid: int, first_name: str) -> None:
     """Admin command-center dashboard. Called from page_dashboard() when role==admin."""
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    try:
+        now_local = _local_now()
+        date_str  = f"{now_local.strftime('%A, %B')} {now_local.day}"
+    except Exception:
+        date_str = datetime.now().strftime("%A, %B %d")
+
+    section_header("Command Center", f"Field activity & pending reviews — {date_str}.")
+
+    # ── Period filter ─────────────────────────────────────────────────────────
+    period = st.radio(
+        "",
+        ["This week", "This month", "All time"],
+        horizontal=True,
+        key="dash_admin_period",
+        label_visibility="collapsed",
+    )
+
+    period_filter = {
+        "This week":  "AND v.submitted_at_local >= date_trunc('week',  NOW() AT TIME ZONE 'Asia/Riyadh')",
+        "This month": "AND v.submitted_at_local >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Riyadh')",
+        "All time":   "",
+    }.get(period, "")
+
+    def _safe_count(sql: str, params: dict = None) -> int:
+        try:
+            r = query_df(sql, params or {})
+            return int(r.iloc[0, 0]) if not r.empty else 0
+        except Exception:
+            return 0
+
+    # ── Field Activity KPIs ───────────────────────────────────────────────────
+    st.markdown("#### Field Activity")
+
+    total_visits = _safe_count(
+        f"SELECT COUNT(*) FROM visits v WHERE 1=1 {period_filter}"
+    )
+    unique_customers = _safe_count(
+        f"SELECT COUNT(DISTINCT v.customer_id) FROM visits v WHERE 1=1 {period_filter}"
+    )
+    active_reps = _safe_count(
+        f"SELECT COUNT(DISTINCT v.user_id) FROM visits v WHERE 1=1 {period_filter}"
+    )
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(
+            kpi_card_v2(
+                label=f"Total Visits ({period})",
+                value=str(total_visits),
+                delta="All reps combined",
+                delta_positive=True,
+                icon_svg=_ICON_LOCATION,
+                icon_bg="#eef2ff",
+            ),
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            kpi_card_v2(
+                label="Unique Customers",
+                value=str(unique_customers),
+                delta=f"In {period.lower()}",
+                delta_positive=True,
+                icon_svg=_ICON_BUILDING,
+                icon_bg="#e6f6ec",
+            ),
+            unsafe_allow_html=True,
+        )
+    with col3:
+        st.markdown(
+            kpi_card_v2(
+                label="Active Reps",
+                value=str(active_reps),
+                delta=f"Submitted ≥1 visit",
+                delta_positive=True,
+                icon_svg=_ICON_USERS,
+                icon_bg="#eef2ff",
+            ),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+
+    # ── Pending Reviews ───────────────────────────────────────────────────────
+    _render_admin_pending_reviews()
+
+
+def _render_admin_pending_reviews() -> None:
     pass
