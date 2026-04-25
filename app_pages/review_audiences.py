@@ -6,10 +6,36 @@ from sqlalchemy import text
 
 from auth import resolve_session_user
 from config import TIMEZONE
+from db import engine
 from db_ops import query_df, exec_sql
 from utils import _utcnow_iso
 from widgets import set_current_page
 from ui import section_header, status_badge
+
+
+@st.cache_data(ttl=300)
+def _cached_dept_choices() -> list:
+    df = query_df(
+        """
+        SELECT DISTINCT department FROM target_audiences
+        WHERE department IS NOT NULL AND trim(department) <> ''
+        ORDER BY department
+        """
+    )
+    return df["department"].astype(str).str.strip().tolist() if not df.empty else []
+
+
+@st.cache_data(ttl=300)
+def _cached_pos_choices() -> list:
+    df = query_df(
+        """
+        SELECT DISTINCT position FROM target_audiences
+        WHERE position IS NOT NULL AND trim(position) <> ''
+        ORDER BY position
+        """
+    )
+    return df["position"].astype(str).str.strip().tolist() if not df.empty else []
+
 
 def page_review_target_audiences():
     """
@@ -18,6 +44,7 @@ def page_review_target_audiences():
     - Suggests closest matches from existing target_audiences using generic similarity.
     - Allows linking visit to an existing TA or creating a new TA from the 'Other' fields.
     """
+    import html as _html
     import pandas as pd
     import re
     from difflib import SequenceMatcher
@@ -151,10 +178,8 @@ def page_review_target_audiences():
             ON c.customer_id = v.customer_id
         JOIN users u     
             ON u.user_id = v.user_id
-        LEFT JOIN business_lines bl
-            ON bl.business_line_id = v.business_line_id
         LEFT JOIN business_units bu
-            ON bu.business_unit_id = bl.business_unit_id
+            ON bu.business_unit_id = u.business_unit_id
         WHERE v.audience_id IS NULL
         AND v.customer_id <> 807               -- ✅ exclude "Other Customer" placeholder
         AND v.other_audience_name IS NOT NULL
@@ -171,8 +196,17 @@ def page_review_target_audiences():
         unresolved_df["submitted_at_local"], errors="coerce"
     ).dt.strftime("%d/%m/%Y %H:%M")
 
-    st.markdown("### 1️⃣ Visits with 'Other' Target Audience")
-    st.caption("These visits have no audience_id but contain Other Target Audience details.")
+    _pending_n = len(unresolved_df)
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:0.6rem;margin:1rem 0 0.2rem;">'
+        f'<span style="font-size:1rem;font-weight:700;color:#0d1117;">Visits with \'Other\' Target Audience</span>'
+        f'<span style="background:#eef2ff;color:#2667ff;border-radius:6px;padding:1px 8px;'
+        f'font-size:0.78rem;font-weight:700;">{_pending_n} pending</span>'
+        f'</div>'
+        f'<p style="font-size:0.82rem;color:#8b949e;margin:0 0 0.75rem;">'
+        f'These visits have no audience_id but contain Other Target Audience details.</p>',
+        unsafe_allow_html=True,
+    )
 
     unresolved_display = unresolved_df.rename(
         columns={
@@ -214,8 +248,12 @@ def page_review_target_audiences():
     )
 
     # ------------- Pick a visit to review -------------
-    st.markdown("---")
-    st.markdown("### 2️⃣ Review & Resolve One Visit")
+    st.markdown('<hr style="border:none;border-top:1px solid #e4e8ec;margin:1.5rem 0 1rem;">', unsafe_allow_html=True)
+    st.markdown(
+        '<p style="font-size:1rem;font-weight:700;color:#0d1117;margin:0 0 0.75rem;">'
+        'Review &amp; Resolve One Visit</p>',
+        unsafe_allow_html=True,
+    )
 
     visit_labels = []
     visit_id_map = {}
@@ -250,16 +288,35 @@ def page_review_target_audiences():
 
     visit_row = unresolved_df.loc[unresolved_df["visit_id"] == selected_visit_id].iloc[0]
 
-    st.info(
-        f"**Visit #{selected_visit_id}** — Customer: **{visit_row['customer_name']}**  · \n"
-        f"Title: **{visit_row['other_audience_title'] or '—'}**  · "
-        f"Name: **{visit_row['other_audience_name']}**  · "
-        f"Dept: **{visit_row['other_audience_department'] or '—'}**  · "
-        f"Position: **{visit_row['other_audience_position'] or '—'}**  \n"
-        f"Phone: **{visit_row['other_audience_phone'] or '—'}**  · "
-        f"Email: **{visit_row['other_audience_email'] or '—'}**  \n"
-        f"Submitted by: **{visit_row['rep_name']}** ({visit_row['rep_email']})  · "
-        f"Business Unit: **{visit_row.get('business_unit_name') or '-'}**"
+    _esc = _html.escape
+    st.markdown(
+        f'<div style="background:#fff;border:1px solid #e4e8ec;border-radius:12px;'
+        f'padding:1rem 1.25rem;margin:.5rem 0 1rem;box-shadow:0 1px 2px rgba(15,23,42,.04);">'
+        f'<div style="font-size:.7rem;font-weight:700;color:#2667ff;'
+        f'text-transform:uppercase;letter-spacing:.08em;margin-bottom:.65rem;">'
+        f'Visit #{selected_visit_id}</div>'
+        f'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:.45rem 1.5rem;">'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Customer</div>'
+        f'<div style="font-size:.875rem;font-weight:600;color:#0d1117;">{_esc(str(visit_row["customer_name"]))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Title</div>'
+        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["other_audience_title"] or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Name</div>'
+        f'<div style="font-size:.875rem;font-weight:600;color:#0d1117;">{_esc(str(visit_row["other_audience_name"]))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Department</div>'
+        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["other_audience_department"] or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Position</div>'
+        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["other_audience_position"] or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Phone</div>'
+        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["other_audience_phone"] or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Email</div>'
+        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["other_audience_email"] or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Submitted By</div>'
+        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["rep_name"]))} '
+        f'({_esc(str(visit_row["rep_email"]))})</div></div>'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Business Unit</div>'
+        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row.get("business_unit_name") or "—"))}</div></div>'
+        f'</div></div>',
+        unsafe_allow_html=True,
     )
 
     # ------------- Load all existing TAs for that customer -------------
@@ -312,12 +369,17 @@ def page_review_target_audiences():
         )
         ta_df = ta_df.sort_values(by="similarity", ascending=False)
 
-        st.markdown("#### Suggested Matches")
-        st.caption("Sorted by similarity (generic name similarity + department + position).")
+        st.markdown(
+            '<p style="font-size:.875rem;font-weight:700;color:#0d1117;margin:.75rem 0 .1rem;">'
+            'Suggested Matches</p>'
+            '<p style="font-size:.78rem;color:#8b949e;margin:0 0 .5rem;">'
+            'Sorted by similarity — name, department &amp; position.</p>',
+            unsafe_allow_html=True,
+        )
 
         ta_display = ta_df.copy()
         ta_display["Label"] = ta_display.apply(format_ta_label, axis=1)
-        ta_display["Similarity"] = ta_display["similarity"].map(lambda x: f"{x:.2f}")
+        ta_display["Similarity"] = ta_display["similarity"].map(lambda x: f"{x*100:.0f}%")
 
         st.dataframe(
             ta_display[
@@ -342,40 +404,20 @@ def page_review_target_audiences():
             for r in ta_df.itertuples(index=False)
         ]
 
-    # ------------- Global dept/position lists for dropdowns -------------
-    dept_choices_base: list[str] = []
-    pos_choices_base:  list[str] = []
-
-    dept_df = query_df(
-        """
-        SELECT DISTINCT department
-        FROM target_audiences
-        WHERE department IS NOT NULL
-          AND trim(department) <> ''
-        ORDER BY department
-        """
-    )
-    if not dept_df.empty:
-        dept_choices_base = dept_df["department"].astype(str).str.strip().tolist()
-
-    pos_df = query_df(
-        """
-        SELECT DISTINCT position
-        FROM target_audiences
-        WHERE position IS NOT NULL
-          AND trim(position) <> ''
-        ORDER BY position
-        """
-    )
-    if not pos_df.empty:
-        pos_choices_base = pos_df["position"].astype(str).str.strip().tolist()
+    # ------------- Global dept/position lists for dropdowns (cached 5 min) -------------
+    dept_choices_base = _cached_dept_choices()
+    pos_choices_base  = _cached_pos_choices()
 
     # ------------- Actions: Link existing / Create new -------------
     col_link, col_new = st.columns(2)
 
     # --- Link to existing TA ---
     with col_link:
-        st.markdown("#### 🔗 Link to Existing Target Audience")
+        st.markdown(
+            '<p style="font-size:.875rem;font-weight:700;color:#0d1117;margin:0 0 .5rem;">'
+            '🔗 Link to Existing Target Audience</p>',
+            unsafe_allow_html=True,
+        )
 
         existing_sel = st.selectbox(
             "Existing Target Audience",
@@ -385,9 +427,17 @@ def page_review_target_audiences():
             help="Pick an existing TA for this customer, then click 'Link to Selected'.",
         )
 
+        link_confirm_key = f"{PAGE_NS}_confirm_link_{selected_visit_id}"
+        confirm_link = st.checkbox(
+            "I confirm this is the correct match.",
+            key=link_confirm_key,
+        )
+
         if st.button("✅ Link to Selected", key=f"{PAGE_NS}_link_btn"):
             if not existing_sel:
                 st.error("Please select an existing Target Audience first.")
+            elif not confirm_link:
+                st.error("Please tick the confirmation checkbox before linking.")
             else:
                 sel_id_str = existing_sel.split("—", 1)[0].strip()
                 try:
@@ -418,7 +468,11 @@ def page_review_target_audiences():
 
     # --- Create new TA ---
     with col_new:
-        st.markdown("#### 🆕 Create New Target Audience")
+        st.markdown(
+            '<p style="font-size:.875rem;font-weight:700;color:#0d1117;margin:0 0 .5rem;">'
+            '🆕 Create New Target Audience</p>',
+            unsafe_allow_html=True,
+        )
 
         st.caption(
             "This will create a new Target Audience using the details below "

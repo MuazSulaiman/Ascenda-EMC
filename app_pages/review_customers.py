@@ -6,10 +6,36 @@ from sqlalchemy import text
 
 from auth import resolve_session_user
 from config import TIMEZONE
+from db import engine
 from db_ops import query_df, exec_sql
 from utils import _utcnow_iso
 from widgets import set_current_page
 from ui import section_header, status_badge
+
+
+@st.cache_data(ttl=300)
+def _cached_sector_choices() -> list:
+    df = query_df(
+        """
+        SELECT DISTINCT sector FROM customers
+        WHERE sector IS NOT NULL AND trim(sector) <> ''
+        ORDER BY sector
+        """
+    )
+    return [str(r.sector).strip() for r in df.itertuples(index=False) if str(r.sector).strip()] if not df.empty else []
+
+
+@st.cache_data(ttl=300)
+def _cached_region_choices() -> list:
+    df = query_df(
+        """
+        SELECT DISTINCT region FROM customers
+        WHERE region IS NOT NULL AND trim(region) <> ''
+        ORDER BY region
+        """
+    )
+    return [str(r.region).strip() for r in df.itertuples(index=False) if str(r.region).strip()] if not df.empty else []
+
 
 def page_review_other_customers():
     """
@@ -22,6 +48,7 @@ def page_review_other_customers():
       or creating a new customer then linking the visit.
     - Once linked, the visit disappears from this page because customer_id != 807.
     """
+    import html as _html
     import pandas as pd
     from difflib import SequenceMatcher
 
@@ -98,8 +125,7 @@ def page_review_other_customers():
         FROM visits v
         JOIN customers c ON c.customer_id = v.customer_id
         JOIN users u     ON u.user_id     = v.user_id
-        LEFT JOIN business_lines bl ON bl.business_line_id = v.business_line_id
-        LEFT JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+        LEFT JOIN business_units bu ON bu.business_unit_id = u.business_unit_id
         WHERE v.customer_id = :other_id
         ORDER BY v.submitted_at_local DESC, v.visit_id DESC
         """,
@@ -123,10 +149,17 @@ def page_review_other_customers():
 
     unresolved_df["resolved_other_name"] = unresolved_df.apply(_resolved_other_name, axis=1)
 
-    st.markdown("### 1️⃣ Visits pending review (Customer = Other)")
-    st.caption(
-        f"These visits currently have customer_id = {OTHER_CUSTOMER_ID}. "
-        "Once you link them, they disappear automatically."
+    _pending_n = len(unresolved_df)
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:0.6rem;margin:1rem 0 0.2rem;">'
+        f'<span style="font-size:1rem;font-weight:700;color:#0d1117;">Visits Pending Review</span>'
+        f'<span style="background:#eef2ff;color:#2667ff;border-radius:6px;padding:1px 8px;'
+        f'font-size:0.78rem;font-weight:700;">{_pending_n} pending</span>'
+        f'</div>'
+        f'<p style="font-size:0.82rem;color:#8b949e;margin:0 0 0.75rem;">'
+        f'These visits currently have customer_id = {OTHER_CUSTOMER_ID}. '
+        f'Once you link them, they disappear automatically.</p>',
+        unsafe_allow_html=True,
     )
 
     display_df = unresolved_df.rename(
@@ -164,8 +197,12 @@ def page_review_other_customers():
     )
 
     # ------------- Pick a visit to review -------------
-    st.markdown("---")
-    st.markdown("### 2️⃣ Review & Resolve One Visit")
+    st.markdown('<hr style="border:none;border-top:1px solid #e4e8ec;margin:1.5rem 0 1rem;">', unsafe_allow_html=True)
+    st.markdown(
+        '<p style="font-size:1rem;font-weight:700;color:#0d1117;margin:0 0 0.75rem;">'
+        'Review &amp; Resolve One Visit</p>',
+        unsafe_allow_html=True,
+    )
 
     visit_labels = []
     visit_id_map = {}
@@ -197,12 +234,28 @@ def page_review_other_customers():
 
     other_name = (visit_row.get("resolved_other_name") or "").strip()
 
-    st.info(
-        f"**Visit #{selected_visit_id}**\n\n"
-        f"- Provided Name (Other/Notes): **{other_name or '—'}**\n"
-        f"- Submitted by: **{visit_row['rep_name']}** ({visit_row['rep_email']})\n"
-        f"- Visit Location: **{visit_row.get('region') or '—'} / {visit_row.get('city') or '—'} / {visit_row.get('sector') or '—'}**\n"
-        f"- Business Unit: **{visit_row.get('business_unit_name') or '—'}**"
+    _esc = _html.escape
+    st.markdown(
+        f'<div style="background:#fff;border:1px solid #e4e8ec;border-radius:12px;'
+        f'padding:1rem 1.25rem;margin:.5rem 0 1rem;box-shadow:0 1px 2px rgba(15,23,42,.04);">'
+        f'<div style="font-size:.7rem;font-weight:700;color:#2667ff;'
+        f'text-transform:uppercase;letter-spacing:.08em;margin-bottom:.65rem;">'
+        f'Visit #{selected_visit_id}</div>'
+        f'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:.45rem 1.5rem;">'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Provided Name</div>'
+        f'<div style="font-size:.875rem;font-weight:600;color:#0d1117;">{_esc(other_name or "—")}</div></div>'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Submitted By</div>'
+        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["rep_name"]))} '
+        f'({_esc(str(visit_row["rep_email"]))})</div></div>'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Location</div>'
+        f'<div style="font-size:.875rem;color:#0d1117;">'
+        f'{_esc(str(visit_row.get("region") or "—"))} / '
+        f'{_esc(str(visit_row.get("city") or "—"))} / '
+        f'{_esc(str(visit_row.get("sector") or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:#8b949e;">Business Unit</div>'
+        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row.get("business_unit_name") or "—"))}</div></div>'
+        f'</div></div>',
+        unsafe_allow_html=True,
     )
 
     # ------------- Load ALL candidate customers (NO region/city/sector filter) -------------
@@ -218,8 +271,13 @@ def page_review_other_customers():
     )
 
     # ------------- Suggested matches (NAME ONLY) -------------
-    st.markdown("#### Suggested Matches")
-    st.caption("Sorted by name similarity only (account_name vs provided name).")
+    st.markdown(
+        '<p style="font-size:.875rem;font-weight:700;color:#0d1117;margin:.75rem 0 .1rem;">'
+        'Suggested Matches</p>'
+        '<p style="font-size:.78rem;color:#8b949e;margin:0 0 .5rem;">'
+        'Top 15 matches sorted by name similarity (account_name vs provided name).</p>',
+        unsafe_allow_html=True,
+    )
 
     existing_options = []
     if candidates_df.empty:
@@ -231,8 +289,8 @@ def page_review_other_customers():
         )
         candidates_df = candidates_df.sort_values(by="similarity", ascending=False)
 
-        top_df = candidates_df.head(10000).copy()
-        top_df["Similarity"] = top_df["similarity"].map(lambda x: f"{x:.2f}")
+        top_df = candidates_df.head(15).copy()
+        top_df["Similarity"] = top_df["similarity"].map(lambda x: f"{x*100:.0f}%")
 
         st.dataframe(
             top_df[["customer_id", "account_name", "Similarity", "region", "city", "sector", "account_id", "party_id"]],
@@ -242,7 +300,7 @@ def page_review_other_customers():
 
         for r in top_df.itertuples(index=False):
             existing_options.append(
-                f"{int(r.customer_id)} — {r.account_name} — {float(r.similarity):.2f}"
+                f"{int(r.customer_id)} — {r.account_name} — {float(r.similarity)*100:.0f}%"
             )
 
     # ------------- Actions -------------
@@ -250,7 +308,11 @@ def page_review_other_customers():
 
     # --- Link to existing customer ---
     with col_link:
-        st.markdown("#### 🔗 Link to Existing Customer")
+        st.markdown(
+            '<p style="font-size:.875rem;font-weight:700;color:#0d1117;margin:0 0 .5rem;">'
+            '🔗 Link to Existing Customer</p>',
+            unsafe_allow_html=True,
+        )
 
         existing_sel = st.selectbox(
             "Existing Customer",
@@ -260,9 +322,17 @@ def page_review_other_customers():
             help="Pick an existing customer, then click 'Link to Selected'.",
         )
 
+        link_confirm_key = f"{PAGE_NS}_confirm_link_{selected_visit_id}"
+        confirm_link = st.checkbox(
+            "I confirm this is the correct match.",
+            key=link_confirm_key,
+        )
+
         if st.button("✅ Link to Selected", key=f"{PAGE_NS}_link_btn"):
             if not existing_sel:
                 st.error("Please select an existing customer first.")
+            elif not confirm_link:
+                st.error("Please tick the confirmation checkbox before linking.")
             else:
                 sel_id_str = existing_sel.split("—", 1)[0].strip()
                 try:
@@ -292,7 +362,11 @@ def page_review_other_customers():
 
     # --- Create new customer and link (WITH dropdowns for Sector/Region/City) ---
     with col_new:
-        st.markdown("#### 🆕 Create New Customer & Link")
+        st.markdown(
+            '<p style="font-size:.875rem;font-weight:700;color:#0d1117;margin:0 0 .5rem;">'
+            '🆕 Create New Customer &amp; Link</p>',
+            unsafe_allow_html=True,
+        )
 
         st.caption(
             "Creates a new customer record and links this visit to it. "
@@ -302,26 +376,10 @@ def page_review_other_customers():
         # ---------------------------------------------------------------
         # Common dropdown data for sectors / regions (from existing data)
         # ---------------------------------------------------------------
-        sec_df = query_df(
-            """
-            SELECT DISTINCT sector
-            FROM customers
-            WHERE sector IS NOT NULL AND trim(sector) <> ''
-            ORDER BY sector
-            """
-        )
-        sector_values = [str(r.sector).strip() for r in sec_df.itertuples(index=False) if str(r.sector).strip()]
+        sector_values  = _cached_sector_choices()
         sector_options = [""] + sector_values + ["OTHER"]
 
-        reg_df = query_df(
-            """
-            SELECT DISTINCT region
-            FROM customers
-            WHERE region IS NOT NULL AND trim(region) <> ''
-            ORDER BY region
-            """
-        )
-        region_values = [str(r.region).strip() for r in reg_df.itertuples(index=False) if str(r.region).strip()]
+        region_values  = _cached_region_choices()
         region_options = [""] + region_values + ["OTHER"]
 
         # -------------------------

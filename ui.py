@@ -20,6 +20,9 @@ from auth import (
     get_url_param,
     set_url_session_param,
     get_user_by_email,
+    check_login_lockout,
+    record_failed_login,
+    reset_login_attempts,
 )
 from config import APP_TITLE, SESSION_TTL_MIN
 from utils import _client_ip, _utcnow_iso, _img_b64
@@ -48,7 +51,8 @@ except Exception:
 
 
 def capture_client_fingerprints():
-    """Populate st.session_state['client_ip'] and ['user_agent'] from the browser."""
+    """Populate st.session_state['client_ip'] and ['user_agent'] from the browser.
+    Also reads the session ID from browser sessionStorage so SID never lives in the URL."""
     # User Agent
     if "user_agent" not in st.session_state:
         ua_val = None
@@ -78,6 +82,36 @@ def capture_client_fingerprints():
             ip_val = None
         if ip_val:
             st.session_state["client_ip"] = str(ip_val)
+
+    # Session ID — read from browser localStorage so it is never exposed in the URL.
+    # localStorage (not sessionStorage) is used because it is shared across all same-origin
+    # contexts regardless of iframe isolation, which avoids a stale-read bug that occurred
+    # when components.html() and streamlit_js_eval() ran in separate iframe sandboxes.
+    # Uses a sentinel "__none__" to distinguish "JS returned empty" from "JS not yet run".
+    # A session-unique key prevents the component from returning a cached value from a
+    # prior Streamlit session.
+    if "_sid_checked" not in st.session_state:
+        if streamlit_js_eval:
+            import uuid as _uuid
+            if "_sid_read_key" not in st.session_state:
+                st.session_state["_sid_read_key"] = f"_get_stored_sid_{_uuid.uuid4().hex}"
+            try:
+                stored = streamlit_js_eval(
+                    js_expressions="localStorage.getItem('_ascenda_sid') ?? '__none__'",
+                    key=st.session_state["_sid_read_key"],
+                )
+            except Exception:
+                stored = None
+            if stored is not None:          # JS has returned a value
+                st.session_state["_sid_checked"] = True
+                # Only use the localStorage value when _stored_sid is not already
+                # set by a validated URL-based auth.  Never overwrite a live SID
+                # with a potentially stale value from localStorage.
+                if stored != "__none__" and "_stored_sid" not in st.session_state:
+                    st.session_state["_stored_sid"] = stored
+        else:
+            # Library unavailable — mark checked so we don't spin forever
+            st.session_state["_sid_checked"] = True
 
 
 def apply_role_based_layout():
@@ -157,8 +191,18 @@ def login_block():
                 st.error("Please enter both email and password.")
                 return
 
+            is_locked, secs = check_login_lockout(em)
+            if is_locked:
+                mins = (secs + 59) // 60
+                st.error(
+                    f"Too many failed login attempts. Try again in "
+                    f"{mins} minute{'s' if mins != 1 else ''}, or contact your administrator."
+                )
+                return
+
             u = get_user_by_email(em)
             if not u:
+                record_failed_login(em)
                 st.error("User not found.")
                 return
 
@@ -167,12 +211,23 @@ def login_block():
                 return
 
             if not pbkdf2_sha256.verify(pw, u["password_hash"]):
+                record_failed_login(em)
                 st.error("Invalid password.")
                 return
 
+            reset_login_attempts(em)
             st.session_state.user = u
             sid = create_session(int(u["user_id"]), u.get("role"))
-            set_url_session_param(sid)
+            # Store SID in browser localStorage — NOT in the URL.
+            # This means the URL is safe to share; localStorage is reliably readable
+            # across all same-origin contexts (including after page navigation).
+            import streamlit.components.v1 as _comp
+            _comp.html(
+                f'<script>localStorage.setItem("_ascenda_sid",{repr(sid)});</script>',
+                height=0,
+            )
+            st.session_state["_stored_sid"] = sid
+            st.session_state["_sid_checked"] = True
 
             st.session_state["_current_page"] = "Dashboard"
             set_url_param("page", "Dashboard")
@@ -189,20 +244,31 @@ def _clear_page_session_state():
         del st.session_state[k]
 
 
+def _do_logout():
+    """Shared logout logic — revoke DB session, wipe local state, clear localStorage SID."""
+    _reset_location_state_for_page("submit_visit")
+    _clear_page_session_state()
+
+    sid = st.session_state.get("_stored_sid") or st.query_params.get("sid")
+    if sid:
+        delete_session(sid)
+
+    set_url_session_param(None)
+    # Clear the SID from browser localStorage so the tab cannot re-auth.
+    import streamlit.components.v1 as _comp
+    _comp.html('<script>localStorage.removeItem("_ascenda_sid");</script>', height=0)
+    st.session_state.pop("_sid_checked", None)
+
+    st.session_state.user = None
+    st.session_state.pop("_current_page", None)
+    st.session_state.pop("__current_page", None)
+    set_url_param("page", None)
+    st.rerun()
+
+
 def logout_button():
     if st.sidebar.button("Logout"):
-        _reset_location_state_for_page("submit_visit")
-        _clear_page_session_state()
-
-        sid = st.query_params.get("sid")
-        if sid:
-            delete_session(sid)
-        set_url_session_param(None)
-        st.session_state.user = None
-        st.session_state.pop("_current_page", None)
-        st.session_state.pop("__current_page", None)
-        set_url_param("page", None)
-        st.rerun()
+        _do_logout()
 
 
 def sidebar_nav():
@@ -281,7 +347,10 @@ def sidebar_nav():
         .sidebar-user-avatar {
             width: 34px; height: 34px; border-radius: 50%; background: #2563EB;
             display: flex; align-items: center; justify-content: center;
-            font-size: 0.8rem; font-weight: 700; color: #fff; flex-shrink: 0;
+            font-size: 0.8rem; font-weight: 700; color: #ffffff !important; flex-shrink: 0;
+        }
+        .sidebar-user-avatar span, .sidebar-user-avatar * {
+            color: #ffffff !important;
         }
         .sidebar-user-name {
             font-size: 0.875rem; font-weight: 600; color: #0d1117;
@@ -316,7 +385,7 @@ def sidebar_nav():
         "Submit Visit":            '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>',
         "Check-In":                '<svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
         "My Visits":               '<svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
-        "Visit Change Requests":   '<svg viewBox="0 0 24 24"><path d="M7 16V4m0 0L3 8m4-4 4 4M17 8v12m0 0 4-4m-4 4-4-4"/></svg>',
+        "My Change Requests":      '<svg viewBox="0 0 24 24"><path d="M7 16V4m0 0L3 8m4-4 4 4M17 8v12m0 0 4-4m-4 4-4-4"/></svg>',
         "Active Projects":         '<svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
         "Project Creation":        '<svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>',
         "Project Management":      '<svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
@@ -364,13 +433,14 @@ def sidebar_nav():
 
     field_pages = ["Submit Visit", "Check-In", "My Visits"]
     if role in ("rep", "maintenance", "sales manager", "biomedical manager", "admin"):
-        field_pages.append("Visit Change Requests")
+        field_pages.append("My Change Requests")
 
     project_pages: list = []
-    if role in ("rep", "maintenance"):
-        project_pages = ["Active Projects"]
-    elif role in ("sales manager", "biomedical manager", "admin"):
-        project_pages = ["Project Creation", "Project Management", "Active Projects"]
+    # project pages hidden for all users
+    # if role in ("rep", "maintenance"):
+    #     project_pages = ["Active Projects"]
+    # elif role in ("sales manager", "biomedical manager", "admin"):
+    #     project_pages = ["Project Creation", "Project Management", "Active Projects"]
 
     review_pages: list = []
     if role == "admin":
@@ -420,7 +490,12 @@ def sidebar_nav():
             set_url_param("page", current)
 
     # ── Render logo + full nav as one HTML block (no Streamlit element gap) ──
-    _sid = st.query_params.get("sid", "")
+    # The SID is embedded in each href so the new Streamlit session (created by
+    # the full-page reload that <a> links trigger) can re-authenticate immediately
+    # without relying on localStorage JS round-trips.  resolve_session_user()
+    # strips _sid from the URL on the very first render, so it is never visible
+    # in the address bar once the page has loaded.
+    _nav_sid = st.session_state.get("_stored_sid", "")
     nav_html = _logo_html + '<nav>'
     for sec_label, sec_pages in sections:
         nav_html += f'<span class="nav-section-label">{sec_label}</span>'
@@ -430,7 +505,7 @@ def sidebar_nav():
             is_active  = (page == current) and not _on_settings
             cls        = "nav-item active" if is_active else "nav-item"
             page_param = page.replace(" ", "+")
-            href       = f"?page={page_param}&sid={_sid}" if _sid else f"?page={page_param}"
+            href       = f"?page={page_param}&_sid={_nav_sid}" if _nav_sid else f"?page={page_param}"
             nav_html  += f'<a href="{href}" target="_self" class="{cls}">{icon}<span>{page}</span></a>'
         nav_html += '</div>'
     nav_html += '</nav>'
@@ -442,11 +517,11 @@ def sidebar_nav():
         _role     = user.get("role") or ""
         _region   = user.get("region") or ""
         _initials = "".join(w[0].upper() for w in (_name or "U").split()[:2])
-        _settings_href = f"?page=User+Settings&sid={_sid}" if _sid else "?page=User+Settings"
+        _settings_href = f"?page=User+Settings&_sid={_nav_sid}" if _nav_sid else "?page=User+Settings"
         st.sidebar.markdown(
             f'<a href="{_settings_href}" target="_self" style="text-decoration:none;display:block;">'
             f'<div class="sidebar-user-footer">'
-            f'<div class="sidebar-user-avatar">{_initials}</div>'
+            f'<div class="sidebar-user-avatar"><span style="color:#ffffff !important;font-weight:700;">{_initials}</span></div>'
             f'<div style="flex:1;min-width:0;">'
             f'<div class="sidebar-user-name">{_name}</div>'
             f'<div class="sidebar-user-meta">{_role} · {_region}</div>'
@@ -458,17 +533,7 @@ def sidebar_nav():
             unsafe_allow_html=True,
         )
         if st.sidebar.button("Sign out", key="_nav_logout_btn", use_container_width=True):
-            _reset_location_state_for_page("submit_visit")
-            _clear_page_session_state()
-            sid = st.query_params.get("sid")
-            if sid:
-                delete_session(sid)
-            set_url_session_param(None)
-            st.session_state.user = None
-            st.session_state.pop("_current_page", None)
-            st.session_state.pop("__current_page", None)
-            set_url_param("page", None)
-            st.rerun()
+            _do_logout()
 
     if _goto_settings:
         st.session_state["_current_page"] = "User Settings"
@@ -611,10 +676,10 @@ def stepper(steps: list, current: int) -> None:
 
 
 def show_footer():
-    logo_b64 = get_almadar_logo_base64()
-    logo_html = (
-        f'<img src="data:image/png;base64,{logo_b64}" style="height:36px;opacity:0.7;" />'
-        if logo_b64 else '<strong style="color:#57606a;">Al Madar Medical Co.</strong>'
+    placeholder_html = (
+        '<div style="height:36px;width:120px;border:1px dashed #ccc;border-radius:4px;'
+        'display:flex;align-items:center;justify-content:center;'
+        'font-size:0.7rem;color:#aaa;opacity:0.8;">Company Logo</div>'
     )
     st.markdown(
         f"""
@@ -622,10 +687,9 @@ def show_footer():
                     border-top:1px solid #e4e8ec;
                     display:flex;justify-content:space-between;
                     align-items:center;flex-wrap:wrap;gap:8px;">
-          <div>{logo_html}</div>
+          <div>{placeholder_html}</div>
           <div style="text-align:right;font-size:0.8rem;color:#8b949e;line-height:1.6;">
-            © 2025 Al Madar Medical Co. &nbsp;·&nbsp;
-            Core System © Muaz Sulaiman &nbsp;·&nbsp;
+            Core System © Cube n' Compass &nbsp;·&nbsp;
             Version 13
           </div>
         </div>
@@ -746,11 +810,12 @@ def kpi_card_v2(
     value: str,
     delta: str = "",
     delta_positive: bool = True,
+    delta_neutral: bool = False,
     icon_svg: str = "",
     icon_bg: str = "#eef2ff",
 ) -> str:
     """Return HTML for a KPI card with a right-aligned colored icon circle."""
-    delta_color = "#0e8a4f" if delta_positive else "#c83333"
+    delta_color = "#8b949e" if delta_neutral else ("#0e8a4f" if delta_positive else "#c83333")
     arrow_up = (
         '<svg aria-hidden="true" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" '
         'viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>'
@@ -759,10 +824,11 @@ def kpi_card_v2(
         '<svg aria-hidden="true" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" '
         'viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>'
     )
+    delta_arrow = "" if delta_neutral else (arrow_up if delta_positive else arrow_dn)
     delta_html = (
         f'<div style="margin-top:5px;font-size:0.8rem;font-weight:500;color:{delta_color};'
         f'display:flex;align-items:center;gap:3px;">'
-        f'{"" + arrow_up if delta_positive else "" + arrow_dn}{delta}</div>'
+        f'{delta_arrow}{delta}</div>'
         if delta else ""
     )
     icon_html = (

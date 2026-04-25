@@ -11,8 +11,6 @@ from dateutil import tz
 from sqlalchemy import text
 from streamlit_autorefresh import st_autorefresh
 from streamlit_folium import st_folium
-from streamlit_geolocation import streamlit_geolocation
-
 try:
     from streamlit_js_eval import get_geolocation as _get_geo_js
 except Exception:

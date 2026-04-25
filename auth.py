@@ -49,6 +49,48 @@ def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
+def check_login_lockout(email: str) -> tuple[bool, int]:
+    """Return (is_locked, seconds_remaining). Reads login_attempts table."""
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT locked_until FROM login_attempts WHERE username = :e"),
+            {"e": email},
+        ).mappings().first()
+    if not row or not row["locked_until"]:
+        return False, 0
+    remaining = (row["locked_until"] - _utcnow()).total_seconds()
+    return remaining > 0, max(0, int(remaining))
+
+
+def record_failed_login(email: str) -> None:
+    """Increment failed attempt count; lock account for 15 min after 5 failures."""
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO login_attempts (username, attempt_count, last_attempt_at)
+                VALUES (:e, 1, NOW())
+                ON CONFLICT (username) DO UPDATE SET
+                    attempt_count   = login_attempts.attempt_count + 1,
+                    last_attempt_at = NOW(),
+                    locked_until    = CASE
+                        WHEN login_attempts.attempt_count + 1 >= 5
+                        THEN NOW() + INTERVAL '15 minutes'
+                        ELSE login_attempts.locked_until
+                    END
+            """),
+            {"e": email},
+        )
+
+
+def reset_login_attempts(email: str) -> None:
+    """Clear the attempt record on successful login."""
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM login_attempts WHERE username = :e"),
+            {"e": email},
+        )
+
+
 def get_user_by_id(uid: int) -> Optional[Dict[str, Any]]:
     with engine.begin() as conn:
         row = conn.execute(
@@ -118,12 +160,18 @@ def delete_session(sid: str) -> None:
 
 
 def _ensure_sessions_table_exists():
+    # DDL must stay in sync with init_db_v11.py, which is the authoritative schema.
     ddl = """
     CREATE TABLE IF NOT EXISTS app_sessions (
       session_id TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
       created_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      expires_at_utc TIMESTAMPTZ NOT NULL
+      expires_at_utc TIMESTAMPTZ NOT NULL,
+      revoked_at_utc TIMESTAMPTZ,
+      closed_reason TEXT,
+      last_seen_utc TIMESTAMPTZ,
+      ip INET,
+      user_agent TEXT
     )
     """
     with engine.begin() as conn:
@@ -142,18 +190,26 @@ def get_url_param(name: str, default: str | None = None) -> str | None:
 
 
 def set_url_session_param(sid: Optional[str]):
+    # SID is stored in browser sessionStorage, not the URL.
+    # Always ensure URL is clean.
+    st.query_params.pop("sid", None)
     if sid:
-        st.query_params["sid"] = sid
+        st.session_state["_stored_sid"] = sid
     else:
-        st.query_params.pop("sid", None)
+        st.session_state.pop("_stored_sid", None)
 
 
 def resolve_session_user():
+    # Prefer URL param (backward-compat / first load after old bookmark),
+    # then fall back to the value read from browser sessionStorage.
     sid = st.query_params.get("sid") or st.query_params.get("_sid")
-    if st.query_params.get("_sid"):
-        st.query_params["sid"] = st.query_params["_sid"]
-        st.query_params.pop("_sid", None)
-        sid = st.query_params.get("sid")
+    if not sid:
+        sid = st.session_state.get("_stored_sid")
+
+    # Strip SID from URL immediately so it is never visible in the address bar.
+    st.query_params.pop("sid", None)
+    st.query_params.pop("_sid", None)
+
     if not sid:
         return None
 
@@ -197,6 +253,13 @@ def resolve_session_user():
             {"now": now, "sid": sid},
         )
         _log_event(conn, sid, "validated", {"note": "ok"})
+
+        # Repopulate _stored_sid so that subsequent nav links can carry it,
+        # and mark _sid_checked so capture_client_fingerprints() does not run
+        # its localStorage JS eval (which could overwrite _stored_sid with a
+        # stale SID from a previous browser session).
+        st.session_state["_stored_sid"] = sid
+        st.session_state["_sid_checked"] = True
 
         return {
             "session_id": row["session_id"],

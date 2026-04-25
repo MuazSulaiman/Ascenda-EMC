@@ -6,8 +6,11 @@
   "background_color": "#ffffff",
   "theme_color": "#0ea5e9",
   "icons": [
-    { "src": "/static/ascenda_192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/static/ascenda_512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "/static/ascenda_maskable_512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "/app/static/ascenda_180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/app/static/ascenda_192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/app/static/ascenda_256.png", "sizes": "256x256", "type": "image/png" },
+    { "src": "/app/static/ascenda_384.png", "sizes": "384x384", "type": "image/png" },
+    { "src": "/app/static/ascenda_512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/app/static/ascenda_maskable_512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }

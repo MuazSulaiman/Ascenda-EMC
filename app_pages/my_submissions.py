@@ -1,4 +1,5 @@
 # pages/my_submissions.py  — "My Visits" card-list + detail view
+import html
 import pandas as pd
 import streamlit as st
 
@@ -72,15 +73,21 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
             v.submitted_at_local,
             c.account_name        AS customer,
             c.account_id          AS account_id,
+            c.region              AS customer_region,
+            c.city                AS customer_city,
+            c.sector              AS customer_sector,
             v.other_customer_name,
             bu.name               AS business_unit,
             bl.name               AS business_line,
+            i.product_id          AS product_id,
             i.description         AS product,
             o.name                AS objective,
             v.evaluation,
             v.latitude, v.longitude, v.accuracy_m,
             v.notes,
             ta.name               AS audience,
+            ta.department         AS audience_department,
+            ta.position           AS audience_position,
             hv.patient_name, hv.patient_phone, hv.serial_no,
             COALESCE((
                 SELECT COUNT(*)
@@ -126,13 +133,9 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         date_str = "—"
 
     visit_rows = [
-        ("Date / Time",    date_str),
-        ("Objective",      row.get("objective")),
-        ("Evaluation",     eval_val or "Unrated"),
-        ("Business Unit",  row.get("business_unit")),
-        ("Business Line",  row.get("business_line")),
-        ("Product",        row.get("product")),
-        ("Audience",       row.get("audience")),
+        ("Date / Time", date_str),
+        ("Objective",   row.get("objective")),
+        ("Evaluation",  eval_val or "Unrated"),
     ]
     st.markdown(_detail_card("Visit Info", visit_rows), unsafe_allow_html=True)
 
@@ -140,10 +143,32 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
     customer_rows = [
         ("Name",       row.get("customer")),
         ("Account ID", row.get("account_id")),
+        ("Region",     row.get("customer_region")),
+        ("City",       row.get("customer_city")),
+        ("Sector",     row.get("customer_sector")),
     ]
     if row.get("other_customer_name"):
         customer_rows.append(("New Customer", row.get("other_customer_name")))
     st.markdown(_detail_card("Customer", customer_rows), unsafe_allow_html=True)
+
+    # ── Audience card ─────────────────────────────────────────────────────────
+    audience_rows = [
+        ("Name",       row.get("audience")),
+        ("Department", row.get("audience_department")),
+        ("Position",   row.get("audience_position")),
+    ]
+    if any(v for _, v in audience_rows):
+        st.markdown(_detail_card("Audience", audience_rows), unsafe_allow_html=True)
+
+    # ── Product & Business card ───────────────────────────────────────────────
+    product_rows = [
+        ("Business Unit",        row.get("business_unit")),
+        ("Business Line",        row.get("business_line")),
+        ("Product ID",           row.get("product_id")),
+        ("Product Description",  row.get("product")),
+    ]
+    if any(v for _, v in product_rows):
+        st.markdown(_detail_card("Product & Business", product_rows), unsafe_allow_html=True)
 
     # ── Notes card ────────────────────────────────────────────────────────────
     notes = (row.get("notes") or "").strip()
@@ -151,7 +176,7 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         notes_html = (
             _CARD_WRAP
             + _SECTION_TITLE.format(label="Notes")
-            + f'<p style="font-size:0.9rem;color:#0d1117;line-height:1.6;margin:0;">{notes}</p>'
+            + f'<p style="font-size:0.9rem;color:#0d1117;line-height:1.6;margin:0;">{html.escape(notes)}</p>'
             + _CARD_CLOSE
         )
         st.markdown(notes_html, unsafe_allow_html=True)
@@ -198,11 +223,11 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
                 shelf_html += (
                     '<tr>'
                     f'<td style="padding:0.35rem 0.5rem;color:#0d1117;border-bottom:1px solid #f3f4f6;">'
-                    f'{srow["product"]}</td>'
+                    f'{html.escape(str(srow["product"]))}</td>'
                     f'<td style="padding:0.35rem 0.5rem;text-align:right;color:#0d1117;'
                     f'font-weight:600;border-bottom:1px solid #f3f4f6;">{srow["qty_checked"]}</td>'
                     f'<td style="padding:0.35rem 0.5rem;color:#57606a;border-bottom:1px solid #f3f4f6;">'
-                    f'{srow["line_notes"] or ""}</td>'
+                    f'{html.escape(str(srow["line_notes"] or ""))}</td>'
                     '</tr>'
                 )
             shelf_html += '</tbody></table></div>' + _CARD_CLOSE
@@ -268,6 +293,8 @@ def page_my_submissions():
             v.latitude, v.longitude, v.accuracy_m,
             v.notes,
             ta.name          AS audience,
+            ta.department    AS audience_department,
+            ta.position      AS audience_position,
             hv.patient_name, hv.patient_phone, hv.serial_no,
             COALESCE((
                 SELECT COUNT(*)
@@ -311,6 +338,22 @@ def page_my_submissions():
 
     # ── Normalise evaluation ──────────────────────────────────────────────────
     df["evaluation"] = df["evaluation"].fillna("").str.strip()
+
+    # ── Date filter ───────────────────────────────────────────────────────────
+    df["_date"] = pd.to_datetime(df["submitted_at_local"], errors="coerce").dt.date
+
+    col_from, col_to = st.columns(2)
+    with col_from:
+        date_from = st.date_input("From", value=None, key="mv_date_from",
+                                  label_visibility="visible")
+    with col_to:
+        date_to = st.date_input("To", value=None, key="mv_date_to",
+                                label_visibility="visible")
+
+    if date_from:
+        df = df[df["_date"] >= date_from]
+    if date_to:
+        df = df[df["_date"] <= date_to]
 
     # ── Count by status for filter tabs ──────────────────────────────────────
     cnt_total   = len(df)
@@ -360,7 +403,7 @@ def page_my_submissions():
     total_visible = len(visible)
 
     # Reset to page 1 when filter or search changes
-    filter_key = (active_filter, search_q)
+    filter_key = (active_filter, search_q, date_from, date_to)
     if st.session_state.get("mv_filter_key") != filter_key:
         st.session_state["mv_filter_key"] = filter_key
         st.session_state["mv_page"] = 0
@@ -380,21 +423,21 @@ def page_my_submissions():
     )
 
     # ── Build card HTML ───────────────────────────────────────────────────────
-    _sid = st.query_params.get("sid", "")
     cards_html = ""
     for _, row in page_df.iterrows():
         eval_val = row.get("evaluation") or ""
         variant  = _EVAL_VARIANT.get(eval_val, "neutral")
         label    = _EVAL_LABEL.get(eval_val, "Unrated")
 
-        bu   = row.get("business_unit") or ""
-        prod = row.get("product") or ""
-        subtitle_parts = [p for p in [bu, prod] if p]
+        audience_name = row.get("audience") or ""
+        audience_dept = row.get("audience_department") or ""
+        audience_pos  = row.get("audience_position") or ""
+        subtitle_parts = [p for p in [audience_name, audience_dept, audience_pos] if p]
         subtitle = " · ".join(subtitle_parts)
 
         raw_id = int(row["visit_id"])
         vid    = f"V-{raw_id}"
-        href   = f"?page=My+Visits&sid={_sid}&visit_id={raw_id}" if _sid else f"?page=My+Visits&visit_id={raw_id}"
+        href   = f"?page=My+Visits&visit_id={raw_id}"
 
         cards_html += visit_card(
             visit_id=vid,

@@ -62,7 +62,6 @@ def page_submit_visit():
     geo_captured_key = f"_{PAGE_NS}_geo_captured"
     busy_key         = f"_{PAGE_NS}_busy"
     intent_key       = f"_{PAGE_NS}_submit_intent"
-    prev_proj_key    = f"_{PAGE_NS}_prev_project_label"
 
     TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
 
@@ -70,7 +69,6 @@ def page_submit_visit():
     st.session_state.setdefault(geo_nonce_key, 0)
     st.session_state.setdefault(busy_key, False)
     st.session_state.setdefault(intent_key, False)
-    st.session_state.setdefault(prev_proj_key, "")
 
     # =====================================================
     # Customer Quick-Find (fixed keys) — Submit Visit
@@ -111,28 +109,6 @@ def page_submit_visit():
         for n in ("prod_sel",):
             st.session_state.pop(k(n), None)
 
-    # Clear project-dependent fields (UPDATED for fixed customer keys)
-    def _clear_project_dependent_fields():
-        # Fixed customer keys
-        st.session_state[KEY_ACCT]   = ""
-        st.session_state[KEY_REGION] = ""
-        st.session_state[KEY_CITY]   = ""
-        st.session_state[KEY_SECTOR] = ""
-        st.session_state[KEY_CUST]   = ""
-        st.session_state.pop(KEY_CUSTID, None)
-
-        # Clear quick find state/message
-        st.session_state[cid_locked_key] = False
-        st.session_state[qf_msg_key] = ""
-        st.session_state[qf_msg_type_key] = ""
-
-        # nonce'd keys for the rest
-        for n in ("aud_sel", "bu_sel", "cat_sel", "bl_sel", "prod_sel"):
-            st.session_state[k(n)] = ""
-
-        # ✅ also clear "Other Customer Name" field for fresh entry
-        st.session_state.pop(k("other_customer_name"), None)
-
     set_current_page(PAGE_NS)
 
     # --- Resolve logged-in user safely ---
@@ -172,154 +148,29 @@ def page_submit_visit():
         return
 
     # =====================================================
-    # SECTION 2 — Project (optional)
+    # SECTION 2 — Customer & Target Audience
     # =====================================================
-    st.markdown("### 2️⃣ Project (optional)")
+    st.markdown("### 2️⃣ Customer & Target Audience")
 
-    project_df          = pd.DataFrame()
-    selected_project    = None
-    selected_project_id = None
-
-    where_clauses: list[str] = ["p.status IN ('Not Started', 'Open')"]
-    params: dict[str, object] = {}
-
-    if role in ("rep", "maintenance"):
-        where_clauses.append("p.assigned_to_id = :uid")
-        params["uid"] = uid
-    elif role == "manager":
-        where_clauses.append("p.assigned_by_id = :uid")
-        params["uid"] = uid
-    elif role == "admin":
-        pass
-
-    if role in ("rep", "maintenance", "manager", "admin"):
-        project_df = query_df(
-            f"""
-            SELECT
-                p.project_id,
-                p.name AS project_name,
-                p.customer_id,
-                c.account_name,
-                c.region,
-                c.city,
-                c.sector,
-                p.business_line_id,
-                bl.name AS business_line_name,
-                bl.business_unit_id AS business_unit_id,
-                bu.name AS business_unit_name,
-                bl.category,
-                p.product_id,
-                i.article_number,
-                i.description AS item_description
-            FROM projects p
-            JOIN customers      c  ON c.customer_id       = p.customer_id
-            JOIN business_lines bl ON bl.business_line_id = p.business_line_id
-            LEFT JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
-            LEFT JOIN items      i  ON i.product_id        = p.product_id
-            WHERE {" AND ".join(where_clauses)}
-            ORDER BY p.project_id, p.name, c.account_name
-            """,
-            params,
-        )
-
-    proj_labels: list[str] = [""]
-    proj_label_to_id: dict[str, int] = {}
-
-    if not project_df.empty:
-        for r in project_df.itertuples(index=False):
-            base = f"{r.project_id}. {r.project_name}"
-            parts = [base, str(r.account_name)]
-            if getattr(r, "business_line_name", None):
-                parts.append(str(r.business_line_name))
-            label = " — ".join(parts)
-            proj_labels.append(label)
-            proj_label_to_id[label] = int(r.project_id)
-
-    project_choice = st.selectbox(
-        "Project (optional)",
-        proj_labels,
-        index=0,
-        key=k("proj_sel"),
-        help="Link this visit to a project. Customer and product context will follow the project.",
+    # Quick Find (Account ID)
+    _ = customer_quick_find_module(
+        page_ns=PAGE_NS,
+        query_df=query_df,
+        customers_table="customers",
+        KEY_ACCT=KEY_ACCT,
+        KEY_REGION=KEY_REGION,
+        KEY_CITY=KEY_CITY,
+        KEY_SECTOR=KEY_SECTOR,
+        KEY_CUST=KEY_CUST,
+        KEY_CUSTID=KEY_CUSTID,
+        cid_locked_key=cid_locked_key,
+        req_clear_customer_key=req_clear_customer_key,
+        req_clear_acct_key=req_clear_acct_key,
+        req_set_acct_key=req_set_acct_key,
+        acct_set_value_key=acct_set_value_key,
+        qf_msg_key=qf_msg_key,
+        qf_msg_type_key=qf_msg_type_key,
     )
-
-    # Detect transitions
-    prev_label = st.session_state.get(prev_proj_key, "")
-    curr_label = project_choice or ""
-    if curr_label != prev_label:
-        _clear_project_dependent_fields()
-    st.session_state[prev_proj_key] = curr_label
-
-    # Resolve selected project (if any)
-    if curr_label:
-        selected_project_id = proj_label_to_id.get(curr_label)
-        if selected_project_id is not None:
-            sel_rows = project_df[project_df["project_id"] == selected_project_id]
-            if not sel_rows.empty:
-                selected_project = sel_rows.iloc[0].to_dict()
-                proj_label = f"{selected_project['project_id']}. {selected_project.get('project_name', '')}"
-                st.info(
-                    f"🔒 Linked to project **{proj_label}**. "
-                    "Customer and product context are locked to the project."
-                )
-
-    project_locked  = selected_project is not None
-    customer_locked = bool(st.session_state.get(cid_locked_key, False))
-
-    # Pre-extract project fields
-    proj_region        = selected_project.get("region")             if project_locked else None
-    proj_city          = selected_project.get("city")               if project_locked else None
-    proj_sector        = selected_project.get("sector")             if project_locked else None
-    proj_customer_id   = int(selected_project["customer_id"])       if project_locked else None
-    proj_customer_name = selected_project.get("account_name")       if project_locked else None
-    proj_bu_id         = int(selected_project["business_unit_id"])  if project_locked and selected_project.get("business_unit_id") is not None else None
-    proj_bu_name       = selected_project.get("business_unit_name") if project_locked else None
-    proj_cat           = selected_project.get("category")           if project_locked else None
-    proj_bl_id         = int(selected_project["business_line_id"])  if project_locked and selected_project.get("business_line_id") is not None else None
-    proj_bl_name       = selected_project.get("business_line_name") if project_locked else None
-    proj_prod_id       = selected_project.get("product_id")         if project_locked else None
-
-    # =====================================================
-    # SECTION 3 — Customer & Target Audience (UPDATED)
-    # =====================================================
-    st.markdown("### 3️⃣ Customer & Target Audience")
-
-    if project_locked:
-        # Project is the lock source; disable quick find
-        st.session_state[cid_locked_key] = False
-
-        st.session_state[KEY_REGION] = (proj_region or "") if proj_region else ""
-        st.session_state[KEY_CITY]   = (proj_city or "") if proj_city else ""
-        st.session_state[KEY_SECTOR] = (proj_sector or "") if proj_sector else ""
-        st.session_state[KEY_CUST]   = (proj_customer_name or "") if proj_customer_name else ""
-        if proj_customer_id is not None:
-            st.session_state[KEY_CUSTID] = int(proj_customer_id)
-
-        st.session_state[qf_msg_key] = ""
-        st.session_state[qf_msg_type_key] = ""
-
-        st.info("🔒 Customer is locked by the selected project (Quick Find disabled).")
-
-    else:
-        # Quick Find (Account ID)
-        _ = customer_quick_find_module(
-            page_ns=PAGE_NS,
-            query_df=query_df,
-            customers_table="customers",
-            KEY_ACCT=KEY_ACCT,
-            KEY_REGION=KEY_REGION,
-            KEY_CITY=KEY_CITY,
-            KEY_SECTOR=KEY_SECTOR,
-            KEY_CUST=KEY_CUST,
-            KEY_CUSTID=KEY_CUSTID,
-            cid_locked_key=cid_locked_key,
-            req_clear_customer_key=req_clear_customer_key,
-            req_clear_acct_key=req_clear_acct_key,
-            req_set_acct_key=req_set_acct_key,
-            acct_set_value_key=acct_set_value_key,
-            qf_msg_key=qf_msg_key,
-            qf_msg_type_key=qf_msg_type_key,
-        )
 
     # Cascading selectors (respects lock)
     customer_id = customer_cascading_selectors(
@@ -504,9 +355,9 @@ def page_submit_visit():
             serial_no     = st.text_input("Device Serial # *", key=k("serial_no"))
 
     # =====================================================
-    # SECTION 4 — Product & Business Line  ✅ (FIXED)
+    # SECTION 3 — Product Details
     # =====================================================
-    st.markdown("### 4️⃣ Product Details")
+    st.markdown("### 3️⃣ Product Details")
 
     # ---- Business Unit ----
     bu_df = query_df(
@@ -519,24 +370,16 @@ def page_submit_visit():
     )
     bu_names = [""] + bu_df["name"].tolist()
 
-    # If project-locked, seed BU name
-    if project_locked and proj_bu_name:
-        st.session_state[k("bu_sel")] = proj_bu_name
-
     bu_choice = st.selectbox(
         "Business Unit *",
         bu_names,
         index=0,
         key=k("bu_sel"),
-        disabled=project_locked,
-        on_change=None if project_locked else _on_bu_change,
+        on_change=_on_bu_change,
     )
 
     bu_id = None
-    if project_locked and proj_bu_id:
-        bu_id     = proj_bu_id
-        bu_choice = proj_bu_name
-    elif bu_choice:
+    if bu_choice:
         match = bu_df.loc[bu_df["name"] == bu_choice, "business_unit_id"]
         bu_id = int(match.iloc[0]) if not match.empty else None
 
@@ -559,20 +402,14 @@ def page_submit_visit():
         )
         cat_names = [""] + cat_df["category"].tolist()
 
-    # If project-locked, seed Category
-    if project_locked and proj_cat:
-        st.session_state[k("cat_sel")] = proj_cat
-
     cat_choice = st.selectbox(
         "Category *",
         cat_names,
         index=0,
         key=k("cat_sel"),
-        disabled=project_locked or (bu_id is None),
+        disabled=(bu_id is None),
         help=None if bu_id else "Select a Business Unit first",
     )
-    if project_locked:
-        cat_choice = proj_cat
 
     # ---- Business Line ----
     bl_df    = pd.DataFrame()
@@ -595,24 +432,17 @@ def page_submit_visit():
         )
         bl_names = [""] + bl_df["name"].tolist()
 
-    # If project-locked, seed BL
-    if project_locked and proj_bl_name:
-        st.session_state[k("bl_sel")] = proj_bl_name
-
     bl_choice = st.selectbox(
         "Business Line *",
         bl_names,
         index=0,
         key=k("bl_sel"),
-        disabled=project_locked or (bu_id is None) or (not cat_choice),
-        on_change=None if project_locked else _on_line_change,
+        disabled=(bu_id is None) or (not cat_choice),
+        on_change=_on_line_change,
         help=None if (bu_id and cat_choice) else "Select a Category first",
     )
 
-    if project_locked and proj_bl_id:
-        business_line_id = proj_bl_id
-        bl_choice        = proj_bl_name
-    elif bu_id and cat_choice and bl_choice:
+    if bu_id and cat_choice and bl_choice:
         match = bl_df.loc[bl_df["name"] == bl_choice, "business_line_id"]
         business_line_id = int(match.iloc[0]) if not match.empty else None
 
@@ -621,8 +451,6 @@ def page_submit_visit():
     prod_df = pd.DataFrame()
     product_id  = None
     prod_choice = ""
-
-    prod_disabled = bool(project_locked)
 
     if business_line_id:
         prod_df = query_df(
@@ -645,29 +473,12 @@ def page_submit_visit():
             for r in prod_df.itertuples(index=False)
         ]
 
-    prod_index = 0
-    if project_locked and proj_prod_id and not prod_df.empty:
-        label_to_pid = {}
-        for r in prod_df.itertuples(index=False):
-            label = (
-                f"{(r.article_number or r.product_id)} — {r.description}"
-                if pd.notna(r.description) and str(r.description).strip()
-                else f"{(r.article_number or r.product_id)}"
-            )
-            label_to_pid[label] = r.product_id
-
-        for lbl, pid in label_to_pid.items():
-            if str(pid) == str(proj_prod_id) and lbl in prod_labels:
-                prod_index = prod_labels.index(lbl)
-                st.session_state[k("prod_sel")] = lbl
-                break
-
     prod_choice = st.selectbox(
         "Article Number/Product (optional)",
         prod_labels,
-        index=prod_index,
+        index=0,
         key=k("prod_sel"),
-        disabled=(business_line_id is None) or prod_disabled,
+        disabled=(business_line_id is None),
         help=None if business_line_id else "Select Business Line first",
     )
 
@@ -682,13 +493,10 @@ def page_submit_visit():
             label_to_pid[label] = r.product_id
         product_id = label_to_pid.get(prod_choice)
 
-    if project_locked and proj_prod_id and not product_id:
-        product_id = proj_prod_id
-
     # =====================================================
-    # SECTION 5 — Visit Details & Outcome
+    # SECTION 4 — Visit Details & Outcome
     # =====================================================
-    st.markdown("### 5️⃣ Visit Details & Outcome")
+    st.markdown("### 4️⃣ Visit Details & Outcome")
 
     if role in {"admin"}:
         obj_df = query_df(
@@ -957,7 +765,6 @@ def page_submit_visit():
             "objective_id":        int(objective_id),
             "notes":               (notes.strip() if notes else None),
             "evaluation":          evaluation_val,
-            "project_id":          int(selected_project_id) if selected_project_id else None,
 
             # ✅ NEW: store the typed name when customer is Other
             "other_customer_name": (other_customer_name.strip() if (is_other_customer and other_customer_name) else None),
@@ -1042,7 +849,6 @@ def page_submit_visit():
             st.session_state[saved_ok_key]      = True
             st.session_state[intent_key]        = False
             st.session_state[busy_key]          = False
-            st.session_state[prev_proj_key]     = ""  # reset project tracker after successful submit
 
             # clear "Other Customer Name" field after save
             st.session_state.pop(k("other_customer_name"), None)

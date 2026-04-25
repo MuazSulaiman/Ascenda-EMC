@@ -1,7 +1,45 @@
 # app_v11.py — Ascenda Sales Daily Feedback (orchestrator)
+import os
 import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image
+
+
+def _patch_streamlit_index() -> None:
+    """Inject PWA tags into Streamlit's index.html so they appear in <head>
+    before any JS runs — required for iOS Safari to pick up apple-touch-icon.
+    Uses a proper URL (not a data URI) because iOS Safari ignores data-URI icons."""
+    import re
+    import streamlit as _st
+    index_path = os.path.join(os.path.dirname(_st.__file__), "static", "index.html")
+    try:
+        html = open(index_path, encoding="utf-8").read()
+        # Already patched with the correct URL-based approach — nothing to do.
+        if 'apple-touch-icon" href="/app/static/' in html:
+            return
+        # Remove any old patch (e.g. data-URI from a previous deploy) so we can re-inject cleanly.
+        html = re.sub(r'\s*<link rel="apple-touch-icon"[^>]*/>', '', html)
+        html = re.sub(r'\s*<link rel="manifest"[^>]*/>', '', html)
+        html = re.sub(r'\s*<meta name="apple-mobile-web-app-capable"[^>]*/>', '', html)
+        html = re.sub(r'\s*<meta name="apple-mobile-web-app-status-bar-style"[^>]*/>', '', html)
+        html = re.sub(r'\s*<meta name="apple-mobile-web-app-title"[^>]*/>', '', html)
+        html = re.sub(r'\s*<meta name="theme-color"[^>]*/>', '', html)
+        tags = (
+            '    <link rel="apple-touch-icon" href="/app/static/ascenda_180.png" />\n'
+            '    <link rel="manifest" href="/app/static/manifest.webmanifest" />\n'
+            '    <meta name="apple-mobile-web-app-capable" content="yes" />\n'
+            '    <meta name="apple-mobile-web-app-status-bar-style" content="default" />\n'
+            '    <meta name="apple-mobile-web-app-title" content="Ascenda" />\n'
+            '    <meta name="theme-color" content="#2667ff" />\n'
+        )
+        # Insert before the closing </head> tag (handles both indented and tight HTML).
+        html = re.sub(r'(\s*</head>)', '\n' + tags + r'\1', html, count=1)
+        open(index_path, "w", encoding="utf-8").write(html)
+    except Exception:
+        pass  # never crash the app over a cosmetic patch
+
+
+_patch_streamlit_index()
 
 from config import APP_TITLE
 from theme import inject_theme
@@ -38,21 +76,59 @@ st.set_page_config(
 
 inject_theme()
 
+st.markdown("""
+    <style>
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header[data-testid="stHeader"] {
+            background: none;
+            height: 0;
+        }
+        [data-testid="collapsedControl"] {
+            visibility: visible !important;
+            display: block !important;
+        }
+        /* Prevent iOS Safari auto-zoom on input focus (triggered when font-size < 16px) */
+        input, textarea, select,
+        [data-baseweb="input"] input,
+        [data-baseweb="textarea"] textarea,
+        [data-baseweb="select"] input {
+            font-size: 16px !important;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 components.html("""
 <script>
 (function() {
-  const head = document.head;
+  const p = window.parent;
+  const head = p.document.head;
   function add(tag, attrs) {
-    const el = document.createElement(tag);
+    const el = p.document.createElement(tag);
     Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k, v));
     head.appendChild(el);
   }
-  add('link', { rel: 'apple-touch-icon', href: '/static/ascenda_180.png' });
-  add('meta', { name: 'apple-mobile-web-app-capable', content: 'yes' });
-  add('meta', { name: 'apple-mobile-web-app-title', content: 'Ascenda' });
-  add('link', { rel: 'manifest', href: '/static/manifest.webmanifest' });
-  add('meta', { name: 'theme-color', content: '#2667ff' });
-  add('link', { rel: 'icon', type: 'image/png', sizes: '192x192', href: '/static/ascenda_192.png' });
+  if (!p.document.querySelector('link[rel="manifest"]')) {
+    add('link', { rel: 'apple-touch-icon', href: '/app/static/ascenda_180.png' });
+    add('meta', { name: 'apple-mobile-web-app-capable', content: 'yes' });
+    add('meta', { name: 'apple-mobile-web-app-status-bar-style', content: 'default' });
+    add('meta', { name: 'apple-mobile-web-app-title', content: 'Ascenda' });
+    add('link', { rel: 'manifest', href: '/app/static/manifest.webmanifest' });
+    add('meta', { name: 'theme-color', content: '#2667ff' });
+    add('link', { rel: 'icon', type: 'image/png', sizes: '192x192', href: '/app/static/ascenda_192.png' });
+  }
+  // Capture the browser install prompt so any page can trigger it later
+  if (!p.__ascendaInstallReady) {
+    p.__ascendaInstallReady = true;
+    p.__ascendaDeferredPrompt = null;
+    p.addEventListener('beforeinstallprompt', function(e) {
+      e.preventDefault();
+      p.__ascendaDeferredPrompt = e;
+    });
+    p.addEventListener('appinstalled', function() {
+      p.__ascendaDeferredPrompt = null;
+    });
+  }
 })();
 </script>
 """, height=0)
@@ -125,28 +201,34 @@ st.markdown("""
 .stMarkdown h3 { font-size: 1.125rem !important; font-weight: 600 !important;
     color: #0d1117 !important; }
 
-/* ── Primary buttons ── */
+/* ── Primary buttons (Streamlit 1.36+ and legacy) ── */
 [data-testid="stButton"] > button[kind="primary"],
-[data-testid="stFormSubmitButton"] > button {
+[data-testid="stFormSubmitButton"] > button,
+[data-testid="stBaseButton-primary"] {
     background: #2667ff !important; border: none !important;
     border-radius: 10px !important; font-weight: 600 !important;
+    color: #ffffff !important;
     padding: 0.5rem 1.25rem !important;
     transition: background 0.15s ease, box-shadow 0.15s ease !important;
 }
 [data-testid="stButton"] > button[kind="primary"]:hover,
-[data-testid="stFormSubmitButton"] > button:hover {
+[data-testid="stFormSubmitButton"] > button:hover,
+[data-testid="stBaseButton-primary"]:hover {
     background: #1a50d4 !important;
     box-shadow: 0 2px 8px rgba(38,103,255,0.25) !important;
+    color: #ffffff !important;
 }
 
 /* ── Secondary buttons ── */
-[data-testid="stButton"] > button[kind="secondary"] {
+[data-testid="stButton"] > button[kind="secondary"],
+[data-testid="stBaseButton-secondary"] {
     background: #ffffff !important; border: 1px solid #e4e8ec !important;
     border-radius: 10px !important; color: #0d1117 !important;
     font-weight: 500 !important;
     transition: background 0.15s ease, border-color 0.15s ease !important;
 }
-[data-testid="stButton"] > button[kind="secondary"]:hover {
+[data-testid="stButton"] > button[kind="secondary"]:hover,
+[data-testid="stBaseButton-secondary"]:hover {
     background: #f6f8fa !important; border-color: #c9d1d9 !important;
 }
 
@@ -163,6 +245,22 @@ st.markdown("""
 [data-testid="stTextArea"] textarea:focus {
     background: #ffffff !important; border-color: #2667ff !important;
     box-shadow: 0 0 0 3px rgba(38,103,255,0.12) !important; outline: none !important;
+}
+/* Override base-web input container borders (the outer wrapper that shows red/blue rings) */
+[data-testid="stTextInput"] [data-baseweb="input"],
+[data-testid="stTextInput"] [data-baseweb="base-input"],
+[data-testid="stTextArea"] [data-baseweb="textarea"],
+[data-testid="stNumberInput"] [data-baseweb="input"],
+[data-testid="stNumberInput"] [data-baseweb="base-input"] {
+    border: none !important; outline: none !important;
+    box-shadow: none !important; background: transparent !important;
+}
+[data-testid="stTextInput"] [data-baseweb="input"]:focus-within,
+[data-testid="stTextInput"] [data-baseweb="base-input"]:focus-within,
+[data-testid="stTextArea"] [data-baseweb="textarea"]:focus-within,
+[data-testid="stNumberInput"] [data-baseweb="input"]:focus-within,
+[data-testid="stNumberInput"] [data-baseweb="base-input"]:focus-within {
+    border: none !important; outline: none !important; box-shadow: none !important;
 }
 
 /* ── Select / multiselect ── */
@@ -231,9 +329,26 @@ div[data-testid="stAlert"].stInfo {
 
 capture_client_fingerprints()
 
-# Session bootstrap (runs once per cold start)
+# Session bootstrap
 _ensure_sessions_table_exists()
+
 if "user" not in st.session_state:
+    url_sid    = st.query_params.get("sid") or st.query_params.get("_sid")
+    sid_checked = st.session_state.get("_sid_checked", False)
+
+    if not url_sid and not sid_checked:
+        # sessionStorage JS hasn't returned yet — show a loading state and
+        # wait for the component rerun that brings back the stored SID.
+        st.markdown(
+            '<div style="display:flex;justify-content:center;align-items:center;'
+            'min-height:220px;color:#57606a;font-size:0.9rem;gap:8px;">'
+            '<svg width="18" height="18" fill="none" stroke="#2667ff" stroke-width="2.5" '
+            'viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4" '
+            'stroke-dashoffset="10"/></svg>Loading…</div>',
+            unsafe_allow_html=True,
+        )
+        st.stop()
+
     purge_expired_sessions()
     st.session_state.user = resolve_session_user()
 
@@ -260,7 +375,7 @@ else:
         "Admin: Users":             page_admin_users,
         "Review Target Audiences":  page_review_target_audiences,
         "Review Other Customers":   page_review_other_customers,
-        "Visit Change Requests":    page_change_request,
+        "My Change Requests":        page_change_request,
         "Review Change Requests":   page_admin_change_requests,
     }
 

@@ -19,10 +19,12 @@ _ICON_LOCATION = (
     'viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>'
     '<circle cx="12" cy="10" r="3"/></svg>'
 )
-_ICON_CLOCK = (
+_ICON_EDIT = (
     '<svg width="18" height="18" fill="none" stroke="#b5651d" stroke-width="2" '
-    'viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/>'
-    '<polyline points="12 6 12 12 16 14"/></svg>'
+    'viewBox="0 0 24 24">'
+    '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>'
+    '<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>'
+    '</svg>'
 )
 _ICON_CHECK = (
     '<svg width="18" height="18" fill="none" stroke="#0e8a4f" stroke-width="2" '
@@ -35,6 +37,20 @@ _ICON_ALERT = (
     '<circle cx="12" cy="12" r="10"/>'
     '<line x1="12" y1="8" x2="12" y2="12"/>'
     '<line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+)
+_ICON_STAR_POS = (
+    '<svg width="18" height="18" fill="none" stroke="#0e8a4f" stroke-width="2" '
+    'viewBox="0 0 24 24">'
+    '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 '
+    '12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'
+    '</svg>'
+)
+_ICON_STAR_NEG = (
+    '<svg width="18" height="18" fill="none" stroke="#c83333" stroke-width="2" '
+    'viewBox="0 0 24 24">'
+    '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 '
+    '12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'
+    '</svg>'
 )
 _ICON_USERS = (
     '<svg width="18" height="18" fill="none" stroke="#2667ff" stroke-width="2" '
@@ -87,7 +103,7 @@ def page_dashboard():
     # ── Period filter ─────────────────────────────────────────────────────────
     period = st.radio(
         "",
-        ["This week", "This month", "All time"],
+        ["Today", "This week", "This month", "All time"],
         horizontal=True,
         key="dash_period",
         label_visibility="collapsed",
@@ -95,27 +111,11 @@ def page_dashboard():
 
     # ── KPI queries ───────────────────────────────────────────────────────────
     period_filter = {
+        "Today":      "AND DATE(v.submitted_at_local) = CURRENT_DATE",
         "This week":  "AND v.submitted_at_local >= date_trunc('week',  NOW() AT TIME ZONE 'Asia/Riyadh')",
         "This month": "AND v.submitted_at_local >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Riyadh')",
         "All time":   "",
     }.get(period, "")
-
-    # Today's visits
-    today_count = _safe_count(
-        "SELECT COUNT(*) FROM visits v WHERE v.user_id = :uid "
-        "AND DATE(v.submitted_at_local) = CURRENT_DATE",
-        {"uid": uid},
-    )
-    yesterday_count = _safe_count(
-        "SELECT COUNT(*) FROM visits v WHERE v.user_id = :uid "
-        "AND DATE(v.submitted_at_local) = CURRENT_DATE - 1",
-        {"uid": uid},
-    )
-    today_delta_val = today_count - yesterday_count
-    today_delta = (
-        f"+{today_delta_val} vs yesterday" if today_delta_val >= 0
-        else f"{today_delta_val} vs yesterday"
-    )
 
     # Period total
     period_total = _safe_count(
@@ -153,20 +153,9 @@ def page_dashboard():
     # ── Render KPI cards ──────────────────────────────────────────────────────
     st.markdown(
         kpi_card_v2(
-            label="Today's Visits",
-            value=str(today_count),
-            delta=today_delta,
-            delta_positive=today_delta_val >= 0,
-            icon_svg=_ICON_LOCATION,
-            icon_bg="#eef2ff",
-        ),
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        kpi_card_v2(
             label=f"Total Visits ({period})",
-            value=str(period_total),
-            delta=f"Across {customers_visited} customer{'s' if customers_visited != 1 else ''}",
+            value=f"{period_total:,}",
+            delta=f"Across {customers_visited:,} customer{'s' if customers_visited != 1 else ''}",
             delta_positive=True,
             icon_svg=_ICON_CHECK,
             icon_bg="#e6f6ec",
@@ -176,26 +165,26 @@ def page_dashboard():
     st.markdown(
         kpi_card_v2(
             label="Open Change Requests",
-            value=str(pending_cr),
+            value=f"{pending_cr:,}",
             delta="Awaiting review" if pending_cr > 0 else "None pending",
             delta_positive=pending_cr == 0,
-            icon_svg=_ICON_CLOCK,
+            icon_svg=_ICON_EDIT,
             icon_bg="#fdf2e4",
         ),
         unsafe_allow_html=True,
     )
-    if period_total > 0:
-        st.markdown(
-            kpi_card_v2(
-                label="Positive Evaluation Rate",
-                value=f"{positive_rate}%",
-                delta=f"{period_total} visits evaluated",
-                delta_positive=positive_rate >= 60,
-                icon_svg=_ICON_ALERT if positive_rate < 60 else _ICON_CHECK,
-                icon_bg="#fdeceb" if positive_rate < 60 else "#e6f6ec",
-            ),
-            unsafe_allow_html=True,
-        )
+    st.markdown(
+        kpi_card_v2(
+            label="Positive Evaluation Rate",
+            value=f"{positive_rate}%" if period_total > 0 else "0%",
+            delta=f"{period_total:,} visits evaluated" if period_total > 0 else "No visits in this period",
+            delta_positive=positive_rate >= 60,
+            delta_neutral=period_total == 0,
+            icon_svg=_ICON_STAR_POS,
+            icon_bg="#f0f3f6" if period_total == 0 else ("#fdeceb" if positive_rate < 60 else "#e6f6ec"),
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _render_admin_dashboard() -> None:
@@ -213,13 +202,14 @@ def _render_admin_dashboard() -> None:
     # ── Period filter ─────────────────────────────────────────────────────────
     period = st.radio(
         "",
-        ["This week", "This month", "All time"],
+        ["Today", "This week", "This month", "All time"],
         horizontal=True,
         key="dash_admin_period",
         label_visibility="collapsed",
     )
 
     period_filter = {
+        "Today":      "AND DATE(v.submitted_at_local) = CURRENT_DATE",
         "This week":  "AND v.submitted_at_local >= date_trunc('week',  NOW() AT TIME ZONE 'Asia/Riyadh')",
         "This month": "AND v.submitted_at_local >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Riyadh')",
         "All time":   "",
@@ -243,7 +233,7 @@ def _render_admin_dashboard() -> None:
         st.markdown(
             kpi_card_v2(
                 label=f"Total Visits ({period})",
-                value=str(total_visits),
+                value=f"{total_visits:,}",
                 delta="All reps combined",
                 delta_positive=True,
                 icon_svg=_ICON_LOCATION,
@@ -255,8 +245,8 @@ def _render_admin_dashboard() -> None:
         st.markdown(
             kpi_card_v2(
                 label="Unique Customers",
-                value=str(unique_customers),
-                delta=f"In {period.lower()}",
+                value=f"{unique_customers:,}",
+                delta=f"In {period.lower() if period != 'Today' else 'today'}",
                 delta_positive=True,
                 icon_svg=_ICON_BUILDING,
                 icon_bg="#e6f6ec",
@@ -267,8 +257,8 @@ def _render_admin_dashboard() -> None:
         st.markdown(
             kpi_card_v2(
                 label="Active Reps",
-                value=str(active_reps),
-                delta="Submitted ≥1 visit",
+                value=f"{active_reps:,}",
+                delta="Submitted visits",
                 delta_positive=True,
                 icon_svg=_ICON_USERS,
                 icon_bg="#eef2ff",
@@ -306,14 +296,29 @@ def _render_admin_pending_reviews() -> None:
 
     total_pending = cr_count + ta_count + oc_count
 
-    badges_html = (
-        f'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:1rem;">'
-        f'{status_badge(f"Change Requests: {cr_count}", "warning")}'
-        f'{status_badge(f"Target Audiences: {ta_count}", "info")}'
-        f'{status_badge(f"Other Customers: {oc_count}", "primary")}'
-        f'</div>'
-    )
-    st.markdown(badges_html, unsafe_allow_html=True)
+    # ── Filter buttons (act as clickable badges) ──────────────────────────────
+    active_filter = st.session_state.get("pr_filter", None)
+
+    _FILTER_OPTS = [
+        (None,               f"All  {total_pending}",          "neutral"),
+        ("Change Request",   f"Change Requests  {cr_count}",   "warning"),
+        ("Target Audience",  f"Target Audiences  {ta_count}",  "info"),
+        ("Other Customer",   f"Other Customers  {oc_count}",   "primary"),
+    ]
+
+    fcols = st.columns(len(_FILTER_OPTS))
+    for col, (fval, flabel, fvariant) in zip(fcols, _FILTER_OPTS):
+        is_active = active_filter == fval
+        with col:
+            if st.button(
+                flabel,
+                key=f"pr_fbtn_{fval}",
+                type="primary" if is_active else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["pr_filter"] = None if is_active else fval
+                st.session_state["pr_page"] = 0
+                st.rerun()
 
     if total_pending == 0:
         st.success("No pending reviews — all clear.")
@@ -379,7 +384,33 @@ def _render_admin_pending_reviews() -> None:
         "Other Customer":  "primary",
     }
 
-    for _, row in items_df.iterrows():
+    # ── Apply filter ──────────────────────────────────────────────────────────
+    active_filter = st.session_state.get("pr_filter", None)
+    filtered_df = items_df if active_filter is None else items_df[items_df["type"] == active_filter]
+
+    # ── Pagination ────────────────────────────────────────────────────────────
+    PAGE_SIZE = 10
+    total_items = len(filtered_df)
+    total_pages = max(1, (total_items + PAGE_SIZE - 1) // PAGE_SIZE)
+
+    current_page = st.session_state.get("pr_page", 0)
+    current_page = min(current_page, total_pages - 1)
+
+    start_idx = current_page * PAGE_SIZE
+    end_idx   = min(start_idx + PAGE_SIZE, total_items)
+    page_df   = filtered_df.iloc[start_idx:end_idx]
+
+    if total_items > 0:
+        st.markdown(
+            f'<p style="font-size:0.8rem;color:#8b949e;margin:6px 0 8px;">'
+            f'Showing {start_idx + 1}–{end_idx} of {total_items:,} pending items</p>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("No items match the selected filter.")
+        return
+
+    for _, row in page_df.iterrows():
         date_str = (
             row["submitted_at"].strftime("%d %b %Y")
             if pd.notna(row["submitted_at"]) else "—"
@@ -412,4 +443,24 @@ def _render_admin_pending_reviews() -> None:
             ):
                 st.session_state["_admin_preselect_id"] = int(row["item_id"])
                 st.query_params["page"] = target
+                st.rerun()
+
+    # ── Pagination controls ───────────────────────────────────────────────────
+    if total_pages > 1:
+        col_prev, col_info, col_next = st.columns([1, 2, 1])
+        with col_prev:
+            if st.button("← Prev", key="pr_prev", disabled=(current_page == 0),
+                         use_container_width=True):
+                st.session_state["pr_page"] = current_page - 1
+                st.rerun()
+        with col_info:
+            st.markdown(
+                f'<p style="text-align:center;font-size:0.85rem;color:#57606a;'
+                f'padding-top:0.4rem;">Page {current_page + 1} of {total_pages}</p>',
+                unsafe_allow_html=True,
+            )
+        with col_next:
+            if st.button("Next →", key="pr_next", disabled=(current_page >= total_pages - 1),
+                         use_container_width=True):
+                st.session_state["pr_page"] = current_page + 1
                 st.rerun()

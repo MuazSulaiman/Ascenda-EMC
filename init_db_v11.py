@@ -293,7 +293,7 @@ CREATE TABLE IF NOT EXISTS visits (
     objective_id INTEGER NOT NULL REFERENCES objectives(objective_id),
     notes TEXT,
     evaluation TEXT CHECK (
-        evaluation IS NULL OR evaluation IN ('Positive', 'Negative', 'Neutral', 'IDK')
+        evaluation IS NULL OR evaluation IN ('Positive', 'Negative', 'Neutral')
     ),
     submitted_at_local TIMESTAMP,
     project_id BIGINT REFERENCES projects(project_id),
@@ -352,6 +352,16 @@ CREATE TABLE IF NOT EXISTS request_change_details (
     field TEXT NOT NULL,
     old_value TEXT,
     new_value TEXT
+);
+
+-- --------------------------------------------------------
+-- Login rate limiting
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS login_attempts (
+    username        CITEXT PRIMARY KEY,
+    attempt_count   INTEGER NOT NULL DEFAULT 0,
+    locked_until    TIMESTAMPTZ,
+    last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- --------------------------------------------------------

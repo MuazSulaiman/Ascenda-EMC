@@ -21,7 +21,18 @@
       "Bash(git stash *)",
       "Bash(git merge *)",
       "Bash(python -c \"import ast; ast.parse\\(open\\('app_pages/admin_change_requests.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('app_pages/admin_change_requests.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app_pages/admin_change_requests.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(npx remotion *)",
+      "Bash(node -e \"const m = require\\('@remotion/media'\\); console.log\\(Object.keys\\(m\\)\\);\")",
+      "Bash(ffprobe -v quiet -print_format json -show_format public/voiceover.mp3)",
+      "Bash(python *)",
+      "Bash(python -c \"import streamlit; import os; print\\(os.path.join\\(os.path.dirname\\(streamlit.__file__\\), 'static', 'index.html'\\)\\)\")",
+      "Bash(python -c \"import streamlit; import os; p=os.path.join\\(os.path.dirname\\(streamlit.__file__\\), 'static', 'index.html'\\); html=open\\(p\\).read\\(\\); print\\('apple-touch-icon FOUND' if 'apple-touch-icon' in html else 'NOT FOUND'\\); print\\('manifest FOUND' if 'manifest' in html else 'NOT FOUND'\\)\")",
+      "Bash(ffprobe -version)",
+      "Bash(ffprobe -i \"C:\\\\Users\\\\muazs\\\\OneDrive\\\\Desktop\\\\Streamlit11DD Claude\\\\ascenda-video\\\\public\\\\voiceover.mp3\" -af silencedetect=noise=-35dB:d=0.5 -f null -)",
+      "Bash(node -e ' *)"
     ]
   }
 }
