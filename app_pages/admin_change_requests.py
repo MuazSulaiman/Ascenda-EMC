@@ -397,7 +397,7 @@ def _render_force_tab(admin_uid: int):
     NS = _FA_NS
     st.markdown(
         "<style>"
-        "div[class*='st-key-admin_change_req_fa_del_btn'] button {"
+        "div[class*='st-key-admin-change-req-fa-del-btn'] button {"
         "  background-color:#dc2626!important;"
         "  color:#fff!important;"
         "  border-color:#dc2626!important;"
