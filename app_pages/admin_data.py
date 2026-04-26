@@ -179,6 +179,7 @@ def _get_export_tables() -> dict:
             LEFT JOIN business_units bu   ON bu.business_unit_id = bl.business_unit_id
             JOIN objectives o        ON v.objective_id = o.objective_id
             LEFT JOIN home_visits hv ON hv.visit_id = v.visit_id
+            WHERE COALESCE(v.is_deleted, FALSE) IS FALSE
             ORDER BY v.visit_id DESC
         """),
         "users":                   query_df("SELECT * FROM users ORDER BY user_id DESC"),
@@ -234,6 +235,8 @@ def page_admin_data():
     # ------------------------------------------------------------------ Visits
     with tab1:
         where_sql, params = _date_rep_cust_where("v", _rep_names, _cust_names)
+        visit_where = ("WHERE COALESCE(v.is_deleted, FALSE) IS FALSE" +
+                       (" AND " + where_sql[len("WHERE "):] if where_sql.startswith("WHERE ") else ""))
 
         _transactional_table(
             key_prefix  = "v",
@@ -242,7 +245,7 @@ def page_admin_data():
                 FROM visits v
                 JOIN users u     ON v.user_id     = u.user_id
                 JOIN customers c ON v.customer_id = c.customer_id
-                {where_sql}
+                {visit_where}
             """,
             data_sql    = f"""
                 SELECT
@@ -283,7 +286,7 @@ def page_admin_data():
                 LEFT JOIN business_units bu  ON bu.business_unit_id = bl.business_unit_id
                 JOIN objectives o            ON v.objective_id = o.objective_id
                 LEFT JOIN home_visits hv     ON hv.visit_id    = v.visit_id
-                {where_sql}
+                {visit_where}
                 ORDER BY v.visit_id DESC
             """,
             params      = params,
