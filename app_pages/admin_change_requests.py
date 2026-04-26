@@ -112,8 +112,10 @@ def _load_pending() -> pd.DataFrame:
           COUNT(rcd.detail_id) AS fields_changed
         FROM request_changes rc
         JOIN users u ON u.user_id = rc.requested_by
+        JOIN visits v ON v.visit_id = rc.visit_id
         LEFT JOIN request_change_details rcd ON rcd.request_id = rc.request_id
         WHERE rc.status = 'IN_REVIEW'
+          AND COALESCE(v.is_deleted, FALSE) IS FALSE
         GROUP BY rc.request_id, rc.visit_id, u.name, rc.request_date, rc.request_note
         ORDER BY rc.request_date ASC
         """
@@ -191,6 +193,7 @@ def _fa_load_all_visits() -> pd.DataFrame:
         FROM visits v
         JOIN customers c ON c.customer_id = v.customer_id
         JOIN users u ON u.user_id = v.user_id
+        WHERE COALESCE(v.is_deleted, FALSE) IS FALSE
         ORDER BY v.visit_id DESC
         LIMIT 1000
         """
