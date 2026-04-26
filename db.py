@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 
 def _env(key: str, default: str | None = None) -> str | None:
@@ -43,14 +43,13 @@ engine = create_engine(get_database_url(), pool_pre_ping=True, future=True)
 
 
 # Migrations
-from sqlalchemy import text
 
 
 def _run_migrations() -> None:
     """Idempotent schema migrations. Safe to re-run on every startup."""
     # ALTER TYPE ADD VALUE cannot run inside a normal transaction on PG < 12.
     # Use AUTOCOMMIT isolation to avoid that restriction.
-    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+    with engine.execution_options(isolation_level="AUTOCOMMIT").connect() as conn:
         conn.execute(text(
             "ALTER TYPE public.asc_change_source ADD VALUE IF NOT EXISTS 'DELETE'"
         ))
