@@ -56,7 +56,7 @@ Inside the expander:
 - `st.warning(...)` explaining this permanently hides the visit and deletes home visit / shelf movement data
 - `st.text_area("Deletion reason (required) *")` — admin must fill this
 - `st.checkbox("I confirm I want to delete this visit")` — must be checked
-- `st.button("🗑️ Delete Visit", type="primary", disabled=...)` — enabled only when reason is filled and checkbox is checked
+- `st.button("🗑️ Delete Visit", type="secondary", disabled=...)` — enabled only when reason is filled and checkbox is checked; styled red via inline CSS (Streamlit `type="primary"` is brand-blue, not red)
 - On success: clear the visit selection session state keys, set a success message key, `st.rerun()`
 
 The expander is collapsed by default so it does not intrude on the normal force-adjust workflow.
@@ -96,8 +96,28 @@ Files to update:
 
 ---
 
-## 6. Out of Scope
+## 6. Rep Visibility of Deleted Visits
+
+Reps cannot see the Admin Change Requests page, so they never see the `🗑️ Deleted` audit entry there. However, a rep whose visit is deleted should not see it silently disappear — they need to know it was deleted and why.
+
+**`my_submissions.py`** is the rep-facing page that lists their visits. Changes:
+
+- Query includes `is_deleted = TRUE` visits (do **not** filter them out here)
+- Deleted visits render with a red `"🗑️ Deleted"` badge alongside the normal visit info
+- Below the badge, show the admin's deletion note: sourced by joining `request_changes WHERE change_source = 'DELETE'` for that visit_id, pulling `request_note`
+- Deleted visits are shown read-only — no "Request Change" button
+
+**Query filtering table update** (from Section 5):
+
+| File | Function/Query | Change |
+|---|---|---|
+| `app_pages/my_submissions.py` | Visit list query | Include deleted visits; join request_changes for deletion note |
+
+All other rep-facing pages (dashboard counts, change request visit picker) still exclude deleted visits via the `is_deleted` filter.
+
+---
+
+## 7. Out of Scope
 
 - **Recovery / undelete** — not required; soft-delete is for audit purposes only
-- **Rep visibility of deletion** — reps do not see the All Requests history tab; no changes needed to rep-facing pages beyond the is_deleted filter
 - **Bulk deletion** — single visit at a time only
