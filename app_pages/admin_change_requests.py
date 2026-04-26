@@ -319,6 +319,78 @@ def _apply_force_adjustment(visit_id: int, admin_uid: int, details: list[dict], 
         return False, str(e)
 
 
+def _delete_visit(visit_id: int, admin_uid: int, note: str):
+    """
+    Soft-delete a visit. All five steps run in one transaction.
+    Returns (success: bool, error_msg: str | None).
+    """
+    try:
+        with engine.begin() as conn:
+            # 1. Guard: visit must exist and not already be deleted
+            row = conn.execute(
+                text(
+                    "SELECT visit_id FROM visits "
+                    "WHERE visit_id = :vid AND COALESCE(is_deleted, FALSE) IS FALSE"
+                ),
+                {"vid": visit_id},
+            ).fetchone()
+            if not row:
+                return False, "Visit not found or already deleted."
+
+            # 2. Auto-reject any open change requests for this visit
+            conn.execute(
+                text(
+                    """
+                    UPDATE request_changes
+                    SET status       = 'REJECTED',
+                        reject_note  = 'Visit was deleted by admin',
+                        resolve_date = NOW(),
+                        changed_by   = :admin_uid
+                    WHERE visit_id = :vid AND status = 'IN_REVIEW'
+                    """
+                ),
+                {"admin_uid": admin_uid, "vid": visit_id},
+            )
+
+            # 3. Hard-delete child records
+            # shelf_movement_lines cascade automatically from shelf_movement_headers
+            conn.execute(text("DELETE FROM home_visits WHERE visit_id = :vid"), {"vid": visit_id})
+            conn.execute(text("DELETE FROM shelf_movement_headers WHERE visit_id = :vid"), {"vid": visit_id})
+
+            # 4. Insert deletion audit record in request_changes
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO request_changes
+                      (visit_id, change_source, requested_by, request_note, status,
+                       request_date, applied_at, changed_by, resolve_date)
+                    VALUES
+                      (:vid, 'DELETE', :admin_uid, :note, 'APPROVED',
+                       NOW(), NOW(), :admin_uid, NOW())
+                    """
+                ),
+                {"vid": visit_id, "admin_uid": admin_uid, "note": note},
+            )
+
+            # 5. Soft-delete the visit row
+            conn.execute(
+                text(
+                    """
+                    UPDATE visits
+                    SET is_deleted = TRUE,
+                        deleted_at = NOW(),
+                        deleted_by = :admin_uid
+                    WHERE visit_id = :vid
+                    """
+                ),
+                {"admin_uid": admin_uid, "vid": visit_id},
+            )
+
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
 def _render_force_tab(admin_uid: int):
     NS = _FA_NS
     success_key = f"{NS}_success"
