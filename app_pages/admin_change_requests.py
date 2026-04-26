@@ -325,6 +325,8 @@ def _delete_visit(visit_id: int, admin_uid: int, note: str):
     Returns (success: bool, error_msg: str | None).
     """
     try:
+        if not (note or "").strip():
+            return False, "A deletion note is required."
         with engine.begin() as conn:
             # 1. Guard: visit must exist and not already be deleted
             row = conn.execute(
