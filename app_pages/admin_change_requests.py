@@ -395,10 +395,24 @@ def _delete_visit(visit_id: int, admin_uid: int, note: str):
 
 def _render_force_tab(admin_uid: int):
     NS = _FA_NS
+    st.markdown(
+        "<style>"
+        "div[class*='st-key-admin_change_req_fa_del_btn'] button {"
+        "  background-color:#dc2626!important;"
+        "  color:#fff!important;"
+        "  border-color:#dc2626!important;"
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
     success_key = f"{NS}_success"
 
     if st.session_state.get(success_key):
         st.success(st.session_state.pop(success_key))
+
+    del_success_key = f"{NS}_del_success"
+    if st.session_state.get(del_success_key):
+        st.success(st.session_state.pop(del_success_key))
 
     # ── Visit search ──────────────────────────────────────────────────────────
     st.markdown("### Select Visit")
@@ -512,6 +526,40 @@ def _render_force_tab(admin_uid: int):
         f"Customer: {_norm(snap.get('account_name'))} · Date: {date_str}"
     )
     st.markdown("---")
+
+    # ── Delete Visit ──────────────────────────────────────────────────────────
+    with st.expander("🗑️ Delete Visit", expanded=False):
+        st.warning(
+            "⚠️ **This action permanently hides the visit** and deletes any "
+            "associated home visit and shelf movement records. It cannot be undone."
+        )
+        del_reason = st.text_area(
+            "Deletion reason (required) *",
+            key=f"{NS}_del_reason",
+            placeholder="Explain why this visit is being deleted.",
+        )
+        del_confirm = st.checkbox(
+            "I confirm I want to delete this visit",
+            key=f"{NS}_del_confirm",
+        )
+        del_enabled = bool((del_reason or "").strip()) and del_confirm
+
+        if st.button(
+            "🗑️ Delete Visit",
+            key=f"{NS}_del_btn",
+            type="secondary",
+            disabled=not del_enabled,
+        ):
+            ok, err = _delete_visit(visit_id, admin_uid, (del_reason or "").strip())
+            if ok:
+                st.session_state[del_success_key] = f"Visit V-{visit_id} has been deleted."
+                # Clear visit selection state
+                for k in list(st.session_state.keys()):
+                    if k.startswith(f"{NS}_") and k not in (del_success_key, f"{NS}_search"):
+                        del st.session_state[k]
+                st.rerun()
+            else:
+                st.error(f"Delete failed: {err}")
 
     # ── Customer (locked for rep, editable here) ──────────────────────────────
     st.markdown("#### Customer")
