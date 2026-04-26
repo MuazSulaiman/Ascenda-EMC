@@ -205,8 +205,7 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         shelf_sql = """
             SELECT
                 COALESCE(i.description, '—') AS product,
-                l.qty_checked,
-                l.notes AS line_notes
+                l.qty_checked
             FROM shelf_movement_lines l
             JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
             LEFT JOIN items i ON i.product_id = l.product_id
@@ -225,8 +224,6 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
                   'font-weight:600;border-bottom:1px solid #e4e8ec;">Product</th>'
                 + '<th style="text-align:right;padding:0.35rem 0.5rem;color:#57606a;'
                   'font-weight:600;border-bottom:1px solid #e4e8ec;">Qty</th>'
-                + '<th style="text-align:left;padding:0.35rem 0.5rem;color:#57606a;'
-                  'font-weight:600;border-bottom:1px solid #e4e8ec;">Notes</th>'
                 + '</tr></thead><tbody>'
             )
             for _, srow in shelf_df.iterrows():
@@ -236,8 +233,6 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
                     f'{html.escape(str(srow["product"]))}</td>'
                     f'<td style="padding:0.35rem 0.5rem;text-align:right;color:#0d1117;'
                     f'font-weight:600;border-bottom:1px solid #f3f4f6;">{srow["qty_checked"]}</td>'
-                    f'<td style="padding:0.35rem 0.5rem;color:#57606a;border-bottom:1px solid #f3f4f6;">'
-                    f'{html.escape(str(srow["line_notes"] or ""))}</td>'
                     '</tr>'
                 )
             shelf_html += '</tbody></table></div>' + _CARD_CLOSE
