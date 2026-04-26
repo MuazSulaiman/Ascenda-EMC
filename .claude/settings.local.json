@@ -32,7 +32,14 @@
       "Bash(python -c \"import streamlit; import os; p=os.path.join\\(os.path.dirname\\(streamlit.__file__\\), 'static', 'index.html'\\); html=open\\(p\\).read\\(\\); print\\('apple-touch-icon FOUND' if 'apple-touch-icon' in html else 'NOT FOUND'\\); print\\('manifest FOUND' if 'manifest' in html else 'NOT FOUND'\\)\")",
       "Bash(ffprobe -version)",
       "Bash(ffprobe -i \"C:\\\\Users\\\\muazs\\\\OneDrive\\\\Desktop\\\\Streamlit11DD Claude\\\\ascenda-video\\\\public\\\\voiceover.mp3\" -af silencedetect=noise=-35dB:d=0.5 -f null -)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(node *)",
+      "Bash(pip install *)",
+      "Bash(python3 -m py_compile app_pages/admin_change_requests.py)",
+      "Bash(sed -n '413,415p' app_pages/admin_change_requests.py)",
+      "Bash(sed -n '530,535p' app_pages/admin_change_requests.py)",
+      "Bash(git *)",
+      "Skill(remotion)"
     ]
   }
 }

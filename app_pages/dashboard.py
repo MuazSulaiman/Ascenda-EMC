@@ -111,10 +111,18 @@ def page_dashboard():
 
     # ── KPI queries ───────────────────────────────────────────────────────────
     period_filter = {
-        "Today":      "AND DATE(v.submitted_at_local) = CURRENT_DATE",
-        "This week":  "AND v.submitted_at_local >= date_trunc('week',  NOW() AT TIME ZONE 'Asia/Riyadh')",
-        "This month": "AND v.submitted_at_local >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Riyadh')",
-        "All time":   "",
+        "Today": """
+            AND v.submitted_at_local >= CURRENT_DATE
+            AND v.submitted_at_local < CURRENT_DATE + interval '1 day'
+        """,
+        "This week": """
+            AND v.submitted_at_local >= 
+            date_trunc('week', NOW() + interval '1 day') - interval '1 day'
+        """,
+        "This month": """
+            AND v.submitted_at_local >= date_trunc('month', NOW())
+        """,
+        "All time": ""
     }.get(period, "")
 
     # Period total
@@ -209,10 +217,18 @@ def _render_admin_dashboard() -> None:
     )
 
     period_filter = {
-        "Today":      "AND DATE(v.submitted_at_local) = CURRENT_DATE",
-        "This week":  "AND v.submitted_at_local >= date_trunc('week',  NOW() AT TIME ZONE 'Asia/Riyadh')",
-        "This month": "AND v.submitted_at_local >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Riyadh')",
-        "All time":   "",
+        "Today": """
+            AND v.submitted_at_local >= CURRENT_DATE
+            AND v.submitted_at_local < CURRENT_DATE + interval '1 day'
+        """,
+        "This week": """
+            AND v.submitted_at_local >= 
+            date_trunc('week', NOW() + interval '1 day') - interval '1 day'
+        """,
+        "This month": """
+            AND v.submitted_at_local >= date_trunc('month', NOW())
+        """,
+        "All time": ""
     }.get(period, "")
 
     # ── Field Activity KPIs ───────────────────────────────────────────────────

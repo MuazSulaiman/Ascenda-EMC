@@ -24,6 +24,9 @@ from app_pages.change_request_helpers import (
     _load_product_options, _product_id_from_label,
     _audience_label_for_id, _load_audience_options, _resolve_audience_id_from_label,
     _infer_bu_cat_bl, _objective_id_from_name,
+    _fmt_field_label, _resolve_field_display_value,
+    _product_label_for_id, _objective_name_for_id_safe,
+    _load_other_dept_options, _load_other_position_options,
 )
 
 PAGE_NS = "change_request"
@@ -191,32 +194,6 @@ def _get_customer_locked_fields(customer_id: int) -> dict:
     return df.iloc[0].to_dict()
 
 
-def _load_other_dept_options() -> list[str]:
-    df = query_df(
-        """
-        SELECT DISTINCT department
-        FROM target_audiences
-        WHERE COALESCE(is_active, TRUE) IS TRUE
-          AND department IS NOT NULL
-          AND trim(department) <> ''
-        ORDER BY department
-        """
-    )
-    return [""] + (df["department"].astype(str).tolist() if not df.empty else [])
-
-
-def _load_other_position_options() -> list[str]:
-    df = query_df(
-        """
-        SELECT DISTINCT position
-        FROM target_audiences
-        WHERE COALESCE(is_active, TRUE) IS TRUE
-        AND position IS NOT NULL
-        AND trim(position) <> ''
-        ORDER BY position
-        """
-    )
-    return [""] + (df["position"].astype(str).tolist() if not df.empty else [])
 
 
 def _load_objective_options_for_role(role_name: str) -> list[str]:
@@ -684,18 +661,63 @@ def page_change_request():
                 _add_detail(details, "home_visits.patient_phone", hv0.get("patient_phone"), (st.session_state.get(f"{PAGE_NS}/hv_phone") or None))
                 _add_detail(details, "home_visits.serial_no", hv0.get("serial_no"), (st.session_state.get(f"{PAGE_NS}/hv_serial") or None))
 
+            # ── Build human-readable display details for the live preview ─────────
+            display_details = []
+            for _d in details:
+                _field = _d["field"]
+                _old = _d.get("old_value")
+                _new = _d.get("new_value")
+                if _field == "visits.audience_id":
+                    _old_disp = _audience_label_for_id(int(_old)) if _old else "—"
+                    _new_disp = aud_choice if aud_choice and aud_choice != "Other" else "—"
+                elif _field == "visits.business_line_id":
+                    _old_disp = _infer_bu_cat_bl(int(_old)).get("bl_name", "") or "—" if _old else "—"
+                    _new_disp = bl_choice or "—"
+                elif _field == "visits.product_id":
+                    _old_disp = _product_label_for_id(_old) or "—" if _old else "—"
+                    _new_disp = prod_choice or "—"
+                elif _field == "visits.objective_id":
+                    _old_disp = _objective_name_for_id_safe(_old) or "—" if _old else "—"
+                    _new_disp = obj_choice or "—"
+                else:
+                    _old_disp = _old or "—"
+                    _new_disp = _new or "—"
+                display_details.append({"field": _field, "old_display": _old_disp, "new_display": _new_disp})
+
+            # Insert display-only Business Unit + Category rows before business_line row
+            _bl_det = next((d for d in details if d["field"] == "visits.business_line_id"), None)
+            if _bl_det:
+                _old_infer = _infer_bu_cat_bl(int(_bl_det["old_value"])) if _bl_det.get("old_value") else {}
+                _new_infer = _infer_bu_cat_bl(int(_bl_det["new_value"])) if _bl_det.get("new_value") else {}
+                _old_bu = _old_infer.get("bu_name", "") or "—"
+                _new_bu = _new_infer.get("bu_name", "") or bu_choice or "—"
+                _old_cat = _old_infer.get("category", "") or "—"
+                _new_cat = _new_infer.get("category", "") or cat_choice or "—"
+                _bl_disp_idx = next((i for i, d in enumerate(display_details) if d["field"] == "visits.business_line_id"), None)
+                if _bl_disp_idx is not None:
+                    display_details.insert(_bl_disp_idx, {
+                        "field": "_display.category",
+                        "old_display": _old_cat,
+                        "new_display": _new_cat,
+                    })
+                    display_details.insert(_bl_disp_idx, {
+                        "field": "_display.business_unit",
+                        "old_display": _old_bu,
+                        "new_display": _new_bu,
+                    })
+
             section_header("Live Changes Preview")
             if not details:
                 st.info("No changes yet.")
             else:
                 rows_html = "".join(
                     compare_row(
-                        d["field"],
-                        str(d.get("old_value") or "—"),
-                        str(d.get("new_value") or "—"),
+                        _fmt_field_label(d["field"]),
+                        d["old_display"],
+                        d["new_display"],
                         changed=True,
                     )
-                    for d in details
+                    for d in display_details
                 )
                 st.markdown(
                     f"""
@@ -827,16 +849,23 @@ def page_change_request():
         df = query_df(
             """
             SELECT
-              request_id,
-              request_date,
-              visit_id,
-              change_source,
-              status,
-              resolve_date,
-              reject_note
-            FROM request_changes
-            WHERE requested_by = :uid
-            ORDER BY request_date DESC
+              rc.request_id,
+              rc.request_date,
+              rc.visit_id,
+              rc.change_source,
+              rc.status,
+              rc.resolve_date,
+              rc.applied_at,
+              rc.reject_note,
+              rc.request_note,
+              rc.apply_error,
+              c.account_name  AS customer_name,
+              v.submitted_at_local AS visit_date
+            FROM request_changes rc
+            JOIN visits v    ON v.visit_id    = rc.visit_id
+            JOIN customers c ON c.customer_id = v.customer_id
+            WHERE rc.requested_by = :uid
+            ORDER BY rc.request_date DESC
             """,
             {"uid": int(uid)},
         )
@@ -844,28 +873,12 @@ def page_change_request():
         if df.empty:
             st.info("No change requests submitted yet.")
         else:
-            # Fetch field summaries for all requests
-            req_ids = df["request_id"].astype(int).tolist()
-            placeholders = ", ".join([f":id{i}" for i in range(len(req_ids))])
-            det_params = {f"id{i}": int(rid) for i, rid in enumerate(req_ids)}
-            det = query_df(
-                f"SELECT request_id, field FROM request_change_details "
-                f"WHERE request_id IN ({placeholders})",
-                det_params,
-            )
-            summary = {}
-            if not det.empty:
-                summary = (
-                    det.groupby("request_id")["field"]
-                    .apply(lambda s: ", ".join(sorted(set(str(x).split(".")[-1] for x in s))))
-                    .to_dict()
-                )
-
             _BADGE_MAP = {
                 "IN_REVIEW": "warning",
                 "APPROVED":  "success",
                 "REJECTED":  "danger",
                 "WITHDRAWN": "neutral",
+                "DELETED":   "danger",
             }
 
             st.markdown(
@@ -883,40 +896,203 @@ def page_change_request():
             if st.session_state.get(withdraw_success_key):
                 st.success(st.session_state.pop(withdraw_success_key))
 
-            for _, row in df.iterrows():
-                rid = int(row["request_id"])
-                status_val = str(row["status"])
-                badge_html = status_badge(status_val, _BADGE_MAP.get(status_val, "neutral"))
-                fields_changed = summary.get(rid, "—")
-                req_date = pd.to_datetime(row["request_date"]).strftime("%d/%m/%Y %H:%M") if pd.notna(row["request_date"]) else "—"
+            df["request_date"] = pd.to_datetime(df["request_date"], errors="coerce")
+            df["visit_date"]   = pd.to_datetime(df["visit_date"],   errors="coerce")
 
-                with st.expander(f"Request #{rid} — Visit #{int(row['visit_id'])} — {status_val} — {req_date}"):
-                    col_a, col_b = st.columns([3, 1])
-                    with col_a:
-                        st.markdown(f"**Status:** {badge_html}", unsafe_allow_html=True)
-                        st.caption(f"Fields changed: {fields_changed}")
-                        if status_val == "REJECTED" and pd.notna(row["reject_note"]) and row["reject_note"]:
-                            st.warning(f"Rejection reason: {row['reject_note']}")
-                    with col_b:
-                        if status_val == "IN_REVIEW":
-                            if st.button("Withdraw", key=f"{PAGE_NS}/withdraw_{rid}", type="secondary"):
-                                with engine.begin() as conn:
-                                    result = conn.execute(
-                                        text("""
-                                            UPDATE request_changes
-                                            SET status = 'WITHDRAWN', resolve_date = NOW()
-                                            WHERE request_id = :rid
-                                              AND requested_by = :uid
-                                              AND status = 'IN_REVIEW'
-                                        """),
-                                        {"rid": rid, "uid": int(uid)},
+            # Sort: most-recently-active visit first; within visit oldest→newest
+            latest_per_visit = df.groupby("visit_id")["request_date"].max().rename("latest_req_date")
+            df = df.join(latest_per_visit, on="visit_id")
+            df = df.sort_values(
+                ["latest_req_date", "visit_id", "request_date"],
+                ascending=[False, False, True],
+            )
+
+            visit_ids_ordered = list(dict.fromkeys(df["visit_id"].tolist()))
+
+            for visit_id_val in visit_ids_ordered:
+                group = df[df["visit_id"] == visit_id_val]
+                first = group.iloc[0]
+
+                customer   = str(first.get("customer_name") or "—")
+                visit_dt   = first.get("visit_date")
+                visit_date_str = (
+                    pd.to_datetime(visit_dt, errors="coerce").strftime("%d %b %Y")
+                    if pd.notna(visit_dt) else "—"
+                )
+
+                # Status summary for the expander label
+                counts = group["status"].value_counts()
+                _STATUS_LABEL = {
+                    "APPROVED": "Approved", "REJECTED": "Rejected",
+                    "IN_REVIEW": "In Review", "WITHDRAWN": "Withdrawn", "DELETED": "Deleted",
+                }
+                summary_parts = [
+                    f"{counts.get(s, 0)} {_STATUS_LABEL[s]}"
+                    for s in ["IN_REVIEW", "APPROVED", "REJECTED", "WITHDRAWN", "DELETED"]
+                    if counts.get(s, 0)
+                ]
+                summary_str = " · ".join(summary_parts)
+                expander_label = (
+                    f"V-{visit_id_val}  ·  {customer}  ·  {visit_date_str}"
+                    + (f"        {summary_str}" if summary_str else "")
+                )
+
+                with st.expander(expander_label):
+                    total = len(group)
+                    for i, (_, row) in enumerate(group.iterrows()):
+                        rid        = int(row["request_id"])
+                        status_val = str(row["status"])
+                        req_date_str = (
+                            row["request_date"].strftime("%d %b %Y, %H:%M")
+                            if pd.notna(row["request_date"]) else "—"
+                        )
+                        change_source = str(row.get("change_source", "")).upper()
+                        is_delete = status_val == "DELETED"
+                        is_force  = change_source == "FORCE" and not is_delete
+
+                        badge = status_badge(status_val, _BADGE_MAP.get(status_val, "neutral"))
+                        if is_delete:
+                            source_badge = (
+                                '<span style="font-size:0.75rem;font-weight:600;color:#991b1b;'
+                                'background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;'
+                                'padding:1px 7px;">🗑️ Deleted</span>'
+                            )
+                        elif is_force:
+                            source_badge = (
+                                '<span style="font-size:0.75rem;font-weight:600;color:#b45309;'
+                                'background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;'
+                                'padding:1px 7px;">⚡ Force</span>'
+                            )
+                        else:
+                            source_badge = (
+                                '<span style="font-size:0.75rem;font-weight:600;color:#1d4ed8;'
+                                'background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;'
+                                'padding:1px 7px;">👤 Rep</span>'
+                            )
+
+                        col_hdr, col_withdraw = st.columns([5, 1])
+                        with col_hdr:
+                            st.markdown(
+                                f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
+                                f'<span style="font-size:0.875rem;font-weight:600;color:#0d1117;">'
+                                f'Request #{rid}</span>'
+                                f'<span style="font-size:0.8rem;color:#8b949e;">{req_date_str}</span>'
+                                f'{source_badge}'
+                                f'{badge}'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+                        with col_withdraw:
+                            if status_val == "IN_REVIEW":
+                                if st.button("Withdraw", key=f"{PAGE_NS}/withdraw_{rid}", type="secondary"):
+                                    with engine.begin() as conn:
+                                        result = conn.execute(
+                                            text("""
+                                                UPDATE request_changes
+                                                SET status = 'WITHDRAWN', resolve_date = NOW()
+                                                WHERE request_id = :rid
+                                                  AND requested_by = :uid
+                                                  AND status = 'IN_REVIEW'
+                                            """),
+                                            {"rid": rid, "uid": int(uid)},
+                                        )
+                                    if result.rowcount == 0:
+                                        st.warning("Could not withdraw — request may already be resolved.")
+                                        st.rerun()
+                                    else:
+                                        st.session_state[withdraw_success_key] = f"Request #{rid} withdrawn."
+                                        st.rerun()
+
+                        # Rep note
+                        req_note_val = str(row.get("request_note") or "").strip()
+                        if req_note_val:
+                            st.markdown(
+                                f'<p style="font-size:0.85rem;color:#57606a;'
+                                f'font-style:italic;margin:0 0 8px 0;">"{req_note_val}"</p>',
+                                unsafe_allow_html=True,
+                            )
+
+                        # Diff table (skip for DELETE)
+                        if not is_delete:
+                            diff_df = query_df(
+                                "SELECT field, old_value, new_value FROM request_change_details "
+                                "WHERE request_id = :rid ORDER BY field",
+                                {"rid": rid},
+                            )
+                            if not diff_df.empty:
+                                rows_html = "".join(
+                                    compare_row(
+                                        _fmt_field_label(str(r["field"])),
+                                        _resolve_field_display_value(str(r["field"]), r["old_value"] if pd.notna(r["old_value"]) else None),
+                                        _resolve_field_display_value(str(r["field"]), r["new_value"] if pd.notna(r["new_value"]) else None),
+                                        changed=True,
                                     )
-                                if result.rowcount == 0:
-                                    st.warning("Could not withdraw — request may already be resolved.")
-                                    st.rerun()
-                                else:
-                                    st.session_state[withdraw_success_key] = f"Request #{rid} withdrawn."
-                                    st.rerun()
+                                    for _, r in diff_df.iterrows()
+                                )
+                                before_lbl = "Before" if is_force else "Original"
+                                after_lbl  = "After"  if is_force else "Requested"
+                                st.markdown(
+                                    f"""
+                                    <table style="width:100%;border-collapse:collapse;border:1px solid #e4e8ec;
+                                                  border-radius:10px;overflow:hidden;font-size:0.875rem;">
+                                      <thead>
+                                        <tr style="background:#f6f8fa;">
+                                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
+                                                     border-bottom:1px solid #e4e8ec;width:30%;">Field</th>
+                                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
+                                                     border-bottom:1px solid #e4e8ec;">{before_lbl}</th>
+                                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
+                                                     border-bottom:1px solid #e4e8ec;">{after_lbl}</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>{rows_html}</tbody>
+                                    </table>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
+                            else:
+                                st.caption("No field details recorded.")
+
+                        # Resolution line
+                        if status_val == "DELETED":
+                            applied_str = (
+                                pd.to_datetime(row.get("applied_at"), errors="coerce").strftime("%d %b %Y, %H:%M")
+                                if pd.notna(row.get("applied_at")) else "—"
+                            )
+                            deletion_note = str(row.get("request_note") or "").strip()
+                            msg = f"Deleted on {applied_str}"
+                            if deletion_note:
+                                msg += f" — {deletion_note}"
+                            st.error(msg)
+                        elif status_val == "APPROVED":
+                            applied_str = (
+                                pd.to_datetime(row.get("applied_at"), errors="coerce").strftime("%d %b %Y, %H:%M")
+                                if pd.notna(row.get("applied_at")) else "—"
+                            )
+                            st.success(f"Approved on {applied_str}")
+                        elif status_val == "REJECTED":
+                            reject_note_val = str(row.get("reject_note") or "").strip()
+                            if reject_note_val:
+                                st.error(f"Rejected: {reject_note_val}")
+                            else:
+                                st.error("Rejected.")
+                        elif status_val == "IN_REVIEW":
+                            st.info("Pending review")
+                        elif status_val == "WITHDRAWN":
+                            resolve_str = (
+                                pd.to_datetime(row.get("resolve_date"), errors="coerce").strftime("%d %b %Y")
+                                if pd.notna(row.get("resolve_date")) else "—"
+                            )
+                            st.caption(f"Withdrawn on {resolve_str}")
+
+                        if pd.notna(row.get("apply_error")) and str(row.get("apply_error")).strip():
+                            st.warning(f"Apply error: {row['apply_error']}")
+
+                        if i < total - 1:
+                            st.markdown(
+                                '<hr style="border:none;border-top:1px solid #e4e8ec;margin:12px 0;">',
+                                unsafe_allow_html=True,
+                            )
 
 # =============================
 # Footer

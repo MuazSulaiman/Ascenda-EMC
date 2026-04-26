@@ -10,7 +10,7 @@ from config import TIMEZONE
 from db import engine
 from db_ops import query_df, exec_sql
 from ui import section_header, status_badge, compare_row
-from widgets import set_current_page
+from widgets import set_current_page, customer_quick_find_module, customer_cascading_selectors
 from app_pages.change_request_helpers import (
     _norm, _safe_int, _add_detail,
     _load_bu_options, _bu_id_from_name,
@@ -18,7 +18,11 @@ from app_pages.change_request_helpers import (
     _load_product_options, _product_id_from_label,
     _audience_label_for_id, _load_audience_options, _resolve_audience_id_from_label,
     _infer_bu_cat_bl, _objective_id_from_name,
+    _fmt_field_label, _resolve_field_display_value,
+    _load_other_dept_options, _load_other_position_options,
 )
+
+_TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
 
 _TZ = pytz.timezone(TIMEZONE)
 
@@ -156,9 +160,9 @@ def _render_diff_table(
 ):
     rows_html = "".join(
         compare_row(
-            _fmt_field(str(r["field"])),
-            str(r["old_value"] if pd.notna(r["old_value"]) else "—"),
-            str(r["new_value"] if pd.notna(r["new_value"]) else "—"),
+            _fmt_field_label(str(r["field"])),
+            _resolve_field_display_value(str(r["field"]), r["old_value"] if pd.notna(r["old_value"]) else None),
+            _resolve_field_display_value(str(r["field"]), r["new_value"] if pd.notna(r["new_value"]) else None),
             changed=True,
         )
         for _, r in diff_df.iterrows()
@@ -213,8 +217,10 @@ def _fa_load_visit_snap(visit_id: int) -> dict | None:
           v.objective_id, o.name AS objective_name,
           v.notes, v.evaluation,
           v.latitude, v.longitude, v.accuracy_m,
-          v.submitted_at_local,
-          v.submitted_at_utc
+          v.submitted_at_local, v.submitted_at_utc,
+          v.other_audience_title, v.other_audience_name,
+          v.other_audience_department, v.other_audience_position,
+          v.other_audience_phone, v.other_audience_email
         FROM visits v
         JOIN customers c ON c.customer_id = v.customer_id
         LEFT JOIN business_lines bl ON bl.business_line_id = v.business_line_id
@@ -227,22 +233,6 @@ def _fa_load_visit_snap(visit_id: int) -> dict | None:
     )
     return df.iloc[0].to_dict() if not df.empty else None
 
-
-def _fa_load_customers() -> list[str]:
-    df = query_df(
-        "SELECT account_name FROM customers WHERE COALESCE(is_active, TRUE) IS TRUE ORDER BY account_name"
-    )
-    return ([""] + df["account_name"].tolist()) if not df.empty else [""]
-
-
-def _fa_customer_id_from_name(name: str):
-    if not name:
-        return None
-    df = query_df(
-        "SELECT customer_id FROM customers WHERE COALESCE(is_active, TRUE) IS TRUE AND trim(account_name)=:n LIMIT 1",
-        {"n": name},
-    )
-    return int(df.iloc[0]["customer_id"]) if not df.empty else None
 
 
 def _fa_load_objective_options() -> list[str]:
@@ -370,7 +360,7 @@ def _delete_visit(visit_id: int, admin_uid: int, note: str):
                       (visit_id, change_source, requested_by, request_note, status,
                        request_date, applied_at, changed_by, resolve_date)
                     VALUES
-                      (:vid, 'DELETE', :admin_uid, :note, 'APPROVED',
+                      (:vid, 'FORCE', :admin_uid, :note, 'DELETED',
                        NOW(), NOW(), :admin_uid, NOW())
                     """
                 ),
@@ -494,7 +484,22 @@ def _render_force_tab(admin_uid: int):
             st.session_state[f"{NS}_date"] = datetime.date.today()
             st.session_state[f"{NS}_hour"] = 0
             st.session_state[f"{NS}_minute"] = 0
-        st.session_state[f"{NS}_cust_sel"] = _norm(snap.get("account_name"))
+        # Prefill cascading customer selectors from snap
+        cust_df_snap = query_df(
+            "SELECT region, city, sector FROM customers WHERE customer_id = :cid LIMIT 1",
+            {"cid": int(snap["customer_id"])},
+        )
+        if not cust_df_snap.empty:
+            cr = cust_df_snap.iloc[0]
+            st.session_state[f"{NS}_region_sel"] = _norm(cr.get("region"))
+            st.session_state[f"{NS}_city_sel"]   = _norm(cr.get("city"))
+            st.session_state[f"{NS}_sector_sel"] = _norm(cr.get("sector"))
+        st.session_state[f"{NS}_cust_sel"]   = _norm(snap.get("account_name"))
+        st.session_state[f"{NS}_custid"]     = int(snap["customer_id"])
+        st.session_state[f"{NS}_cid_locked"] = False
+        st.session_state[f"{NS}_acct_input"] = ""
+        st.session_state[f"{NS}_qf_msg"]     = ""
+        st.session_state[f"{NS}_qf_msg_type"]= ""
         if snap.get("audience_id"):
             st.session_state[f"{NS}_aud_sel"] = _audience_label_for_id(int(snap["audience_id"]))
         else:
@@ -547,6 +552,27 @@ def _render_force_tab(admin_uid: int):
         )
         del_enabled = bool((del_reason or "").strip()) and del_confirm
 
+        st.markdown(
+            "<style>"
+            "div:has(#del-visit-btn-anchor) + div button {"
+            "  background-color: #c0392b !important;"
+            "  color: white !important;"
+            "  border: 1px solid #c0392b !important;"
+            "}"
+            "div:has(#del-visit-btn-anchor) + div button:hover:not(:disabled) {"
+            "  background-color: #a93226 !important;"
+            "  border-color: #a93226 !important;"
+            "}"
+            "div:has(#del-visit-btn-anchor) + div button:disabled {"
+            "  background-color: #e8b4b0 !important;"
+            "  border-color: #e8b4b0 !important;"
+            "  color: rgba(255,255,255,0.6) !important;"
+            "}"
+            "</style>"
+            '<div id="del-visit-btn-anchor"></div>',
+            unsafe_allow_html=True,
+        )
+
         if st.button(
             "🗑️ Delete Visit",
             key=f"{NS}_del_btn",
@@ -564,36 +590,71 @@ def _render_force_tab(admin_uid: int):
             else:
                 st.error(f"Delete failed: {err}")
 
-    # ── Customer (locked for rep, editable here) ──────────────────────────────
+    # ── Customer (Quick Find + cascading Region/City/Sector/Customer) ────────
     st.markdown("#### Customer")
-    cust_options = _fa_load_customers()
-    cust_choice  = st.selectbox("Customer *", cust_options, key=f"{NS}_cust_sel")
-    new_customer_id = _fa_customer_id_from_name(cust_choice) if cust_choice else None
-    if new_customer_id:
-        cdf = query_df(
-            "SELECT region, city, sector FROM customers WHERE customer_id=:cid",
-            {"cid": new_customer_id},
-        )
-        if not cdf.empty:
-            cr = cdf.iloc[0]
-            st.caption(
-                f"Region: {_norm(cr.get('region'))}  ·  "
-                f"City: {_norm(cr.get('city'))}  ·  "
-                f"Sector: {_norm(cr.get('sector'))}"
-            )
+    customer_quick_find_module(
+        page_ns=NS,
+        query_df=query_df,
+        KEY_ACCT=f"{NS}_acct_input",
+        KEY_REGION=f"{NS}_region_sel",
+        KEY_CITY=f"{NS}_city_sel",
+        KEY_SECTOR=f"{NS}_sector_sel",
+        KEY_CUST=f"{NS}_cust_sel",
+        KEY_CUSTID=f"{NS}_custid",
+        cid_locked_key=f"{NS}_cid_locked",
+        req_clear_customer_key=f"{NS}_req_clear_cust",
+        req_clear_acct_key=f"{NS}_req_clear_acct",
+        req_set_acct_key=f"{NS}_req_set_acct",
+        acct_set_value_key=f"{NS}_acct_set_val",
+        qf_msg_key=f"{NS}_qf_msg",
+        qf_msg_type_key=f"{NS}_qf_msg_type",
+    )
+    new_customer_id = customer_cascading_selectors(
+        query_df=query_df,
+        KEY_REGION=f"{NS}_region_sel",
+        KEY_CITY=f"{NS}_city_sel",
+        KEY_SECTOR=f"{NS}_sector_sel",
+        KEY_CUST=f"{NS}_cust_sel",
+        KEY_CUSTID=f"{NS}_custid",
+        cid_locked_key=f"{NS}_cid_locked",
+        qf_msg_key=f"{NS}_qf_msg",
+        qf_msg_type_key=f"{NS}_qf_msg_type",
+    )
 
     # ── Target Audience ───────────────────────────────────────────────────────
     st.markdown("#### Target Audience")
     effective_cust_id = new_customer_id or _safe_int(snap.get("customer_id"))
-    aud_options = _load_audience_options(effective_cust_id) if effective_cust_id else [""]
+    aud_options = _load_audience_options(effective_cust_id, include_other=True) if effective_cust_id else [""]
     aud_sel_val = st.session_state.get(f"{NS}_aud_sel", "")
     if aud_sel_val not in aud_options:
         st.session_state[f"{NS}_aud_sel"] = ""
-    aud_choice    = st.selectbox("Target Audience", aud_options, key=f"{NS}_aud_sel")
+    aud_choice = st.selectbox("Target Audience", aud_options, key=f"{NS}_aud_sel")
+    is_other_aud = (aud_choice == "Other")
     new_audience_id = (
         _resolve_audience_id_from_label(effective_cust_id, aud_choice)
-        if (effective_cust_id and aud_choice) else None
+        if (effective_cust_id and aud_choice and not is_other_aud) else None
     )
+
+    if is_other_aud:
+        st.markdown("##### New Target Audience Details")
+        ota_title_opts = _TITLE_OPTIONS
+        ota_title_val  = st.session_state.get(f"{NS}_ota_title", "")
+        if ota_title_val not in ota_title_opts:
+            st.session_state[f"{NS}_ota_title"] = ""
+        st.selectbox("Title (optional)", ota_title_opts, key=f"{NS}_ota_title")
+        st.text_input("Name *", key=f"{NS}_ota_name")
+        dept_opts = _load_other_dept_options()
+        dept_val  = st.session_state.get(f"{NS}_ota_dept", "")
+        if dept_val not in dept_opts:
+            st.session_state[f"{NS}_ota_dept"] = ""
+        st.selectbox("Department *", dept_opts, key=f"{NS}_ota_dept")
+        pos_opts = _load_other_position_options()
+        pos_val  = st.session_state.get(f"{NS}_ota_pos", "")
+        if pos_val not in pos_opts:
+            st.session_state[f"{NS}_ota_pos"] = ""
+        st.selectbox("Position *", pos_opts, key=f"{NS}_ota_pos")
+        st.text_input("Phone # (optional)", key=f"{NS}_ota_phone")
+        st.text_input("Email (optional)", key=f"{NS}_ota_email")
 
     # ── Product & Business ────────────────────────────────────────────────────
     st.markdown("#### Product & Business")
@@ -652,12 +713,12 @@ def _render_force_tab(admin_uid: int):
     eval_choice = st.selectbox("Evaluation *", eval_options, key=f"{NS}_eval_sel")
 
     # ── Location (locked for rep, editable here) ──────────────────────────────
-    st.markdown("#### Location (optional)")
+    st.markdown("#### Location")
     col_lat, col_lon, col_acc = st.columns(3)
     with col_lat:
-        lat_val = st.text_input("Latitude", key=f"{NS}_lat")
+        lat_val = st.text_input("Latitude *", key=f"{NS}_lat")
     with col_lon:
-        lon_val = st.text_input("Longitude", key=f"{NS}_lon")
+        lon_val = st.text_input("Longitude *", key=f"{NS}_lon")
     with col_acc:
         acc_val = st.text_input("Accuracy (m)", key=f"{NS}_acc")
 
@@ -684,6 +745,13 @@ def _render_force_tab(admin_uid: int):
     _add_detail(details, "visits.latitude",         snap.get("latitude"),         lat_val.strip() or None)
     _add_detail(details, "visits.longitude",        snap.get("longitude"),        lon_val.strip() or None)
     _add_detail(details, "visits.accuracy_m",       snap.get("accuracy_m"),       acc_val.strip() or None)
+    if is_other_aud:
+        _add_detail(details, "visits.other_audience_title",      snap.get("other_audience_title"),      (st.session_state.get(f"{NS}_ota_title") or None))
+        _add_detail(details, "visits.other_audience_name",       snap.get("other_audience_name"),       (st.session_state.get(f"{NS}_ota_name") or None))
+        _add_detail(details, "visits.other_audience_department", snap.get("other_audience_department"), (st.session_state.get(f"{NS}_ota_dept") or None))
+        _add_detail(details, "visits.other_audience_position",   snap.get("other_audience_position"),   (st.session_state.get(f"{NS}_ota_pos") or None))
+        _add_detail(details, "visits.other_audience_phone",      snap.get("other_audience_phone"),      (st.session_state.get(f"{NS}_ota_phone") or None))
+        _add_detail(details, "visits.other_audience_email",      snap.get("other_audience_email"),      (st.session_state.get(f"{NS}_ota_email") or None))
 
     # ── Live preview ──────────────────────────────────────────────────────────
     st.markdown("---")
@@ -693,9 +761,9 @@ def _render_force_tab(admin_uid: int):
     else:
         rows_html = "".join(
             compare_row(
-                _fmt_field(d["field"]),
-                str(d.get("old_value") or "—"),
-                str(d.get("new_value") or "—"),
+                _fmt_field_label(d["field"]),
+                _resolve_field_display_value(d["field"], d.get("old_value")),
+                _resolve_field_display_value(d["field"], d.get("new_value")),
                 changed=True,
             )
             for d in details
@@ -745,6 +813,46 @@ def _render_force_tab(admin_uid: int):
             errors.append("Please select an objective.")
         if not eval_choice:
             errors.append("Please select an evaluation.")
+
+        # Lat / Lon / Accuracy validation (lat & lon are required)
+        _lat_s = lat_val.strip()
+        _lon_s = lon_val.strip()
+        _acc_s = acc_val.strip()
+        if not _lat_s:
+            errors.append("Latitude is required.")
+        else:
+            try:
+                _lat_f = float(_lat_s)
+                if not (-90 <= _lat_f <= 90):
+                    errors.append("Latitude must be between -90 and 90.")
+            except ValueError:
+                errors.append("Latitude must be a valid number.")
+        if not _lon_s:
+            errors.append("Longitude is required.")
+        else:
+            try:
+                _lon_f = float(_lon_s)
+                if not (-180 <= _lon_f <= 180):
+                    errors.append("Longitude must be between -180 and 180.")
+            except ValueError:
+                errors.append("Longitude must be a valid number.")
+        if _acc_s:
+            try:
+                _acc_f = float(_acc_s)
+                if _acc_f < 0:
+                    errors.append("Accuracy must be a non-negative number.")
+            except ValueError:
+                errors.append("Accuracy must be a valid number.")
+
+        # Other audience validation
+        if is_other_aud:
+            if not (st.session_state.get(f"{NS}_ota_name") or "").strip():
+                errors.append("For Other Audience, Name is required.")
+            if not (st.session_state.get(f"{NS}_ota_dept") or "").strip():
+                errors.append("For Other Audience, Department is required.")
+            if not (st.session_state.get(f"{NS}_ota_pos") or "").strip():
+                errors.append("For Other Audience, Position is required.")
+
         for err in errors:
             st.error(err)
         if not errors:
@@ -899,13 +1007,14 @@ _STATUS_LABEL = {
     "REJECTED":  "Rejected",
     "IN_REVIEW": "In Review",
     "WITHDRAWN": "Withdrawn",
+    "DELETED":   "Deleted",
 }
 
 
 def _visit_status_summary(visit_rows: pd.DataFrame) -> str:
     counts = visit_rows["status"].value_counts()
     parts = []
-    for status in ["IN_REVIEW", "APPROVED", "REJECTED", "WITHDRAWN"]:
+    for status in ["IN_REVIEW", "APPROVED", "REJECTED", "WITHDRAWN", "DELETED"]:
         n = counts.get(status, 0)
         if n:
             label = _STATUS_LABEL.get(status, status)
@@ -940,6 +1049,7 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
         "REJECTED":  "danger",
         "IN_REVIEW": "warning",
         "WITHDRAWN": "neutral",
+        "DELETED":   "danger",
     }
 
     total = len(group)
@@ -954,8 +1064,8 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
 
         # ── Request header ────────────────────────────────────────────────────
         change_source = str(row.get("change_source", "")).upper()
-        is_force  = change_source == "FORCE"
-        is_delete = change_source == "DELETE"
+        is_delete = status_val == "DELETED"
+        is_force  = change_source == "FORCE" and not is_delete
         badge = status_badge(status_val, _BADGE_VARIANT.get(status_val, "neutral"))
         if is_delete:
             source_badge = (
@@ -1009,16 +1119,21 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
                 st.caption("No field details recorded.")
 
         # ── Resolution line ───────────────────────────────────────────────────
-        if status_val == "APPROVED":
+        if status_val == "DELETED":
             applied_str = (
                 pd.to_datetime(row.get("applied_at"), errors="coerce").strftime("%d %b %Y, %H:%M")
                 if pd.notna(row.get("applied_at")) else "—"
             )
             resolver = str(row.get("resolved_by") or "—")
-            if is_delete:
-                st.error(f"Deleted by {resolver} on {applied_str}")
-            else:
-                st.success(f"Approved by {resolver} on {applied_str}")
+            st.error(f"Deleted by {resolver} on {applied_str}")
+
+        elif status_val == "APPROVED":
+            applied_str = (
+                pd.to_datetime(row.get("applied_at"), errors="coerce").strftime("%d %b %Y, %H:%M")
+                if pd.notna(row.get("applied_at")) else "—"
+            )
+            resolver = str(row.get("resolved_by") or "—")
+            st.success(f"Approved by {resolver} on {applied_str}")
 
         elif status_val == "REJECTED":
             reject_note = str(row.get("reject_note") or "").strip()

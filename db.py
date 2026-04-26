@@ -50,8 +50,12 @@ def _run_migrations() -> None:
     # ALTER TYPE ADD VALUE cannot run inside a normal transaction on PG < 12.
     # Use AUTOCOMMIT isolation to avoid that restriction.
     with engine.execution_options(isolation_level="AUTOCOMMIT").connect() as conn:
+        # Keep legacy value so existing rows remain valid during backfill below.
         conn.execute(text(
             "ALTER TYPE public.asc_change_source ADD VALUE IF NOT EXISTS 'DELETE'"
+        ))
+        conn.execute(text(
+            "ALTER TYPE public.asc_request_status ADD VALUE IF NOT EXISTS 'DELETED'"
         ))
 
     with engine.begin() as conn:
@@ -70,6 +74,13 @@ def _run_migrations() -> None:
                         ADD COLUMN deleted_by INTEGER REFERENCES users(user_id);
                 END IF;
             END $$;
+        """))
+        # Backfill: old DELETE-source records become FORCE source + DELETED status.
+        conn.execute(text("""
+            UPDATE request_changes
+            SET change_source = 'FORCE',
+                status        = 'DELETED'
+            WHERE change_source = 'DELETE'
         """))
 
 

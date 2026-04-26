@@ -210,6 +210,30 @@ def _infer_bu_cat_bl(bl_id: int) -> dict:
     }
 
 
+def _load_other_dept_options() -> list[str]:
+    df = query_df(
+        """
+        SELECT DISTINCT department FROM target_audiences
+        WHERE COALESCE(is_active, TRUE) IS TRUE
+          AND department IS NOT NULL AND trim(department) <> ''
+        ORDER BY department
+        """
+    )
+    return [""] + (df["department"].astype(str).tolist() if not df.empty else [])
+
+
+def _load_other_position_options() -> list[str]:
+    df = query_df(
+        """
+        SELECT DISTINCT position FROM target_audiences
+        WHERE COALESCE(is_active, TRUE) IS TRUE
+          AND position IS NOT NULL AND trim(position) <> ''
+        ORDER BY position
+        """
+    )
+    return [""] + (df["position"].astype(str).tolist() if not df.empty else [])
+
+
 def _objective_id_from_name(obj_name: str):
     obj_name = _norm(obj_name)
     if not obj_name:
@@ -219,3 +243,104 @@ def _objective_id_from_name(obj_name: str):
         {"n": obj_name},
     )
     return int(df.iloc[0]["objective_id"]) if not df.empty else None
+
+
+# ── Display helpers ────────────────────────────────────────────────────────────
+
+_FIELD_LABELS = {
+    "visits.customer_id":               "Customer",
+    "visits.audience_id":               "Target Audience",
+    "visits.business_line_id":          "Business Line",
+    "visits.product_id":                "Product",
+    "visits.objective_id":              "Objective",
+    "visits.notes":                     "Notes",
+    "visits.evaluation":                "Evaluation",
+    "visits.other_audience_title":      "Audience Title",
+    "visits.other_audience_name":       "Audience Name",
+    "visits.other_audience_department": "Audience Department",
+    "visits.other_audience_position":   "Audience Position",
+    "visits.other_audience_phone":      "Audience Phone",
+    "visits.other_audience_email":      "Audience Email",
+    "home_visits.patient_name":         "Patient Name",
+    "home_visits.patient_phone":        "Patient Phone",
+    "home_visits.serial_no":            "Device Serial #",
+    "_display.category":                "Product Category",
+    "_display.business_unit":           "Business Unit",
+}
+
+
+def _fmt_field_label(field: str) -> str:
+    return _FIELD_LABELS.get(field, field.split(".")[-1].replace("_", " ").title())
+
+
+def _product_label_for_id(product_id) -> str:
+    if not product_id:
+        return ""
+    pid = str(product_id).strip()
+    if not pid:
+        return ""
+    df = query_df(
+        "SELECT article_number, description FROM items WHERE product_id = :pid LIMIT 1",
+        {"pid": pid},
+    )
+    if df.empty:
+        return pid
+    r = df.iloc[0]
+    art = r["article_number"] if pd.notna(r["article_number"]) else pid
+    desc = str(r["description"]).strip() if pd.notna(r["description"]) else ""
+    return f"{art} — {desc}" if desc else str(art)
+
+
+def _objective_name_for_id_safe(objective_id) -> str:
+    if not objective_id:
+        return ""
+    try:
+        oid = int(str(objective_id).strip())
+    except (ValueError, TypeError):
+        return str(objective_id)
+    df = query_df(
+        "SELECT name FROM objectives WHERE objective_id = :oid LIMIT 1",
+        {"oid": oid},
+    )
+    return str(df.iloc[0]["name"]) if not df.empty else str(objective_id)
+
+
+def _resolve_field_display_value(field: str, raw_value) -> str:
+    """Convert a stored raw ID/value to a human-readable string for diff tables."""
+    if raw_value is None:
+        return "—"
+    try:
+        if pd.isna(raw_value):
+            return "—"
+    except Exception:
+        pass
+    val = str(raw_value).strip()
+    if not val:
+        return "—"
+
+    if field == "visits.customer_id":
+        try:
+            df = query_df(
+                "SELECT account_name FROM customers WHERE customer_id = :cid LIMIT 1",
+                {"cid": int(val)},
+            )
+            return str(df.iloc[0]["account_name"]) if not df.empty else val
+        except Exception:
+            return val
+    elif field == "visits.audience_id":
+        try:
+            label = _audience_label_for_id(int(val))
+            return label or val
+        except Exception:
+            return val
+    elif field == "visits.business_line_id":
+        try:
+            info = _infer_bu_cat_bl(int(val))
+            return info.get("bl_name") or val
+        except Exception:
+            return val
+    elif field == "visits.product_id":
+        return _product_label_for_id(val) or val
+    elif field == "visits.objective_id":
+        return _objective_name_for_id_safe(val)
+    return val

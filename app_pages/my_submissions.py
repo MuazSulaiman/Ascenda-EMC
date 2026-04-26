@@ -107,8 +107,8 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         LEFT JOIN home_visits hv      ON hv.visit_id = v.visit_id
         LEFT JOIN request_changes del_rc
                ON del_rc.visit_id = v.visit_id
-              AND del_rc.change_source = 'DELETE'
-              AND del_rc.status = 'APPROVED'
+              AND del_rc.change_source = 'FORCE'
+              AND del_rc.status = 'DELETED'
         WHERE v.visit_id = :vid AND v.user_id = :uid
     """
     df = query_df(sql, {"vid": visit_id, "uid": uid})
@@ -325,8 +325,8 @@ def page_my_submissions():
         LEFT JOIN home_visits hv      ON hv.visit_id = v.visit_id
         LEFT JOIN request_changes del_rc
                ON del_rc.visit_id = v.visit_id
-              AND del_rc.change_source = 'DELETE'
-              AND del_rc.status = 'APPROVED'
+              AND del_rc.change_source = 'FORCE'
+              AND del_rc.status = 'DELETED'
         WHERE v.user_id = :uid
         ORDER BY v.visit_id DESC
     """
@@ -442,33 +442,58 @@ def page_my_submissions():
     )
 
     # ── Build card HTML ───────────────────────────────────────────────────────
+    _nav_sid   = st.session_state.get("_stored_sid", "")
     cards_html = ""
     for _, row in page_df.iterrows():
         raw_id = int(row["visit_id"])
         vid    = f"V-{raw_id}"
-        href   = f"?page=My+Visits&visit_id={raw_id}"
+        href   = (
+            f"?page=My+Visits&visit_id={raw_id}&_sid={_nav_sid}"
+            if _nav_sid else f"?page=My+Visits&visit_id={raw_id}"
+        )
 
         if row.get("is_deleted"):
             deletion_note = str(row.get("deletion_note") or "No reason provided.")
             try:
                 dt = pd.to_datetime(row.get("submitted_at_local"), errors="coerce")
-                date_str = dt.strftime("%d %b %Y") if dt and not pd.isnull(dt) else "—"
+                day   = str(dt.day)               if dt is not None and not pd.isnull(dt) else "—"
+                month = dt.strftime("%b").upper()  if dt is not None and not pd.isnull(dt) else "—"
+                year  = str(dt.year)               if dt is not None and not pd.isnull(dt) else ""
             except Exception:
-                date_str = "—"
+                day, month, year = "—", "—", ""
+            customer_name = html.escape(str(row.get("customer") or "—"))
+            deleted_badge = (
+                '<span style="font-size:0.72rem;font-weight:600;color:#991b1b;background:#fee2e2;'
+                'border:1px solid #fca5a5;border-radius:4px;padding:2px 7px;">🗑️ Deleted</span>'
+            )
             cards_html += (
-                '<div style="background:#fff5f5;border:1px solid #fca5a5;border-radius:12px;'
-                'padding:1rem 1.25rem;margin-bottom:0.75rem;">'
-                '<div style="display:flex;justify-content:space-between;align-items:center;'
-                'margin-bottom:0.5rem;">'
-                f'<span style="font-weight:600;font-size:0.95rem;color:#991b1b;">{html.escape(vid)}</span>'
-                '<span style="font-size:0.75rem;font-weight:600;color:#991b1b;background:#fee2e2;'
-                'border:1px solid #fca5a5;border-radius:4px;padding:1px 7px;">🗑️ Deleted</span>'
-                '</div>'
-                f'<div style="font-size:0.85rem;color:#57606a;margin-bottom:0.25rem;">'
-                f'{html.escape(str(row.get("customer") or "—"))} · {date_str}</div>'
-                f'<div style="font-size:0.8rem;color:#991b1b;font-style:italic;">'
+                f'<a href="{href}" target="_self" style="text-decoration:none;color:inherit;display:block;">'
+                f'<div class="ascenda-visit-card" style="background:#fff5f5;border:1px solid #fca5a5;'
+                f'border-radius:12px;padding:0.875rem 1rem;margin-bottom:0.5rem;display:flex;'
+                f'align-items:center;gap:0.875rem;cursor:pointer;'
+                f'transition:box-shadow 0.15s ease,border-color 0.15s ease;">'
+                f'<div style="min-width:44px;width:44px;background:#fee2e2;border-radius:8px;'
+                f'text-align:center;padding:0.5rem 0.25rem;flex-shrink:0;">'
+                f'<div style="font-size:1.125rem;font-weight:700;color:#991b1b;line-height:1;">{day}</div>'
+                f'<div style="font-size:0.7rem;font-weight:600;color:#b91c1c;text-transform:uppercase;'
+                f'margin-top:2px;letter-spacing:0.04em;">{month}</div>'
+                f'<div style="font-size:0.65rem;color:#fca5a5;margin-top:1px;letter-spacing:0.02em;">{year}</div>'
+                f'</div>'
+                f'<div style="flex:1;min-width:0;">'
+                f'<div style="font-size:0.9375rem;font-weight:600;color:#0d1117;'
+                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{customer_name}</div>'
+                f'<div style="font-size:0.8rem;color:#991b1b;margin-top:2px;font-style:italic;'
+                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
                 f'Reason: {html.escape(deletion_note)}</div>'
-                '</div>'
+                f'<div style="font-size:0.75rem;color:#8b949e;margin-top:4px;">{vid}</div>'
+                f'</div>'
+                f'<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">'
+                f'{deleted_badge}'
+                f'<svg width="16" height="16" fill="none" stroke="#fca5a5" stroke-width="2.5" '
+                f'viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>'
+                f'</div>'
+                f'</div>'
+                f'</a>'
             )
         else:
             eval_val = row.get("evaluation") or ""

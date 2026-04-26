@@ -111,7 +111,7 @@ BEGIN
         JOIN pg_namespace n ON n.oid = t.typnamespace
         WHERE t.typname = 'asc_change_source' AND n.nspname = 'public'
     ) THEN
-        CREATE TYPE public.asc_change_source AS ENUM ('REQUEST', 'FORCE', 'DELETE');
+        CREATE TYPE public.asc_change_source AS ENUM ('REQUEST', 'FORCE');
     END IF;
 END $$;
 
@@ -127,7 +127,8 @@ BEGIN
             'APPROVED',
             'REJECTED',
             'CANCELLED',
-            'WITHDRAWN'
+            'WITHDRAWN',
+            'DELETED'
         );
     END IF;
 END $$;
