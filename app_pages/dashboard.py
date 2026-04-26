@@ -119,7 +119,7 @@ def page_dashboard():
 
     # Period total
     period_total = _safe_count(
-        f"SELECT COUNT(*) FROM visits v WHERE v.user_id = :uid {period_filter}",
+        f"SELECT COUNT(*) FROM visits v WHERE v.user_id = :uid AND COALESCE(v.is_deleted, FALSE) IS FALSE {period_filter}",
         {"uid": uid},
     )
 
@@ -133,14 +133,14 @@ def page_dashboard():
     # Distinct customers visited in period
     customers_visited = _safe_count(
         f"SELECT COUNT(DISTINCT v.customer_id) FROM visits v "
-        f"WHERE v.user_id = :uid {period_filter}",
+        f"WHERE v.user_id = :uid AND COALESCE(v.is_deleted, FALSE) IS FALSE {period_filter}",
         {"uid": uid},
     )
 
     # Evaluation breakdown (positive rate)
     eval_df = query_df(
         f"SELECT evaluation, COUNT(*) AS cnt FROM visits v "
-        f"WHERE v.user_id = :uid {period_filter} "
+        f"WHERE v.user_id = :uid AND COALESCE(v.is_deleted, FALSE) IS FALSE {period_filter} "
         f"GROUP BY evaluation",
         {"uid": uid},
     ) if period_total > 0 else None
@@ -219,13 +219,13 @@ def _render_admin_dashboard() -> None:
     st.markdown("#### Field Activity")
 
     total_visits = _safe_count(
-        f"SELECT COUNT(*) FROM visits v WHERE 1=1 {period_filter}"
+        f"SELECT COUNT(*) FROM visits v WHERE COALESCE(v.is_deleted, FALSE) IS FALSE {period_filter}"
     )
     unique_customers = _safe_count(
-        f"SELECT COUNT(DISTINCT v.customer_id) FROM visits v WHERE 1=1 {period_filter}"
+        f"SELECT COUNT(DISTINCT v.customer_id) FROM visits v WHERE COALESCE(v.is_deleted, FALSE) IS FALSE {period_filter}"
     )
     active_reps = _safe_count(
-        f"SELECT COUNT(DISTINCT v.user_id) FROM visits v WHERE 1=1 {period_filter}"
+        f"SELECT COUNT(DISTINCT v.user_id) FROM visits v WHERE COALESCE(v.is_deleted, FALSE) IS FALSE {period_filter}"
     )
 
     col1, col2, col3 = st.columns(3)
@@ -288,10 +288,11 @@ def _render_admin_pending_reviews() -> None:
           AND customer_id <> 807
           AND other_audience_name IS NOT NULL
           AND trim(other_audience_name) <> ''
+          AND COALESCE(is_deleted, FALSE) IS FALSE
         """
     )
     oc_count = _safe_count(
-        "SELECT COUNT(*) FROM visits WHERE customer_id = 807"
+        "SELECT COUNT(*) FROM visits WHERE customer_id = 807 AND COALESCE(is_deleted, FALSE) IS FALSE"
     )
 
     total_pending = cr_count + ta_count + oc_count
@@ -352,6 +353,7 @@ def _render_admin_pending_reviews() -> None:
               AND v.customer_id <> 807
               AND v.other_audience_name IS NOT NULL
               AND trim(v.other_audience_name) <> ''
+              AND COALESCE(v.is_deleted, FALSE) IS FALSE
 
             UNION ALL
 
@@ -364,6 +366,7 @@ def _render_admin_pending_reviews() -> None:
             FROM visits v
             JOIN users u ON u.user_id = v.user_id
             WHERE v.customer_id = 807
+              AND COALESCE(v.is_deleted, FALSE) IS FALSE
 
             ORDER BY submitted_at ASC
             """
