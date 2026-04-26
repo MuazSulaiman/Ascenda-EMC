@@ -950,17 +950,28 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
         )
 
         # ── Request header ────────────────────────────────────────────────────
-        is_force = str(row.get("change_source", "")).upper() == "FORCE"
+        change_source = str(row.get("change_source", "")).upper()
+        is_force  = change_source == "FORCE"
+        is_delete = change_source == "DELETE"
         badge = status_badge(status_val, _BADGE_VARIANT.get(status_val, "neutral"))
-        source_badge = (
-            '<span style="font-size:0.75rem;font-weight:600;color:#b45309;'
-            'background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;'
-            'padding:1px 7px;">⚡ Force</span>'
-            if is_force else
-            '<span style="font-size:0.75rem;font-weight:600;color:#1d4ed8;'
-            'background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;'
-            'padding:1px 7px;">👤 Rep</span>'
-        )
+        if is_delete:
+            source_badge = (
+                '<span style="font-size:0.75rem;font-weight:600;color:#991b1b;'
+                'background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;'
+                'padding:1px 7px;">🗑️ Deleted</span>'
+            )
+        elif is_force:
+            source_badge = (
+                '<span style="font-size:0.75rem;font-weight:600;color:#b45309;'
+                'background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;'
+                'padding:1px 7px;">⚡ Force</span>'
+            )
+        else:
+            source_badge = (
+                '<span style="font-size:0.75rem;font-weight:600;color:#1d4ed8;'
+                'background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;'
+                'padding:1px 7px;">👤 Rep</span>'
+            )
         st.markdown(
             f'<div style="display:flex;align-items:center;gap:10px;'
             f'margin-bottom:6px;">'
@@ -982,17 +993,17 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
                 unsafe_allow_html=True,
             )
 
-        # ── Diff table ────────────────────────────────────────────────────────
-        diff_df = _load_diff(request_id)
-        if not diff_df.empty:
-            is_force = str(row.get("change_source", "")).upper() == "FORCE"
-            _render_diff_table(
-                diff_df,
-                before_label="Before" if is_force else "Original",
-                after_label="After" if is_force else "Requested",
-            )
-        else:
-            st.caption("No field details recorded.")
+        # ── Diff table (skip for DELETE — no field changes) ───────────────────
+        if not is_delete:
+            diff_df = _load_diff(request_id)
+            if not diff_df.empty:
+                _render_diff_table(
+                    diff_df,
+                    before_label="Before" if is_force else "Original",
+                    after_label="After" if is_force else "Requested",
+                )
+            else:
+                st.caption("No field details recorded.")
 
         # ── Resolution line ───────────────────────────────────────────────────
         if status_val == "APPROVED":
@@ -1001,7 +1012,10 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
                 if pd.notna(row.get("applied_at")) else "—"
             )
             resolver = str(row.get("resolved_by") or "—")
-            st.success(f"Approved by {resolver} on {applied_str}")
+            if is_delete:
+                st.error(f"Deleted by {resolver} on {applied_str}")
+            else:
+                st.success(f"Approved by {resolver} on {applied_str}")
 
         elif status_val == "REJECTED":
             reject_note = str(row.get("reject_note") or "").strip()
