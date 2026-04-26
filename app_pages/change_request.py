@@ -158,6 +158,7 @@ def _load_user_visits(user_id: int) -> list[dict]:
         FROM visits v
         JOIN customers c ON c.customer_id = v.customer_id
         WHERE v.user_id = :uid
+          AND COALESCE(v.is_deleted, FALSE) IS FALSE
         ORDER BY v.submitted_at_utc DESC
         LIMIT 300
         """,
