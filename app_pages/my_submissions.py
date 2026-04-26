@@ -94,7 +94,9 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
                 FROM shelf_movement_lines l
                 JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
                 WHERE h.visit_id = v.visit_id
-            ), 0) AS shelf_lines_count
+            ), 0) AS shelf_lines_count,
+            v.is_deleted,
+            del_rc.request_note AS deletion_note
         FROM visits v
         JOIN customers c              ON v.customer_id = c.customer_id
         LEFT JOIN target_audiences ta ON v.audience_id = ta.audience_id
@@ -103,6 +105,10 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         LEFT JOIN business_units bu   ON bu.business_unit_id = bl.business_unit_id
         JOIN objectives o             ON v.objective_id = o.objective_id
         LEFT JOIN home_visits hv      ON hv.visit_id = v.visit_id
+        LEFT JOIN request_changes del_rc
+               ON del_rc.visit_id = v.visit_id
+              AND del_rc.change_source = 'DELETE'
+              AND del_rc.status = 'APPROVED'
         WHERE v.visit_id = :vid AND v.user_id = :uid
     """
     df = query_df(sql, {"vid": visit_id, "uid": uid})
@@ -116,6 +122,10 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
     # ── Header ────────────────────────────────────────────────────────────────
     customer_display = row.get("other_customer_name") or row.get("customer") or "—"
     section_header(f"V-{visit_id}", customer_display)
+
+    if row.get("is_deleted"):
+        deletion_note = str(row.get("deletion_note") or "No reason provided.")
+        st.error(f"🗑️ **This visit has been deleted.** Reason: {deletion_note}")
 
     # ── Evaluation badge ──────────────────────────────────────────────────────
     eval_val = (row.get("evaluation") or "").strip()
@@ -307,7 +317,9 @@ def page_my_submissions():
                 FROM shelf_movement_lines l
                 JOIN shelf_movement_headers h ON h.movement_id = l.movement_id
                 WHERE h.visit_id = v.visit_id
-            ), 0) AS shelf_total_qty
+            ), 0) AS shelf_total_qty,
+            v.is_deleted,
+            del_rc.request_note AS deletion_note
         FROM visits v
         JOIN customers c              ON v.customer_id = c.customer_id
         LEFT JOIN target_audiences ta ON v.audience_id = ta.audience_id
@@ -316,6 +328,10 @@ def page_my_submissions():
         LEFT JOIN business_units bu   ON bu.business_unit_id = bl.business_unit_id
         JOIN objectives o             ON v.objective_id = o.objective_id
         LEFT JOIN home_visits hv      ON hv.visit_id = v.visit_id
+        LEFT JOIN request_changes del_rc
+               ON del_rc.visit_id = v.visit_id
+              AND del_rc.change_source = 'DELETE'
+              AND del_rc.status = 'APPROVED'
         WHERE v.user_id = :uid
         ORDER BY v.visit_id DESC
     """
@@ -338,6 +354,7 @@ def page_my_submissions():
 
     # ── Normalise evaluation ──────────────────────────────────────────────────
     df["evaluation"] = df["evaluation"].fillna("").str.strip()
+    df["is_deleted"] = df["is_deleted"].fillna(False).astype(bool)
 
     # ── Date filter ───────────────────────────────────────────────────────────
     df["_date"] = pd.to_datetime(df["submitted_at_local"], errors="coerce").dt.date
@@ -355,12 +372,16 @@ def page_my_submissions():
     if date_to:
         df = df[df["_date"] <= date_to]
 
-    # ── Count by status for filter tabs ──────────────────────────────────────
-    cnt_total   = len(df)
-    cnt_pos     = (df["evaluation"] == "Positive").sum()
-    cnt_neg     = (df["evaluation"] == "Negative").sum()
-    cnt_neutral = (df["evaluation"] == "Neutral").sum()
-    cnt_unrated = ((df["evaluation"] == "") | df["evaluation"].isna()).sum()
+    # ── Split active vs deleted, count for filter tabs ────────────────────────
+    df_active  = df[~df["is_deleted"]]
+    df_deleted = df[df["is_deleted"]]
+
+    cnt_total   = len(df_active)
+    cnt_pos     = (df_active["evaluation"] == "Positive").sum()
+    cnt_neg     = (df_active["evaluation"] == "Negative").sum()
+    cnt_neutral = (df_active["evaluation"] == "Neutral").sum()
+    cnt_unrated = ((df_active["evaluation"] == "") | df_active["evaluation"].isna()).sum()
+    cnt_deleted = len(df_deleted)
 
     filter_labels = [
         f"All  {cnt_total}",
@@ -368,6 +389,7 @@ def page_my_submissions():
         f"Negative  {cnt_neg}",
         f"Neutral  {cnt_neutral}",
         f"Unrated  {cnt_unrated}",
+        f"Deleted  {cnt_deleted}",
     ]
 
     active_filter = st.radio(
@@ -381,11 +403,13 @@ def page_my_submissions():
     # ── Apply filter ──────────────────────────────────────────────────────────
     chosen = active_filter.split("  ")[0].strip() if "  " in active_filter else active_filter.strip()
     if chosen == "All":
-        visible = df
+        visible = df_active
     elif chosen == "Unrated":
-        visible = df[df["evaluation"].isin(["", None]) | df["evaluation"].isna()]
+        visible = df_active[df_active["evaluation"].isin(["", None]) | df_active["evaluation"].isna()]
+    elif chosen == "Deleted":
+        visible = df_deleted
     else:
-        visible = df[df["evaluation"] == chosen]
+        visible = df_active[df_active["evaluation"] == chosen]
 
     # ── Apply search ──────────────────────────────────────────────────────────
     if search_q:
@@ -425,29 +449,52 @@ def page_my_submissions():
     # ── Build card HTML ───────────────────────────────────────────────────────
     cards_html = ""
     for _, row in page_df.iterrows():
-        eval_val = row.get("evaluation") or ""
-        variant  = _EVAL_VARIANT.get(eval_val, "neutral")
-        label    = _EVAL_LABEL.get(eval_val, "Unrated")
-
-        audience_name = row.get("audience") or ""
-        audience_dept = row.get("audience_department") or ""
-        audience_pos  = row.get("audience_position") or ""
-        subtitle_parts = [p for p in [audience_name, audience_dept, audience_pos] if p]
-        subtitle = " · ".join(subtitle_parts)
-
         raw_id = int(row["visit_id"])
         vid    = f"V-{raw_id}"
         href   = f"?page=My+Visits&visit_id={raw_id}"
 
-        cards_html += visit_card(
-            visit_id=vid,
-            date_obj=row.get("submitted_at_local"),
-            customer=row.get("customer") or "—",
-            subtitle=subtitle,
-            status=label,
-            status_variant=variant,
-            href=href,
-        )
+        if row.get("is_deleted"):
+            deletion_note = str(row.get("deletion_note") or "No reason provided.")
+            try:
+                dt = pd.to_datetime(row.get("submitted_at_local"), errors="coerce")
+                date_str = dt.strftime("%d %b %Y") if dt and not pd.isnull(dt) else "—"
+            except Exception:
+                date_str = "—"
+            cards_html += (
+                '<div style="background:#fff5f5;border:1px solid #fca5a5;border-radius:12px;'
+                'padding:1rem 1.25rem;margin-bottom:0.75rem;">'
+                '<div style="display:flex;justify-content:space-between;align-items:center;'
+                'margin-bottom:0.5rem;">'
+                f'<span style="font-weight:600;font-size:0.95rem;color:#991b1b;">{html.escape(vid)}</span>'
+                '<span style="font-size:0.75rem;font-weight:600;color:#991b1b;background:#fee2e2;'
+                'border:1px solid #fca5a5;border-radius:4px;padding:1px 7px;">🗑️ Deleted</span>'
+                '</div>'
+                f'<div style="font-size:0.85rem;color:#57606a;margin-bottom:0.25rem;">'
+                f'{html.escape(str(row.get("customer") or "—"))} · {date_str}</div>'
+                f'<div style="font-size:0.8rem;color:#991b1b;font-style:italic;">'
+                f'Reason: {html.escape(deletion_note)}</div>'
+                '</div>'
+            )
+        else:
+            eval_val = row.get("evaluation") or ""
+            variant  = _EVAL_VARIANT.get(eval_val, "neutral")
+            label    = _EVAL_LABEL.get(eval_val, "Unrated")
+
+            audience_name = row.get("audience") or ""
+            audience_dept = row.get("audience_department") or ""
+            audience_pos  = row.get("audience_position") or ""
+            subtitle_parts = [p for p in [audience_name, audience_dept, audience_pos] if p]
+            subtitle = " · ".join(subtitle_parts)
+
+            cards_html += visit_card(
+                visit_id=vid,
+                date_obj=row.get("submitted_at_local"),
+                customer=row.get("customer") or "—",
+                subtitle=subtitle,
+                status=label,
+                status_variant=variant,
+                href=href,
+            )
 
     if cards_html:
         st.markdown(cards_html, unsafe_allow_html=True)
@@ -476,7 +523,7 @@ def page_my_submissions():
 
     # ── Download CSV (collapsed) ──────────────────────────────────────────────
     with st.expander("Export data"):
-        df_export = df.copy()
+        df_export = df_active.copy()
         if "submitted_at_local" in df_export.columns:
             df_export["submitted_at_local"] = (
                 pd.to_datetime(df_export["submitted_at_local"], errors="coerce")
