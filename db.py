@@ -40,3 +40,38 @@ def get_database_url() -> str:
 
 # Global engine
 engine = create_engine(get_database_url(), pool_pre_ping=True, future=True)
+
+
+# Migrations
+from sqlalchemy import text
+
+
+def _run_migrations() -> None:
+    """Idempotent schema migrations. Safe to re-run on every startup."""
+    # ALTER TYPE ADD VALUE cannot run inside a normal transaction on PG < 12.
+    # Use AUTOCOMMIT isolation to avoid that restriction.
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text(
+            "ALTER TYPE public.asc_change_source ADD VALUE IF NOT EXISTS 'DELETE'"
+        ))
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name   = 'visits'
+                      AND column_name  = 'is_deleted'
+                ) THEN
+                    ALTER TABLE visits
+                        ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                        ADD COLUMN deleted_at TIMESTAMPTZ,
+                        ADD COLUMN deleted_by INTEGER REFERENCES users(user_id);
+                END IF;
+            END $$;
+        """))
+
+
+_run_migrations()

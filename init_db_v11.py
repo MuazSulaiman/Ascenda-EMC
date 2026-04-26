@@ -111,7 +111,7 @@ BEGIN
         JOIN pg_namespace n ON n.oid = t.typnamespace
         WHERE t.typname = 'asc_change_source' AND n.nspname = 'public'
     ) THEN
-        CREATE TYPE public.asc_change_source AS ENUM ('REQUEST', 'FORCE');
+        CREATE TYPE public.asc_change_source AS ENUM ('REQUEST', 'FORCE', 'DELETE');
     END IF;
 END $$;
 
@@ -303,7 +303,10 @@ CREATE TABLE IF NOT EXISTS visits (
     other_audience_title TEXT,
     other_audience_phone TEXT,
     other_audience_email TEXT,
-    other_customer_name TEXT
+    other_customer_name TEXT,
+    is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at  TIMESTAMPTZ,
+    deleted_by  INTEGER REFERENCES users(user_id)
 );
 
 CREATE TABLE IF NOT EXISTS home_visits (
