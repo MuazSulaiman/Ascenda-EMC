@@ -156,7 +156,7 @@ def login_block():
     # Override: light blue-tinted page bg for login, strip main block card style
     st.markdown("""
     <style>
-    [data-testid="stAppViewContainer"] { background: #f6f8fa !important; }
+    [data-testid="stAppViewContainer"] { background: var(--color-surface-2) !important; }
     [data-testid="stAppViewContainer"] .block-container {
         background: transparent !important;
         box-shadow: none !important;
@@ -277,15 +277,15 @@ def sidebar_nav():
         """
         <style>
         section[data-testid="stSidebar"] {
-            background: #ffffff !important;
-            border-right: 1px solid #e4e8ec !important;
+            background: var(--color-surface) !important;
+            border-right: 1px solid var(--color-border) !important;
         }
         section[data-testid="stSidebar"] > div:first-child { padding-top: 0.5rem !important; }
 
         .ascenda-logo-wrap {
             display: flex; justify-content: center; align-items: center;
             padding: 1rem 1rem 1rem !important;
-            border-bottom: 1px solid #f0f2f5 !important;
+            border-bottom: 1px solid var(--color-border) !important;
             margin-bottom: 0.5rem !important;
         }
 
@@ -298,7 +298,7 @@ def sidebar_nav():
         .nav-section-label {
             display: block; padding: 0.65rem 12px 0.2rem;
             font-size: 0.68rem !important; font-weight: 700 !important;
-            color: #8b949e !important; text-transform: uppercase !important;
+            color: var(--color-text-subtle) !important; text-transform: uppercase !important;
             letter-spacing: 0.09em !important; user-select: none !important;
         }
         .nav-section-label:first-child { padding-top: 0.1rem !important; }
@@ -312,21 +312,21 @@ def sidebar_nav():
             width: 100% !important; padding: 9px 12px !important; min-height: 44px !important;
             border-radius: 10px !important; cursor: pointer !important;
             font-size: 0.875rem !important; font-weight: 500 !important;
-            color: #57606a !important; text-decoration: none !important;
+            color: var(--color-text-muted) !important; text-decoration: none !important;
             box-sizing: border-box !important;
             border-left: 3px solid transparent !important;
             transition: background 150ms ease-out, color 150ms ease-out !important;
             line-height: 1.3 !important;
         }
         a.nav-item:hover {
-            background: #f6f8fa !important; color: #0d1117 !important;
+            background: var(--color-surface-2) !important; color: var(--color-text) !important;
             text-decoration: none !important;
         }
         a.nav-item:focus-visible {
-            outline: 2px solid #2563EB !important; outline-offset: -2px !important;
+            outline: 2px solid var(--color-primary) !important; outline-offset: -2px !important;
         }
         a.nav-item.active {
-            background: #EEF2FF !important; color: #2563EB !important;
+            background: var(--color-primary-subtle) !important; color: var(--color-primary) !important;
             font-weight: 600 !important; border-left: 3px solid transparent !important;
         }
         a.nav-item svg {
@@ -338,14 +338,14 @@ def sidebar_nav():
 
         /* ── User footer ─────────────────────────────────────────────────────── */
         .sidebar-user-footer {
-            border-top: 1px solid #e4e8ec; padding: 12px 14px 10px;
+            border-top: 1px solid var(--color-border); padding: 12px 14px 10px;
             display: flex; align-items: center; gap: 10px; margin-top: 0.75rem;
             cursor: pointer; transition: background 0.15s ease;
             border-radius: 0 0 8px 8px;
         }
-        .sidebar-user-footer:hover { background: #f6f8fa; }
+        .sidebar-user-footer:hover { background: var(--color-surface-2); }
         .sidebar-user-avatar {
-            width: 34px; height: 34px; border-radius: 50%; background: #2563EB;
+            width: 34px; height: 34px; border-radius: 50%; background: var(--color-primary);
             display: flex; align-items: center; justify-content: center;
             font-size: 0.8rem; font-weight: 700; color: #ffffff !important; flex-shrink: 0;
         }
@@ -353,18 +353,18 @@ def sidebar_nav():
             color: #ffffff !important;
         }
         .sidebar-user-name {
-            font-size: 0.875rem; font-weight: 600; color: #0d1117;
+            font-size: 0.875rem; font-weight: 600; color: var(--color-text);
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;
         }
         .sidebar-user-meta {
-            font-size: 0.72rem; color: #8b949e;
+            font-size: 0.72rem; color: var(--color-text-subtle);
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;
         }
 
         /* ── Sign out button ─────────────────────────────────────────────────── */
         section[data-testid="stSidebar"] .stButton > button {
             background: transparent !important; border: none !important;
-            color: #c83333 !important; font-size: 0.8rem !important;
+            color: var(--status-danger-text) !important; font-size: 0.8rem !important;
             font-weight: 500 !important; padding: 5px 14px !important;
             border-radius: 8px !important; text-align: left !important;
             cursor: pointer !important; width: 100% !important;
@@ -372,7 +372,7 @@ def sidebar_nav():
             transition: background 0.15s ease !important;
         }
         section[data-testid="stSidebar"] .stButton > button:hover {
-            background: #fdeceb !important;
+            background: var(--status-danger-bg) !important;
         }
         </style>
         """,
@@ -407,7 +407,7 @@ def sidebar_nav():
             f' style="width:150px;height:auto;" /></div>'
         )
     else:
-        _logo_html = '<div class="ascenda-logo-wrap"><strong style="font-size:1.1rem;color:#0d1117;">Ascenda</strong></div>'
+        _logo_html = '<div class="ascenda-logo-wrap"><strong style="font-size:1.1rem;color:var(--color-text);">Ascenda</strong></div>'
 
     # ── User & role ───────────────────────────────────────────────────────────
     user = st.session_state.get("user")
@@ -526,7 +526,7 @@ def sidebar_nav():
             f'<div class="sidebar-user-name">{_name}</div>'
             f'<div class="sidebar-user-meta">{_role} · {_region}</div>'
             f'</div>'
-            f'<svg width="14" height="14" fill="none" stroke="#c9d1d9" stroke-width="2.5" '
+            f'<svg width="14" height="14" fill="none" stroke="var(--color-border-strong)" stroke-width="2.5" '
             f'viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>'
             f'</div>'
             f'</a>',
@@ -559,12 +559,12 @@ def get_almadar_logo_base64() -> str:
 def status_badge(label: str, variant: str = "neutral") -> str:
     """Return inline HTML for a soft-color status badge."""
     palettes = {
-        "success": ("#e6f6ec", "#0e8a4f"),
-        "warning": ("#fdf2e4", "#b5651d"),
-        "danger":  ("#fdeceb", "#c83333"),
-        "info":    ("#e8f4fd", "#1565c0"),
-        "neutral": ("#f0f0f0", "#444444"),
-        "primary": ("#eef2ff", "#2667ff"),
+        "success": ("var(--status-success-bg)", "var(--status-success-text)"),
+        "warning": ("var(--status-warning-bg)", "var(--status-warning-text)"),
+        "danger":  ("var(--status-danger-bg)",  "var(--status-danger-text)"),
+        "info":    ("var(--status-info-bg)",    "var(--status-info-text)"),
+        "neutral": ("var(--status-neutral-bg)", "var(--status-neutral-text)"),
+        "primary": ("var(--color-primary-subtle)", "var(--color-primary)"),
     }
     bg, fg = palettes.get(variant, palettes["neutral"])
     return (
@@ -586,14 +586,14 @@ def required_legend() -> str:
 def section_header(title: str, subtitle: str = "") -> None:
     """Render an artifact-style page section header."""
     sub_html = (
-        f'<p style="margin:4px 0 0;font-size:0.875rem;color:#57606a;">{subtitle}</p>'
+        f'<p style="margin:4px 0 0;font-size:0.875rem;color:var(--color-text-muted);">{subtitle}</p>'
         if subtitle else ""
     )
     st.markdown(
         f"""
         <div style="margin-bottom:1.25rem;">
           <h2 style="margin:0;font-size:1.375rem;font-weight:700;
-                     color:#0d1117;letter-spacing:-0.01em;">{title}</h2>
+                     color:var(--color-text);letter-spacing:-0.01em;">{title}</h2>
           {sub_html}
         </div>
         """,
@@ -603,18 +603,18 @@ def section_header(title: str, subtitle: str = "") -> None:
 
 def kpi_card(label: str, value: str, delta: str = "", delta_positive: bool = True) -> str:
     """Return HTML string for a KPI card (pass to st.markdown)."""
-    delta_color = "#0e8a4f" if delta_positive else "#c83333"
+    delta_color = "var(--status-success-text)" if delta_positive else "var(--status-danger-text)"
     delta_html = (
         f'<div style="margin-top:4px;font-size:0.75rem;font-weight:600;color:{delta_color};">'
         f'{delta}</div>'
         if delta else ""
     )
     return (
-        f'<div style="background:#fff;border:1px solid #e4e8ec;border-radius:14px;'
+        f'<div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:14px;'
         f'padding:1rem 1.25rem;box-shadow:0 1px 2px rgba(15,23,42,0.04);">'
-        f'<div style="font-size:0.8rem;font-weight:500;color:#57606a;'
+        f'<div style="font-size:0.8rem;font-weight:500;color:var(--color-text-muted);'
         f'text-transform:uppercase;letter-spacing:0.04em;">{label}</div>'
-        f'<div style="font-size:1.75rem;font-weight:700;color:#0d1117;'
+        f'<div style="font-size:1.75rem;font-weight:700;color:var(--color-text);'
         f'line-height:1.2;margin-top:4px;">{value}</div>'
         f'{delta_html}</div>'
     )
@@ -622,16 +622,16 @@ def kpi_card(label: str, value: str, delta: str = "", delta_positive: bool = Tru
 
 def compare_row(field: str, original: str, requested: str, changed: bool = False) -> str:
     """Return an HTML <tr> for a compare-grid table."""
-    row_bg = "background:#fdf2e4;" if changed else ""
-    req_style = "font-weight:600;color:#b5651d;" if changed else ""
+    row_bg = "background:var(--status-warning-bg);" if changed else ""
+    req_style = "font-weight:600;color:var(--status-warning-text);" if changed else ""
     return (
         f'<tr style="{row_bg}">'
-        f'<td style="padding:8px 12px;font-size:0.875rem;font-weight:500;color:#57606a;'
-        f'white-space:nowrap;border-bottom:1px solid #e4e8ec;">{field}</td>'
-        f'<td style="padding:8px 12px;font-size:0.875rem;color:#0d1117;'
-        f'border-bottom:1px solid #e4e8ec;">{original}</td>'
+        f'<td style="padding:8px 12px;font-size:0.875rem;font-weight:500;color:var(--color-text-muted);'
+        f'white-space:nowrap;border-bottom:1px solid var(--color-border);">{field}</td>'
+        f'<td style="padding:8px 12px;font-size:0.875rem;color:var(--color-text);'
+        f'border-bottom:1px solid var(--color-border);">{original}</td>'
         f'<td style="padding:8px 12px;font-size:0.875rem;{req_style}'
-        f'border-bottom:1px solid #e4e8ec;">{requested}</td>'
+        f'border-bottom:1px solid var(--color-border);">{requested}</td>'
         f'</tr>'
     )
 
@@ -641,19 +641,19 @@ def stepper(steps: list, current: int) -> None:
     items = []
     for i, label in enumerate(steps):
         if i < current:
-            circle = "background:#2667ff;border:2px solid #2667ff;color:#fff;"
-            text = "color:#2667ff;font-weight:600;"
+            circle = "background:var(--color-primary);border:2px solid var(--color-primary);color:#fff;"
+            text = "color:var(--color-primary);font-weight:600;"
             icon = "&#10003;"
         elif i == current:
-            circle = "background:#fff;border:2px solid #2667ff;color:#2667ff;"
-            text = "color:#2667ff;font-weight:700;"
+            circle = "background:var(--color-surface);border:2px solid var(--color-primary);color:var(--color-primary);"
+            text = "color:var(--color-primary);font-weight:700;"
             icon = str(i + 1)
         else:
-            circle = "background:#fff;border:2px solid #e4e8ec;color:#8b949e;"
-            text = "color:#8b949e;"
+            circle = "background:var(--color-surface);border:2px solid var(--color-border);color:var(--color-text-subtle);"
+            text = "color:var(--color-text-subtle);"
             icon = str(i + 1)
 
-        connector_color = "#2667ff" if i < current else "#e4e8ec"
+        connector_color = "var(--color-primary)" if i < current else "var(--color-border)"
         connector = (
             f'<div style="flex:1;height:2px;background:{connector_color};'
             f'margin:0 4px;align-self:center;min-width:12px;"></div>'
@@ -684,11 +684,11 @@ def show_footer():
     st.markdown(
         f"""
         <div style="margin-top:2.5rem;padding-top:1.25rem;
-                    border-top:1px solid #e4e8ec;
+                    border-top:1px solid var(--color-border);
                     display:flex;justify-content:space-between;
                     align-items:center;flex-wrap:wrap;gap:8px;">
           <div>{placeholder_html}</div>
-          <div style="text-align:right;font-size:0.8rem;color:#8b949e;line-height:1.6;">
+          <div style="text-align:right;font-size:0.8rem;color:var(--color-text-subtle);line-height:1.6;">
             Core System © Cube n' Compass &nbsp;·&nbsp;
             Version 13
           </div>
@@ -709,13 +709,13 @@ def top_nav_bar(page_name: str) -> None:
         <div class="ascenda-top-nav">
           <div class="ascenda-top-nav-left">
             <svg class="ascenda-top-ham" width="18" height="18" fill="none"
-                 stroke="#57606a" stroke-width="2" viewBox="0 0 24 24">
+                 stroke="var(--color-text-muted)" stroke-width="2" viewBox="0 0 24 24">
               <line x1="3" y1="12" x2="21" y2="12"/>
               <line x1="3" y1="6"  x2="21" y2="6"/>
               <line x1="3" y1="18" x2="21" y2="18"/>
             </svg>
             <span class="ascenda-top-brand">Ascenda</span>
-            <svg width="14" height="14" fill="none" stroke="#c9d1d9" stroke-width="2"
+            <svg width="14" height="14" fill="none" stroke="var(--color-border-strong)" stroke-width="2"
                  viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
             <span class="ascenda-top-page">{page_name}</span>
           </div>
@@ -768,26 +768,26 @@ def visit_card(
 
     badge = status_badge(status, status_variant)
     card = (
-        f'<div class="ascenda-visit-card" style="background:#fff;border:1px solid #e4e8ec;border-radius:12px;'
+        f'<div class="ascenda-visit-card" style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:12px;'
         f'padding:0.875rem 1rem;margin-bottom:0.5rem;display:flex;align-items:center;gap:0.875rem;'
         f'cursor:pointer;transition:box-shadow 0.15s ease,border-color 0.15s ease;">'
-        f'<div style="min-width:44px;width:44px;background:#f6f8fa;border-radius:8px;'
+        f'<div style="min-width:44px;width:44px;background:var(--color-surface-2);border-radius:8px;'
         f'text-align:center;padding:0.5rem 0.25rem;flex-shrink:0;">'
-        f'<div style="font-size:1.125rem;font-weight:700;color:#0d1117;line-height:1;">{day}</div>'
-        f'<div style="font-size:0.7rem;font-weight:600;color:#8b949e;text-transform:uppercase;'
+        f'<div style="font-size:1.125rem;font-weight:700;color:var(--color-text);line-height:1;">{day}</div>'
+        f'<div style="font-size:0.7rem;font-weight:600;color:var(--color-text-subtle);text-transform:uppercase;'
         f'margin-top:2px;letter-spacing:0.04em;">{month}</div>'
-        f'<div style="font-size:0.65rem;color:#b0b8c1;margin-top:1px;letter-spacing:0.02em;">{year}</div>'
+        f'<div style="font-size:0.65rem;color:var(--color-border-strong);margin-top:1px;letter-spacing:0.02em;">{year}</div>'
         f'</div>'
         f'<div style="flex:1;min-width:0;">'
-        f'<div style="font-size:0.9375rem;font-weight:600;color:#0d1117;'
+        f'<div style="font-size:0.9375rem;font-weight:600;color:var(--color-text);'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{customer}</div>'
-        f'<div style="font-size:0.8rem;color:#57606a;margin-top:2px;'
+        f'<div style="font-size:0.8rem;color:var(--color-text-muted);margin-top:2px;'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{subtitle}</div>'
-        f'<div style="font-size:0.75rem;color:#8b949e;margin-top:4px;">{visit_id}</div>'
+        f'<div style="font-size:0.75rem;color:var(--color-text-subtle);margin-top:4px;">{visit_id}</div>'
         f'</div>'
         f'<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">'
         f'{badge}'
-        f'<svg width="16" height="16" fill="none" stroke="#c9d1d9" stroke-width="2.5" '
+        f'<svg width="16" height="16" fill="none" stroke="var(--color-border-strong)" stroke-width="2.5" '
         f'viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>'
         f'</div>'
         f'</div>'
@@ -812,10 +812,13 @@ def kpi_card_v2(
     delta_positive: bool = True,
     delta_neutral: bool = False,
     icon_svg: str = "",
-    icon_bg: str = "#eef2ff",
+    icon_bg: str = "var(--color-primary-subtle)",
 ) -> str:
     """Return HTML for a KPI card with a right-aligned colored icon circle."""
-    delta_color = "#8b949e" if delta_neutral else ("#0e8a4f" if delta_positive else "#c83333")
+    delta_color = (
+        "var(--color-text-subtle)" if delta_neutral
+        else ("var(--status-success-text)" if delta_positive else "var(--status-danger-text)")
+    )
     arrow_up = (
         '<svg aria-hidden="true" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" '
         'viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>'
@@ -838,14 +841,14 @@ def kpi_card_v2(
         if icon_svg else ""
     )
     return (
-        f'<div style="background:#fff;border:1px solid #e4e8ec;border-radius:14px;'
+        f'<div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:14px;'
         f'padding:1rem 1.25rem;box-shadow:0 1px 2px rgba(15,23,42,0.04);'
         f'display:flex;justify-content:space-between;align-items:flex-start;'
         f'margin-bottom:12px;">'
         f'<div style="flex:1;">'
-        f'<div style="font-size:0.8rem;font-weight:500;color:#57606a;'
+        f'<div style="font-size:0.8rem;font-weight:500;color:var(--color-text-muted);'
         f'text-transform:uppercase;letter-spacing:0.04em;">{label}</div>'
-        f'<div style="font-size:1.75rem;font-weight:700;color:#0d1117;'
+        f'<div style="font-size:1.75rem;font-weight:700;color:var(--color-text);'
         f'line-height:1.1;margin-top:4px;">{value}</div>'
         f'{delta_html}'
         f'</div>'
