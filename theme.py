@@ -6,7 +6,8 @@ def inject_theme():
     components.html("""
 <script>
 (function () {
-  var doc = (window.parent !== window) ? window.parent.document : document;
+  var doc = document;
+  try { if (window.parent !== window) doc = window.parent.document; } catch (e) {}
 
   /* ── 1. CSS tokens (light + dark) + native Streamlit dark overrides ── */
   var existing = doc.getElementById('_ascenda_tokens');
@@ -41,7 +42,7 @@ def inject_theme():
     '  --shadow-elevated: 0 4px 12px rgba(15,23,42,0.08);',
     '}',
 
-    'html[data-theme="dark"] :root {',
+    'html[data-theme="dark"] {',
     '  --color-primary:        #4d8ef0;',
     '  --color-primary-hover:  #3b7de8;',
     '  --color-primary-subtle: #1e2a4a;',
