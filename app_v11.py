@@ -67,6 +67,7 @@ from app_pages.review_audiences import page_review_target_audiences
 from app_pages.review_customers import page_review_other_customers
 from app_pages.change_request import page_change_request
 from app_pages.admin_change_requests import page_admin_change_requests
+from app_pages.app_settings import page_app_settings
 
 st.set_page_config(
     page_title=APP_TITLE,
@@ -377,6 +378,7 @@ else:
         "Review Other Customers":   page_review_other_customers,
         "My Change Requests":        page_change_request,
         "Review Change Requests":   page_admin_change_requests,
+        "App Settings":             page_app_settings,
     }
 
     fn = PAGE_MAP.get(page)
