@@ -226,11 +226,10 @@ def login_block():
                 f'<script>localStorage.setItem("_ascenda_sid",{repr(sid)});</script>',
                 height=0,
             )
-            import json as _json
             _prefs = u.get("preferences") or {}
             if isinstance(_prefs, str):
                 try:
-                    _prefs = _json.loads(_prefs)
+                    _prefs = json.loads(_prefs)
                 except Exception:
                     _prefs = {}
             _theme = _prefs.get("theme", "")
