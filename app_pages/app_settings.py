@@ -132,8 +132,8 @@ def page_app_settings():
                 f'<script>'
                 f'try{{'
                 f'localStorage.setItem("_ascenda_theme",{repr(_theme_val)});'
-                f'var doc=(window.parent!==window)?window.parent.document:document;'
-                f'try{{if(window.parent!==window)doc=window.parent.document;}}catch(e){{doc=document;}}'
+                f'var doc=document;'
+                f'try{{if(window.parent!==window)doc=window.parent.document;}}catch(e){{}}'
                 f'doc.documentElement.setAttribute("data-theme",{repr(_theme_val)});'
                 f'}}catch(e){{}}'
                 f'</script>',
