@@ -469,6 +469,8 @@ def sidebar_nav():
     if role == "admin":
         admin_pages = ["Admin: Import Lookups", "Admin: Data Browser", "Admin: Users"]
 
+    settings_pages = ["App Settings"]
+
     sections = [("MAIN", main_pages), ("FIELD ACTIVITY", field_pages)]
     if project_pages:
         sections.append(("PROJECTS", project_pages))
@@ -476,6 +478,7 @@ def sidebar_nav():
         sections.append(("REVIEWS", review_pages))
     if admin_pages:
         sections.append(("ADMINISTRATION", admin_pages))
+    sections.append(("PREFERENCES", settings_pages))
 
     all_pages = [p for _, pgs in sections for p in pgs]
 
