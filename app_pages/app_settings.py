@@ -43,7 +43,7 @@ def _coming_soon_pill() -> str:
     return (
         '<span style="display:inline-flex;align-items:center;padding:1px 7px;'
         'border-radius:20px;font-size:0.68rem;font-weight:600;line-height:1.6;'
-        'background:#f0f6ff;color:#2563eb;border:1px solid #bfdbfe;'
+        'background:var(--color-primary-subtle);color:var(--color-primary);border:1px solid var(--color-border);'
         'margin-left:7px;vertical-align:middle;">Coming soon</span>'
     )
 

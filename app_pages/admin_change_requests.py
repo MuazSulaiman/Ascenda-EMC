@@ -391,9 +391,9 @@ def _render_force_tab(admin_uid: int):
     st.markdown(
         "<style>"
         "div[class*='st-key-admin-change-req-fa-del-btn'] button {"
-        "  background-color:#dc2626!important;"
+        "  background-color:var(--status-danger-text)!important;"
         "  color:#fff!important;"
-        "  border-color:#dc2626!important;"
+        "  border-color:var(--status-danger-text)!important;"
         "}"
         "</style>",
         unsafe_allow_html=True,
@@ -555,17 +555,18 @@ def _render_force_tab(admin_uid: int):
         st.markdown(
             "<style>"
             "div:has(#del-visit-btn-anchor) + div button {"
-            "  background-color: #c0392b !important;"
+            "  background-color: var(--status-danger-text) !important;"
             "  color: white !important;"
-            "  border: 1px solid #c0392b !important;"
+            "  border: 1px solid var(--status-danger-text) !important;"
             "}"
             "div:has(#del-visit-btn-anchor) + div button:hover:not(:disabled) {"
-            "  background-color: #a93226 !important;"
-            "  border-color: #a93226 !important;"
+            "  background-color: var(--status-danger-text) !important;"
+            "  filter: brightness(0.85) !important;"
+            "  border-color: var(--status-danger-text) !important;"
             "}"
             "div:has(#del-visit-btn-anchor) + div button:disabled {"
-            "  background-color: #e8b4b0 !important;"
-            "  border-color: #e8b4b0 !important;"
+            "  background-color: var(--status-danger-bg) !important;"
+            "  border-color: var(--color-border) !important;"
             "  color: rgba(255,255,255,0.6) !important;"
             "}"
             "</style>"
@@ -1069,20 +1070,20 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
         badge = status_badge(status_val, _BADGE_VARIANT.get(status_val, "neutral"))
         if is_delete:
             source_badge = (
-                '<span style="font-size:0.75rem;font-weight:600;color:#991b1b;'
-                'background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;'
+                '<span style="font-size:0.75rem;font-weight:600;color:var(--status-danger-text);'
+                'background:var(--status-danger-bg);border:1px solid var(--color-border);border-radius:4px;'
                 'padding:1px 7px;">🗑️ Deleted</span>'
             )
         elif is_force:
             source_badge = (
-                '<span style="font-size:0.75rem;font-weight:600;color:#b45309;'
-                'background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;'
+                '<span style="font-size:0.75rem;font-weight:600;color:var(--status-warning-text);'
+                'background:var(--status-warning-bg);border:1px solid var(--color-border);border-radius:4px;'
                 'padding:1px 7px;">⚡ Force</span>'
             )
         else:
             source_badge = (
-                '<span style="font-size:0.75rem;font-weight:600;color:#1d4ed8;'
-                'background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;'
+                '<span style="font-size:0.75rem;font-weight:600;color:var(--status-info-text);'
+                'background:var(--status-info-bg);border:1px solid var(--color-border);border-radius:4px;'
                 'padding:1px 7px;">👤 Rep</span>'
             )
         st.markdown(

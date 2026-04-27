@@ -630,7 +630,7 @@ def kpi_card(label: str, value: str, delta: str = "", delta_positive: bool = Tru
     )
     return (
         f'<div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:14px;'
-        f'padding:1rem 1.25rem;box-shadow:0 1px 2px rgba(15,23,42,0.04);">'
+        f'padding:1rem 1.25rem;box-shadow:var(--shadow-card);">'
         f'<div style="font-size:0.8rem;font-weight:500;color:var(--color-text-muted);'
         f'text-transform:uppercase;letter-spacing:0.04em;">{label}</div>'
         f'<div style="font-size:1.75rem;font-weight:700;color:var(--color-text);'
@@ -861,7 +861,7 @@ def kpi_card_v2(
     )
     return (
         f'<div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:14px;'
-        f'padding:1rem 1.25rem;box-shadow:0 1px 2px rgba(15,23,42,0.04);'
+        f'padding:1rem 1.25rem;box-shadow:var(--shadow-card);'
         f'display:flex;justify-content:space-between;align-items:flex-start;'
         f'margin-bottom:12px;">'
         f'<div style="flex:1;">'

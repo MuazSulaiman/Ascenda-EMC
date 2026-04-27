@@ -10,12 +10,20 @@ def inject_theme():
   try { if (window.parent !== window) doc = window.parent.document; } catch (e) {}
 
   /* ── 1. CSS tokens (light + dark) + native Streamlit dark overrides ── */
+  /* ── Load fonts via <link> (avoids @import-in-textContent browser drop) ── */
+  if (!doc.getElementById('_ascenda_fonts')) {
+    var lnk = doc.createElement('link');
+    lnk.id = '_ascenda_fonts';
+    lnk.rel = 'stylesheet';
+    lnk.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap';
+    doc.head.appendChild(lnk);
+  }
+
   var existing = doc.getElementById('_ascenda_tokens');
   if (existing) existing.remove();
   var s = doc.createElement('style');
   s.id = '_ascenda_tokens';
   s.textContent = [
-    '@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap");',
 
     ':root {',
     '  --color-primary:        #2667ff;',
