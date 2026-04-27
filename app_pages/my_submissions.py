@@ -23,22 +23,22 @@ _EVAL_LABEL = {
 
 # ── Shared card shell ─────────────────────────────────────────────────────────
 _CARD_WRAP  = (
-    '<div style="background:#fff;border:1px solid #e4e8ec;border-radius:12px;'
+    '<div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:12px;'
     'padding:1rem 1.25rem;margin-bottom:0.75rem;">'
 )
 _CARD_CLOSE = '</div>'
 
 _SECTION_TITLE = (
-    '<div style="font-size:0.75rem;font-weight:600;color:#8b949e;'
+    '<div style="font-size:0.75rem;font-weight:600;color:var(--color-text-subtle);'
     'text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.625rem;">'
     '{label}</div>'
 )
 
 _ROW = (
     '<div style="display:flex;justify-content:space-between;align-items:baseline;'
-    'padding:0.3rem 0;border-bottom:1px solid #f3f4f6;">'
-    '<span style="font-size:0.85rem;color:#57606a;min-width:120px;">{key}</span>'
-    '<span style="font-size:0.875rem;color:#0d1117;font-weight:500;text-align:right;">{val}</span>'
+    'padding:0.3rem 0;border-bottom:1px solid var(--color-border);">'
+    '<span style="font-size:0.85rem;color:var(--color-text-muted);min-width:120px;">{key}</span>'
+    '<span style="font-size:0.875rem;color:var(--color-text);font-weight:500;text-align:right;">{val}</span>'
     '</div>'
 )
 
@@ -186,7 +186,7 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         notes_html = (
             _CARD_WRAP
             + _SECTION_TITLE.format(label="Notes")
-            + f'<p style="font-size:0.9rem;color:#0d1117;line-height:1.6;margin:0;">{html.escape(notes)}</p>'
+            + f'<p style="font-size:0.9rem;color:var(--color-text);line-height:1.6;margin:0;">{html.escape(notes)}</p>'
             + _CARD_CLOSE
         )
         st.markdown(notes_html, unsafe_allow_html=True)
@@ -220,19 +220,19 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
                 + '<div style="overflow-x:auto;">'
                 + '<table style="width:100%;border-collapse:collapse;font-size:0.875rem;">'
                 + '<thead><tr>'
-                + '<th style="text-align:left;padding:0.35rem 0.5rem;color:#57606a;'
-                  'font-weight:600;border-bottom:1px solid #e4e8ec;">Product</th>'
-                + '<th style="text-align:right;padding:0.35rem 0.5rem;color:#57606a;'
-                  'font-weight:600;border-bottom:1px solid #e4e8ec;">Qty</th>'
+                + '<th style="text-align:left;padding:0.35rem 0.5rem;color:var(--color-text-muted);'
+                  'font-weight:600;border-bottom:1px solid var(--color-border);">Product</th>'
+                + '<th style="text-align:right;padding:0.35rem 0.5rem;color:var(--color-text-muted);'
+                  'font-weight:600;border-bottom:1px solid var(--color-border);">Qty</th>'
                 + '</tr></thead><tbody>'
             )
             for _, srow in shelf_df.iterrows():
                 shelf_html += (
                     '<tr>'
-                    f'<td style="padding:0.35rem 0.5rem;color:#0d1117;border-bottom:1px solid #f3f4f6;">'
+                    f'<td style="padding:0.35rem 0.5rem;color:var(--color-text);border-bottom:1px solid var(--color-border);">'
                     f'{html.escape(str(srow["product"]))}</td>'
-                    f'<td style="padding:0.35rem 0.5rem;text-align:right;color:#0d1117;'
-                    f'font-weight:600;border-bottom:1px solid #f3f4f6;">{srow["qty_checked"]}</td>'
+                    f'<td style="padding:0.35rem 0.5rem;text-align:right;color:var(--color-text);'
+                    f'font-weight:600;border-bottom:1px solid var(--color-border);">{srow["qty_checked"]}</td>'
                     '</tr>'
                 )
             shelf_html += '</tbody></table></div>' + _CARD_CLOSE
@@ -254,7 +254,7 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
             + "".join(_ROW.format(key=k, val=v) for k, v in loc_rows)
             + f'<div style="margin-top:0.625rem;">'
             f'<a href="{maps_url}" target="_blank" '
-            f'style="font-size:0.85rem;color:#2667ff;font-weight:500;text-decoration:none;">'
+            f'style="font-size:0.85rem;color:var(--color-primary);font-weight:500;text-decoration:none;">'
             f'Open in Google Maps →</a></div>'
             + _CARD_CLOSE
         )
@@ -436,7 +436,7 @@ def page_my_submissions():
     page_df   = visible.iloc[start_idx:end_idx]
 
     st.markdown(
-        f'<p style="font-size:0.8rem;color:#8b949e;margin:6px 0 8px;">'
+        f'<p style="font-size:0.8rem;color:var(--color-text-subtle);margin:6px 0 8px;">'
         f'Showing {start_idx + 1}–{end_idx} of {total_visible:,} visits</p>',
         unsafe_allow_html=True,
     )
@@ -480,12 +480,12 @@ def page_my_submissions():
                 f'<div style="font-size:0.65rem;color:#fca5a5;margin-top:1px;letter-spacing:0.02em;">{year}</div>'
                 f'</div>'
                 f'<div style="flex:1;min-width:0;">'
-                f'<div style="font-size:0.9375rem;font-weight:600;color:#0d1117;'
+                f'<div style="font-size:0.9375rem;font-weight:600;color:var(--color-text);'
                 f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{customer_name}</div>'
                 f'<div style="font-size:0.8rem;color:#991b1b;margin-top:2px;font-style:italic;'
                 f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
                 f'Reason: {html.escape(deletion_note)}</div>'
-                f'<div style="font-size:0.75rem;color:#8b949e;margin-top:4px;">{vid}</div>'
+                f'<div style="font-size:0.75rem;color:var(--color-text-subtle);margin-top:4px;">{vid}</div>'
                 f'</div>'
                 f'<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">'
                 f'{deleted_badge}'
@@ -531,7 +531,7 @@ def page_my_submissions():
                 st.rerun()
         with col_info:
             st.markdown(
-                f'<p style="text-align:center;font-size:0.85rem;color:#57606a;'
+                f'<p style="text-align:center;font-size:0.85rem;color:var(--color-text-muted);'
                 f'padding-top:0.4rem;">Page {current_page + 1} of {total_pages}</p>',
                 unsafe_allow_html=True,
             )

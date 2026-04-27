@@ -721,16 +721,16 @@ def page_change_request():
                 )
                 st.markdown(
                     f"""
-                    <table style="width:100%;border-collapse:collapse;border:1px solid #e4e8ec;
+                    <table style="width:100%;border-collapse:collapse;border:1px solid var(--color-border);
                                   border-radius:10px;overflow:hidden;font-size:0.875rem;">
                       <thead>
-                        <tr style="background:#f6f8fa;">
-                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                                     border-bottom:1px solid #e4e8ec;width:30%;">Field</th>
-                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                                     border-bottom:1px solid #e4e8ec;">Original</th>
-                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                                     border-bottom:1px solid #e4e8ec;">Requested</th>
+                        <tr style="background:var(--color-surface-2);">
+                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                                     border-bottom:1px solid var(--color-border);width:30%;">Field</th>
+                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                                     border-bottom:1px solid var(--color-border);">Original</th>
+                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                                     border-bottom:1px solid var(--color-border);">Requested</th>
                         </tr>
                       </thead>
                       <tbody>{rows_html}</tbody>
@@ -974,9 +974,9 @@ def page_change_request():
                         with col_hdr:
                             st.markdown(
                                 f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
-                                f'<span style="font-size:0.875rem;font-weight:600;color:#0d1117;">'
+                                f'<span style="font-size:0.875rem;font-weight:600;color:var(--color-text);">'
                                 f'Request #{rid}</span>'
-                                f'<span style="font-size:0.8rem;color:#8b949e;">{req_date_str}</span>'
+                                f'<span style="font-size:0.8rem;color:var(--color-text-subtle);">{req_date_str}</span>'
                                 f'{source_badge}'
                                 f'{badge}'
                                 f'</div>',
@@ -1007,7 +1007,7 @@ def page_change_request():
                         req_note_val = str(row.get("request_note") or "").strip()
                         if req_note_val:
                             st.markdown(
-                                f'<p style="font-size:0.85rem;color:#57606a;'
+                                f'<p style="font-size:0.85rem;color:var(--color-text-muted);'
                                 f'font-style:italic;margin:0 0 8px 0;">"{req_note_val}"</p>',
                                 unsafe_allow_html=True,
                             )
@@ -1033,16 +1033,16 @@ def page_change_request():
                                 after_lbl  = "After"  if is_force else "Requested"
                                 st.markdown(
                                     f"""
-                                    <table style="width:100%;border-collapse:collapse;border:1px solid #e4e8ec;
+                                    <table style="width:100%;border-collapse:collapse;border:1px solid var(--color-border);
                                                   border-radius:10px;overflow:hidden;font-size:0.875rem;">
                                       <thead>
-                                        <tr style="background:#f6f8fa;">
-                                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                                                     border-bottom:1px solid #e4e8ec;width:30%;">Field</th>
-                                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                                                     border-bottom:1px solid #e4e8ec;">{before_lbl}</th>
-                                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                                                     border-bottom:1px solid #e4e8ec;">{after_lbl}</th>
+                                        <tr style="background:var(--color-surface-2);">
+                                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                                                     border-bottom:1px solid var(--color-border);width:30%;">Field</th>
+                                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                                                     border-bottom:1px solid var(--color-border);">{before_lbl}</th>
+                                          <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                                                     border-bottom:1px solid var(--color-border);">{after_lbl}</th>
                                         </tr>
                                       </thead>
                                       <tbody>{rows_html}</tbody>
@@ -1090,7 +1090,7 @@ def page_change_request():
 
                         if i < total - 1:
                             st.markdown(
-                                '<hr style="border:none;border-top:1px solid #e4e8ec;margin:12px 0;">',
+                                '<hr style="border:none;border-top:1px solid var(--color-border);margin:12px 0;">',
                                 unsafe_allow_html=True,
                             )
 

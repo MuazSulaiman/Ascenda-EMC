@@ -159,14 +159,14 @@ def page_app_settings():
     with st.container(border=True):
         st.markdown(
             '<div style="display:flex;align-items:flex-start;gap:12px;padding:4px 0 8px;">'
-            '<div style="width:36px;height:36px;border-radius:9px;background:#eef2ff;'
+            '<div style="width:36px;height:36px;border-radius:9px;background:var(--color-primary-subtle);'
             'display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;">'
             '<svg width="18" height="18" fill="none" stroke="#2563eb" stroke-width="2" viewBox="0 0 24 24">'
             '<path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/>'
             '</svg></div>'
             '<div>'
-            '<div style="font-size:0.9375rem;font-weight:500;color:#0d1117;">Install App</div>'
-            '<div style="font-size:0.8rem;color:#57606a;margin-top:2px;line-height:1.5;">'
+            '<div style="font-size:0.9375rem;font-weight:500;color:var(--color-text);">Install App</div>'
+            '<div style="font-size:0.8rem;color:var(--color-text-muted);margin-top:2px;line-height:1.5;">'
             'Add Ascenda to your home screen for quick, full-screen access — no app store needed.</div>'
             '</div>'
             '</div>',

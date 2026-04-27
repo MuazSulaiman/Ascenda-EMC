@@ -166,7 +166,7 @@ def page_dashboard():
             delta=f"Across {customers_visited:,} customer{'s' if customers_visited != 1 else ''}",
             delta_positive=True,
             icon_svg=_ICON_CHECK,
-            icon_bg="#e6f6ec",
+            icon_bg="var(--status-success-bg)",
         ),
         unsafe_allow_html=True,
     )
@@ -177,7 +177,7 @@ def page_dashboard():
             delta="Awaiting review" if pending_cr > 0 else "None pending",
             delta_positive=pending_cr == 0,
             icon_svg=_ICON_EDIT,
-            icon_bg="#fdf2e4",
+            icon_bg="var(--status-warning-bg)",
         ),
         unsafe_allow_html=True,
     )
@@ -189,7 +189,7 @@ def page_dashboard():
             delta_positive=positive_rate >= 60,
             delta_neutral=period_total == 0,
             icon_svg=_ICON_STAR_POS,
-            icon_bg="#f0f3f6" if period_total == 0 else ("#fdeceb" if positive_rate < 60 else "#e6f6ec"),
+            icon_bg="var(--color-surface-2)" if period_total == 0 else ("var(--status-danger-bg)" if positive_rate < 60 else "var(--status-success-bg)"),
         ),
         unsafe_allow_html=True,
     )
@@ -253,7 +253,7 @@ def _render_admin_dashboard() -> None:
                 delta="All reps combined",
                 delta_positive=True,
                 icon_svg=_ICON_LOCATION,
-                icon_bg="#eef2ff",
+                icon_bg="var(--color-primary-subtle)",
             ),
             unsafe_allow_html=True,
         )
@@ -265,7 +265,7 @@ def _render_admin_dashboard() -> None:
                 delta=f"In {period.lower() if period != 'Today' else 'today'}",
                 delta_positive=True,
                 icon_svg=_ICON_BUILDING,
-                icon_bg="#e6f6ec",
+                icon_bg="var(--status-success-bg)",
             ),
             unsafe_allow_html=True,
         )
@@ -277,7 +277,7 @@ def _render_admin_dashboard() -> None:
                 delta="Submitted visits",
                 delta_positive=True,
                 icon_svg=_ICON_USERS,
-                icon_bg="#eef2ff",
+                icon_bg="var(--color-primary-subtle)",
             ),
             unsafe_allow_html=True,
         )
@@ -421,7 +421,7 @@ def _render_admin_pending_reviews() -> None:
 
     if total_items > 0:
         st.markdown(
-            f'<p style="font-size:0.8rem;color:#8b949e;margin:6px 0 8px;">'
+            f'<p style="font-size:0.8rem;color:var(--color-text-subtle);margin:6px 0 8px;">'
             f'Showing {start_idx + 1}–{end_idx} of {total_items:,} pending items</p>',
             unsafe_allow_html=True,
         )
@@ -444,13 +444,13 @@ def _render_admin_pending_reviews() -> None:
         with col_info:
             st.markdown(
                 f'<div style="display:flex;align-items:center;gap:10px;'
-                f'padding:10px 0;border-bottom:1px solid #e4e8ec;">'
+                f'padding:10px 0;border-bottom:1px solid var(--color-border);">'
                 f'{badge}'
-                f'<span style="font-weight:600;font-size:0.9rem;color:#0d1117;">'
+                f'<span style="font-weight:600;font-size:0.9rem;color:var(--color-text);">'
                 f'{identifier}</span>'
-                f'<span style="font-size:0.85rem;color:#57606a;">'
+                f'<span style="font-size:0.85rem;color:var(--color-text-muted);">'
                 f'{rep_name}</span>'
-                f'<span style="font-size:0.8rem;color:#8b949e;">{date_str}</span>'
+                f'<span style="font-size:0.8rem;color:var(--color-text-subtle);">{date_str}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -474,7 +474,7 @@ def _render_admin_pending_reviews() -> None:
                 st.rerun()
         with col_info:
             st.markdown(
-                f'<p style="text-align:center;font-size:0.85rem;color:#57606a;'
+                f'<p style="text-align:center;font-size:0.85rem;color:var(--color-text-muted);'
                 f'padding-top:0.4rem;">Page {current_page + 1} of {total_pages}</p>',
                 unsafe_allow_html=True,
             )

@@ -199,11 +199,11 @@ def page_review_target_audiences():
     _pending_n = len(unresolved_df)
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:0.6rem;margin:1rem 0 0.2rem;">'
-        f'<span style="font-size:1rem;font-weight:700;color:#0d1117;">Visits with \'Other\' Target Audience</span>'
-        f'<span style="background:#eef2ff;color:#2667ff;border-radius:6px;padding:1px 8px;'
+        f'<span style="font-size:1rem;font-weight:700;color:var(--color-text);">Visits with \'Other\' Target Audience</span>'
+        f'<span style="background:var(--color-primary-subtle);color:var(--color-primary);border-radius:6px;padding:1px 8px;'
         f'font-size:0.78rem;font-weight:700;">{_pending_n} pending</span>'
         f'</div>'
-        f'<p style="font-size:0.82rem;color:#8b949e;margin:0 0 0.75rem;">'
+        f'<p style="font-size:0.82rem;color:var(--color-text-subtle);margin:0 0 0.75rem;">'
         f'These visits have no audience_id but contain Other Target Audience details.</p>',
         unsafe_allow_html=True,
     )
@@ -248,9 +248,9 @@ def page_review_target_audiences():
     )
 
     # ------------- Pick a visit to review -------------
-    st.markdown('<hr style="border:none;border-top:1px solid #e4e8ec;margin:1.5rem 0 1rem;">', unsafe_allow_html=True)
+    st.markdown('<hr style="border:none;border-top:1px solid var(--color-border);margin:1.5rem 0 1rem;">', unsafe_allow_html=True)
     st.markdown(
-        '<p style="font-size:1rem;font-weight:700;color:#0d1117;margin:0 0 0.75rem;">'
+        '<p style="font-size:1rem;font-weight:700;color:var(--color-text);margin:0 0 0.75rem;">'
         'Review &amp; Resolve One Visit</p>',
         unsafe_allow_html=True,
     )
@@ -290,31 +290,31 @@ def page_review_target_audiences():
 
     _esc = _html.escape
     st.markdown(
-        f'<div style="background:#fff;border:1px solid #e4e8ec;border-radius:12px;'
+        f'<div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:12px;'
         f'padding:1rem 1.25rem;margin:.5rem 0 1rem;box-shadow:0 1px 2px rgba(15,23,42,.04);">'
-        f'<div style="font-size:.7rem;font-weight:700;color:#2667ff;'
+        f'<div style="font-size:.7rem;font-weight:700;color:var(--color-primary);'
         f'text-transform:uppercase;letter-spacing:.08em;margin-bottom:.65rem;">'
         f'Visit #{selected_visit_id}</div>'
         f'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:.45rem 1.5rem;">'
-        f'<div><div style="font-size:.7rem;color:#8b949e;">Customer</div>'
-        f'<div style="font-size:.875rem;font-weight:600;color:#0d1117;">{_esc(str(visit_row["customer_name"]))}</div></div>'
-        f'<div><div style="font-size:.7rem;color:#8b949e;">Title</div>'
-        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["other_audience_title"] or "—"))}</div></div>'
-        f'<div><div style="font-size:.7rem;color:#8b949e;">Name</div>'
-        f'<div style="font-size:.875rem;font-weight:600;color:#0d1117;">{_esc(str(visit_row["other_audience_name"]))}</div></div>'
-        f'<div><div style="font-size:.7rem;color:#8b949e;">Department</div>'
-        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["other_audience_department"] or "—"))}</div></div>'
-        f'<div><div style="font-size:.7rem;color:#8b949e;">Position</div>'
-        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["other_audience_position"] or "—"))}</div></div>'
-        f'<div><div style="font-size:.7rem;color:#8b949e;">Phone</div>'
-        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["other_audience_phone"] or "—"))}</div></div>'
-        f'<div><div style="font-size:.7rem;color:#8b949e;">Email</div>'
-        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["other_audience_email"] or "—"))}</div></div>'
-        f'<div><div style="font-size:.7rem;color:#8b949e;">Submitted By</div>'
-        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row["rep_name"]))} '
+        f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Customer</div>'
+        f'<div style="font-size:.875rem;font-weight:600;color:var(--color-text);">{_esc(str(visit_row["customer_name"]))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Title</div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["other_audience_title"] or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Name</div>'
+        f'<div style="font-size:.875rem;font-weight:600;color:var(--color-text);">{_esc(str(visit_row["other_audience_name"]))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Department</div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["other_audience_department"] or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Position</div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["other_audience_position"] or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Phone</div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["other_audience_phone"] or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Email</div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["other_audience_email"] or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Submitted By</div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["rep_name"]))} '
         f'({_esc(str(visit_row["rep_email"]))})</div></div>'
-        f'<div><div style="font-size:.7rem;color:#8b949e;">Business Unit</div>'
-        f'<div style="font-size:.875rem;color:#0d1117;">{_esc(str(visit_row.get("business_unit_name") or "—"))}</div></div>'
+        f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Business Unit</div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row.get("business_unit_name") or "—"))}</div></div>'
         f'</div></div>',
         unsafe_allow_html=True,
     )
@@ -370,9 +370,9 @@ def page_review_target_audiences():
         ta_df = ta_df.sort_values(by="similarity", ascending=False)
 
         st.markdown(
-            '<p style="font-size:.875rem;font-weight:700;color:#0d1117;margin:.75rem 0 .1rem;">'
+            '<p style="font-size:.875rem;font-weight:700;color:var(--color-text);margin:.75rem 0 .1rem;">'
             'Suggested Matches</p>'
-            '<p style="font-size:.78rem;color:#8b949e;margin:0 0 .5rem;">'
+            '<p style="font-size:.78rem;color:var(--color-text-subtle);margin:0 0 .5rem;">'
             'Sorted by similarity — name, department &amp; position.</p>',
             unsafe_allow_html=True,
         )
@@ -414,7 +414,7 @@ def page_review_target_audiences():
     # --- Link to existing TA ---
     with col_link:
         st.markdown(
-            '<p style="font-size:.875rem;font-weight:700;color:#0d1117;margin:0 0 .5rem;">'
+            '<p style="font-size:.875rem;font-weight:700;color:var(--color-text);margin:0 0 .5rem;">'
             '🔗 Link to Existing Target Audience</p>',
             unsafe_allow_html=True,
         )
@@ -469,7 +469,7 @@ def page_review_target_audiences():
     # --- Create new TA ---
     with col_new:
         st.markdown(
-            '<p style="font-size:.875rem;font-weight:700;color:#0d1117;margin:0 0 .5rem;">'
+            '<p style="font-size:.875rem;font-weight:700;color:var(--color-text);margin:0 0 .5rem;">'
             '🆕 Create New Target Audience</p>',
             unsafe_allow_html=True,
         )
