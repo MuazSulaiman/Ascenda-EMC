@@ -226,6 +226,20 @@ def login_block():
                 f'<script>localStorage.setItem("_ascenda_sid",{repr(sid)});</script>',
                 height=0,
             )
+            import json as _json
+            _prefs = u.get("preferences") or {}
+            if isinstance(_prefs, str):
+                try:
+                    _prefs = _json.loads(_prefs)
+                except Exception:
+                    _prefs = {}
+            _theme = _prefs.get("theme", "")
+            _comp.html(
+                f'<script>try{{if({repr(_theme)})'
+                f'localStorage.setItem("_ascenda_theme",{repr(_theme)});'
+                f'else localStorage.removeItem("_ascenda_theme");}}catch(e){{}}</script>',
+                height=0,
+            )
             st.session_state["_stored_sid"] = sid
             st.session_state["_sid_checked"] = True
 
@@ -256,7 +270,13 @@ def _do_logout():
     set_url_session_param(None)
     # Clear the SID from browser localStorage so the tab cannot re-auth.
     import streamlit.components.v1 as _comp
-    _comp.html('<script>localStorage.removeItem("_ascenda_sid");</script>', height=0)
+    _comp.html(
+        '<script>'
+        'localStorage.removeItem("_ascenda_sid");'
+        'localStorage.removeItem("_ascenda_theme");'
+        '</script>',
+        height=0,
+    )
     st.session_state.pop("_sid_checked", None)
 
     st.session_state.user = None
