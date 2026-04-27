@@ -169,16 +169,16 @@ def _render_diff_table(
     )
     st.markdown(
         f"""
-        <table style="width:100%;border-collapse:collapse;border:1px solid #e4e8ec;
+        <table style="width:100%;border-collapse:collapse;border:1px solid var(--color-border);
                       border-radius:10px;overflow:hidden;font-size:0.875rem;">
           <thead>
-            <tr style="background:#f6f8fa;">
-              <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                         border-bottom:1px solid #e4e8ec;width:30%;">Field</th>
-              <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                         border-bottom:1px solid #e4e8ec;">{before_label}</th>
-              <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                         border-bottom:1px solid #e4e8ec;">{after_label}</th>
+            <tr style="background:var(--color-surface-2);">
+              <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                         border-bottom:1px solid var(--color-border);width:30%;">Field</th>
+              <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                         border-bottom:1px solid var(--color-border);">{before_label}</th>
+              <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                         border-bottom:1px solid var(--color-border);">{after_label}</th>
             </tr>
           </thead>
           <tbody>{rows_html}</tbody>
@@ -391,9 +391,9 @@ def _render_force_tab(admin_uid: int):
     st.markdown(
         "<style>"
         "div[class*='st-key-admin-change-req-fa-del-btn'] button {"
-        "  background-color:#dc2626!important;"
+        "  background-color:var(--status-danger-text)!important;"
         "  color:#fff!important;"
-        "  border-color:#dc2626!important;"
+        "  border-color:var(--status-danger-text)!important;"
         "}"
         "</style>",
         unsafe_allow_html=True,
@@ -555,17 +555,18 @@ def _render_force_tab(admin_uid: int):
         st.markdown(
             "<style>"
             "div:has(#del-visit-btn-anchor) + div button {"
-            "  background-color: #c0392b !important;"
+            "  background-color: var(--status-danger-text) !important;"
             "  color: white !important;"
-            "  border: 1px solid #c0392b !important;"
+            "  border: 1px solid var(--status-danger-text) !important;"
             "}"
             "div:has(#del-visit-btn-anchor) + div button:hover:not(:disabled) {"
-            "  background-color: #a93226 !important;"
-            "  border-color: #a93226 !important;"
+            "  background-color: var(--status-danger-text) !important;"
+            "  filter: brightness(0.85) !important;"
+            "  border-color: var(--status-danger-text) !important;"
             "}"
             "div:has(#del-visit-btn-anchor) + div button:disabled {"
-            "  background-color: #e8b4b0 !important;"
-            "  border-color: #e8b4b0 !important;"
+            "  background-color: var(--status-danger-bg) !important;"
+            "  border-color: var(--color-border) !important;"
             "  color: rgba(255,255,255,0.6) !important;"
             "}"
             "</style>"
@@ -770,16 +771,16 @@ def _render_force_tab(admin_uid: int):
         )
         st.markdown(
             f"""
-            <table style="width:100%;border-collapse:collapse;border:1px solid #e4e8ec;
+            <table style="width:100%;border-collapse:collapse;border:1px solid var(--color-border);
                           border-radius:10px;overflow:hidden;font-size:0.875rem;">
               <thead>
-                <tr style="background:#f6f8fa;">
-                  <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                             border-bottom:1px solid #e4e8ec;width:30%;">Field</th>
-                  <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                             border-bottom:1px solid #e4e8ec;">Original</th>
-                  <th style="padding:10px 12px;text-align:left;font-weight:600;color:#57606a;
-                             border-bottom:1px solid #e4e8ec;">New Value</th>
+                <tr style="background:var(--color-surface-2);">
+                  <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                             border-bottom:1px solid var(--color-border);width:30%;">Field</th>
+                  <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                             border-bottom:1px solid var(--color-border);">Original</th>
+                  <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--color-text-muted);
+                             border-bottom:1px solid var(--color-border);">New Value</th>
                 </tr>
               </thead>
               <tbody>{rows_html}</tbody>
@@ -1069,28 +1070,28 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
         badge = status_badge(status_val, _BADGE_VARIANT.get(status_val, "neutral"))
         if is_delete:
             source_badge = (
-                '<span style="font-size:0.75rem;font-weight:600;color:#991b1b;'
-                'background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;'
+                '<span style="font-size:0.75rem;font-weight:600;color:var(--status-danger-text);'
+                'background:var(--status-danger-bg);border:1px solid var(--color-border);border-radius:4px;'
                 'padding:1px 7px;">🗑️ Deleted</span>'
             )
         elif is_force:
             source_badge = (
-                '<span style="font-size:0.75rem;font-weight:600;color:#b45309;'
-                'background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;'
+                '<span style="font-size:0.75rem;font-weight:600;color:var(--status-warning-text);'
+                'background:var(--status-warning-bg);border:1px solid var(--color-border);border-radius:4px;'
                 'padding:1px 7px;">⚡ Force</span>'
             )
         else:
             source_badge = (
-                '<span style="font-size:0.75rem;font-weight:600;color:#1d4ed8;'
-                'background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;'
+                '<span style="font-size:0.75rem;font-weight:600;color:var(--status-info-text);'
+                'background:var(--status-info-bg);border:1px solid var(--color-border);border-radius:4px;'
                 'padding:1px 7px;">👤 Rep</span>'
             )
         st.markdown(
             f'<div style="display:flex;align-items:center;gap:10px;'
             f'margin-bottom:6px;">'
-            f'<span style="font-size:0.875rem;font-weight:600;color:#0d1117;">'
+            f'<span style="font-size:0.875rem;font-weight:600;color:var(--color-text);">'
             f'Request #{request_id}</span>'
-            f'<span style="font-size:0.8rem;color:#8b949e;">{req_date_str}</span>'
+            f'<span style="font-size:0.8rem;color:var(--color-text-subtle);">{req_date_str}</span>'
             f'{source_badge}'
             f'{badge}'
             f'</div>',
@@ -1101,7 +1102,7 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
         req_note = str(row.get("request_note") or "").strip()
         if req_note:
             st.markdown(
-                f'<p style="font-size:0.85rem;color:#57606a;'
+                f'<p style="font-size:0.85rem;color:var(--color-text-muted);'
                 f'font-style:italic;margin:0 0 8px 0;">"{req_note}"</p>',
                 unsafe_allow_html=True,
             )
@@ -1158,7 +1159,7 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
         # ── Divider between requests (not after last) ─────────────────────────
         if i < total - 1:
             st.markdown(
-                '<hr style="border:none;border-top:1px solid #e4e8ec;margin:12px 0;">',
+                '<hr style="border:none;border-top:1px solid var(--color-border);margin:12px 0;">',
                 unsafe_allow_html=True,
             )
 
@@ -1246,7 +1247,7 @@ def _render_history_tab():
     page_visit_ids = visit_ids_ordered[start_idx:end_idx]
 
     st.markdown(
-        f'<p style="font-size:0.8rem;color:#8b949e;margin:6px 0 8px;">'
+        f'<p style="font-size:0.8rem;color:var(--color-text-subtle);margin:6px 0 8px;">'
         f'Showing visits {start_idx + 1}–{end_idx} of {total_visits:,}</p>',
         unsafe_allow_html=True,
     )
@@ -1263,7 +1264,7 @@ def _render_history_tab():
                 st.rerun()
         with col_info:
             st.markdown(
-                f'<p style="text-align:center;font-size:0.85rem;color:#57606a;'
+                f'<p style="text-align:center;font-size:0.85rem;color:var(--color-text-muted);'
                 f'padding-top:0.4rem;">Page {current_page + 1} of {total_pages}</p>',
                 unsafe_allow_html=True,
             )

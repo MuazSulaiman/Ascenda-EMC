@@ -36,7 +36,7 @@ def page_user_settings():
 
     # Read-only profile block
     st.markdown(
-        '<h3 style="font-size:1.125rem;font-weight:600;color:#0d1117;margin:0 0 0.5rem;">My Profile</h3>',
+        '<h3 style="font-size:1.125rem;font-weight:600;color:var(--color-text);margin:0 0 0.5rem;">My Profile</h3>',
         unsafe_allow_html=True,
     )
     c1, c2 = st.columns(2)
@@ -53,7 +53,7 @@ def page_user_settings():
 
     # Change password form
     st.markdown(
-        '<h3 style="font-size:1.125rem;font-weight:600;color:#0d1117;margin:0 0 0.5rem;">Change Password</h3>',
+        '<h3 style="font-size:1.125rem;font-weight:600;color:var(--color-text);margin:0 0 0.5rem;">Change Password</h3>',
         unsafe_allow_html=True,
     )
     with st.form("change_pw_form", clear_on_submit=True):
@@ -118,7 +118,7 @@ def page_user_settings():
 
     # ── Install app section ──────────────────────────────────────────────────
     st.markdown(
-        '<h3 style="font-size:1.125rem;font-weight:600;color:#0d1117;margin:0 0 0.25rem;">Install App</h3>',
+        '<h3 style="font-size:1.125rem;font-weight:600;color:var(--color-text);margin:0 0 0.25rem;">Install App</h3>',
         unsafe_allow_html=True,
     )
     st.caption("Add Ascenda to your home screen for quick, full-screen access.")

@@ -43,7 +43,7 @@ _PAGE_CSS = """
 /* ── Section panel ────────────────────────────────────────── */
 .au-panel {
     background: #fff;
-    border: 1px solid #e4e8ec;
+    border: 1px solid var(--color-border);
     border-radius: 14px;
     padding: 1.375rem 1.5rem 1.125rem;
     box-shadow: 0 1px 3px rgba(15,23,42,0.05);
@@ -51,27 +51,27 @@ _PAGE_CSS = """
 }
 .au-panel-title {
     display: flex; align-items: center; gap: 8px;
-    font-size: 0.9375rem; font-weight: 700; color: #0d1117;
+    font-size: 0.9375rem; font-weight: 700; color: var(--color-text);
     margin: 0 0 0.25rem;
 }
 .au-panel-subtitle {
-    font-size: 0.8125rem; color: #57606a; margin: 0 0 1rem;
+    font-size: 0.8125rem; color: var(--color-text-muted); margin: 0 0 1rem;
 }
 .au-panel-icon {
-    width: 30px; height: 30px; border-radius: 8px; background: #eef2ff;
+    width: 30px; height: 30px; border-radius: 8px; background: var(--color-primary-subtle);
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
 /* ── Stat pills ────────────────────────────────────────────── */
 .au-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 0.875rem; }
 .au-pill {
-    background: #f6f8fa; border: 1px solid #e4e8ec; border-radius: 20px;
-    padding: 3px 12px; font-size: 0.8125rem; color: #57606a; line-height: 1.6;
+    background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 20px;
+    padding: 3px 12px; font-size: 0.8125rem; color: var(--color-text-muted); line-height: 1.6;
 }
-.au-pill strong { color: #0d1117; }
+.au-pill strong { color: var(--color-text); }
 /* ── User info card ────────────────────────────────────────── */
 .au-user-card {
     display: flex; align-items: center; gap: 12px;
-    background: #f6f8fa; border: 1px solid #e4e8ec; border-radius: 10px;
+    background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 10px;
     padding: 0.75rem 1rem; margin-bottom: 0.875rem;
 }
 .au-avatar {
@@ -80,28 +80,28 @@ _PAGE_CSS = """
     font-size: 0.9rem; font-weight: 700; color: #fff !important; flex-shrink: 0;
     letter-spacing: 0.02em;
 }
-.au-user-name { font-size: 0.9375rem; font-weight: 600; color: #0d1117; }
-.au-user-meta { font-size: 0.8rem; color: #57606a; margin-top: 2px; }
+.au-user-name { font-size: 0.9375rem; font-weight: 600; color: var(--color-text); }
+.au-user-meta { font-size: 0.8rem; color: var(--color-text-muted); margin-top: 2px; }
 /* ── Generated-password hint ──────────────────────────────── */
 .au-pw-hint {
-    font-size: 0.8125rem; color: #0d1117;
-    background: #f6f8fa; border-left: 3px solid #2563EB;
+    font-size: 0.8125rem; color: var(--color-text);
+    background: var(--color-surface-2); border-left: 3px solid var(--color-primary);
     border-radius: 0 6px 6px 0; padding: 6px 10px; margin-bottom: 0.5rem;
 }
 .au-pw-hint code {
-    background: #eef2ff; padding: 1px 6px; border-radius: 4px;
+    background: var(--color-primary-subtle); padding: 1px 6px; border-radius: 4px;
     font-size: 0.8rem; font-family: ui-monospace, monospace;
 }
 /* ── Sub-section divider ──────────────────────────────────── */
-.au-sub-divider { height: 1px; background: #e4e8ec; margin: 1.125rem 0; }
+.au-sub-divider { height: 1px; background: var(--color-border); margin: 1.125rem 0; }
 .au-sub-title {
     display: flex; align-items: center; gap: 7px;
-    font-size: 0.9rem; font-weight: 600; color: #0d1117;
+    font-size: 0.9rem; font-weight: 600; color: var(--color-text);
     margin-bottom: 0.75rem;
 }
 /* ── License usage bar ─────────────────────────────────────── */
 .au-license-bar-wrap {
-    background: #f6f8fa; border-radius: 6px; height: 10px;
+    background: var(--color-surface-2); border-radius: 6px; height: 10px;
     margin: 0.5rem 0 0.25rem; overflow: hidden;
 }
 .au-license-bar-fill {
@@ -109,7 +109,7 @@ _PAGE_CSS = """
     transition: width 0.3s ease;
 }
 .au-license-label {
-    font-size: 0.8rem; color: #57606a; margin-top: 2px;
+    font-size: 0.8rem; color: var(--color-text-muted); margin-top: 2px;
 }
 </style>
 """
@@ -325,7 +325,7 @@ def page_admin_users():
 
     if not sel:
         st.markdown(
-            '<p style="font-size:0.875rem;color:#8b949e;margin:0.25rem 0 0;">Select a user above to view and edit their account.</p>',
+            '<p style="font-size:0.875rem;color:var(--color-text-subtle);margin:0.25rem 0 0;">Select a user above to view and edit their account.</p>',
             unsafe_allow_html=True,
         )
         st.markdown("</div>", unsafe_allow_html=True)
