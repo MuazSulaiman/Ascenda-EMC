@@ -11,7 +11,7 @@ from sqlalchemy import text
 from auth import resolve_session_user
 from db_ops import query_df, query_scalar
 from widgets import set_current_page
-from ui import section_header
+from ui import section_header, html_table
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -46,7 +46,7 @@ def _date_rep_cust_where(key_prefix: str, rep_names: list, cust_names: list):
     fc1, fc2, fc3 = st.columns([2, 2, 2])
 
     with fc1:
-        preset = st.selectbox("Period", _PRESETS, index=1, key=f"{key_prefix}_period")
+        preset = st.selectbox("Period", _PRESETS, index=4, key=f"{key_prefix}_period")
         if preset == "Custom":
             date_from = st.date_input("From", value=today - timedelta(days=30), key=f"{key_prefix}_from")
             date_to   = st.date_input("To",   value=today,                      key=f"{key_prefix}_to")
@@ -121,7 +121,7 @@ def _transactional_table(
 
     paged_sql = data_sql if load_all else f"{data_sql} LIMIT {chunk}"
     df = query_df(paged_sql, params)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.markdown(html_table(df), unsafe_allow_html=True)
 
     with dlc:
         if total > 0:
@@ -133,24 +133,44 @@ def _transactional_table(
             )
 
 
-def _reference_table(df: pd.DataFrame, search_key: str, dl_filename: str, dl_key: str):
+def _reference_table(df: pd.DataFrame, search_key: str, dl_filename: str, dl_key: str, key_prefix: str):
     """
-    For small/static reference tables: add a free-text search box that filters
-    across all columns, show total count, render table, offer Download CSV.
+    For static reference tables: free-text search, paged display (same structure
+    as _transactional_table), and Download CSV.
     """
     q = st.text_input("Search", placeholder="type to filter…", key=search_key, label_visibility="collapsed")
     if q:
         mask = df.apply(lambda col: col.astype(str).str.contains(q, case=False, na=False)).any(axis=1)
         df   = df[mask]
 
-    st.markdown(f"**{len(df):,} records**")
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    if not df.empty:
-        st.download_button(
-            "Download CSV",
-            df.to_csv(index=False).encode("utf-8-sig"),
-            dl_filename, "text/csv", key=dl_key,
-        )
+    # Reset load-all when search changes
+    if st.session_state.get(f"{key_prefix}_sq") != q:
+        st.session_state[f"{key_prefix}_sq"]       = q
+        st.session_state[f"{key_prefix}_load_all"] = False
+
+    total    = len(df)
+    load_all = st.session_state.get(f"{key_prefix}_load_all", False)
+    showing  = total if load_all else min(_CHUNK, total)
+    display  = df if load_all else df.head(_CHUNK)
+
+    bc, btnc, dlc = st.columns([4, 2, 2])
+    with bc:
+        st.markdown(f"**Showing {showing:,} of {total:,}**")
+    with btnc:
+        if not load_all and total > _CHUNK:
+            if st.button(f"Load all {total:,} rows", key=f"{key_prefix}_load_btn"):
+                st.session_state[f"{key_prefix}_load_all"] = True
+                st.rerun()
+
+    st.markdown(html_table(display), unsafe_allow_html=True)
+
+    with dlc:
+        if total > 0:
+            st.download_button(
+                f"Download CSV ({total:,})",
+                df.to_csv(index=False).encode("utf-8-sig"),
+                dl_filename, "text/csv", key=dl_key,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +255,17 @@ def page_admin_data():
     # ------------------------------------------------------------------ Visits
     with tab1:
         where_sql, params = _date_rep_cust_where("v", _rep_names, _cust_names)
+
+        v_search = st.text_input("Search", placeholder="type to filter…", key="v_search", label_visibility="collapsed")
+        if v_search:
+            params["v_search"] = f"%{v_search}%"
+            search_clause = (
+                "(v.visit_id::text ILIKE :v_search OR u.name ILIKE :v_search "
+                "OR c.account_name ILIKE :v_search OR o.name ILIKE :v_search "
+                "OR v.notes ILIKE :v_search)"
+            )
+            where_sql = (where_sql + f" AND {search_clause}") if where_sql else f"WHERE {search_clause}"
+
         visit_where = ("WHERE COALESCE(v.is_deleted, FALSE) IS FALSE" +
                        (" AND " + where_sql[len("WHERE "):] if where_sql.startswith("WHERE ") else ""))
 
@@ -245,6 +276,7 @@ def page_admin_data():
                 FROM visits v
                 JOIN users u     ON v.user_id     = u.user_id
                 JOIN customers c ON v.customer_id = c.customer_id
+                JOIN objectives o ON v.objective_id = o.objective_id
                 {visit_where}
             """,
             data_sql    = f"""
@@ -298,12 +330,38 @@ def page_admin_data():
     # ------------------------------------------------------------------ Users
     with tab2:
         df = query_df("SELECT user_id, email, name, region, role, is_active FROM users ORDER BY user_id DESC")
-        _reference_table(df, "search_users", "users.csv", "dl_users")
+        _reference_table(df, "search_users", "users.csv", "dl_users", "users")
 
     # --------------------------------------------------------------- Customers
     with tab3:
         df = query_df("SELECT * FROM customers ORDER BY account_name")
-        _reference_table(df, "search_customers", "customers.csv", "dl_customers")
+
+        # ---- Sector / Region / City filters ----
+        all_sectors = sorted(df["sector"].dropna().str.strip().unique().tolist())
+        all_regions = sorted(df["region"].dropna().str.strip().unique().tolist())
+
+        fc1, fc2, fc3 = st.columns(3)
+        with fc1:
+            sel_sectors = st.multiselect("Sector", all_sectors, key="cust_filter_sector")
+        with fc2:
+            sel_regions = st.multiselect("Region", all_regions, key="cust_filter_region")
+        with fc3:
+            if sel_regions:
+                city_pool = df[df["region"].isin(sel_regions)]
+            else:
+                city_pool = df
+            all_cities = sorted(city_pool["city"].dropna().str.strip().unique().tolist())
+            sel_cities = st.multiselect("City", all_cities, key="cust_filter_city")
+
+        # Apply filters
+        if sel_sectors:
+            df = df[df["sector"].isin(sel_sectors)]
+        if sel_regions:
+            df = df[df["region"].isin(sel_regions)]
+        if sel_cities:
+            df = df[df["city"].isin(sel_cities)]
+
+        _reference_table(df, "search_customers", "customers.csv", "dl_customers", "customers")
 
     # --------------------------------------------------- Target Audiences
     with tab4:
@@ -314,12 +372,33 @@ def page_admin_data():
             LEFT JOIN customers c ON c.customer_id = ta.customer_id
             ORDER BY ta.audience_id DESC
         """)
-        _reference_table(df, "search_audiences", "target_audiences.csv", "dl_audiences")
+
+        # ---- Customer / Department / Position filters ----
+        all_customers  = sorted(df["account_name"].dropna().str.strip().unique().tolist())
+        all_depts      = sorted(df["department"].dropna().str.strip().unique().tolist())
+        all_positions  = sorted(df["position"].dropna().str.strip().unique().tolist())
+
+        fc1, fc2, fc3 = st.columns(3)
+        with fc1:
+            sel_ta_custs = st.multiselect("Customer", all_customers, key="ta_filter_customer")
+        with fc2:
+            sel_ta_depts = st.multiselect("Department", all_depts, key="ta_filter_dept")
+        with fc3:
+            sel_ta_pos   = st.multiselect("Position", all_positions, key="ta_filter_pos")
+
+        if sel_ta_custs:
+            df = df[df["account_name"].isin(sel_ta_custs)]
+        if sel_ta_depts:
+            df = df[df["department"].isin(sel_ta_depts)]
+        if sel_ta_pos:
+            df = df[df["position"].isin(sel_ta_pos)]
+
+        _reference_table(df, "search_audiences", "target_audiences.csv", "dl_audiences", "audiences")
 
     # --------------------------------------------------- Business Units
     with tab5:
         df = query_df("SELECT business_unit_id, name, is_active FROM business_units ORDER BY name")
-        _reference_table(df, "search_bus", "business_units.csv", "dl_business_units")
+        _reference_table(df, "search_bus", "business_units.csv", "dl_business_units", "bus")
 
     # --------------------------------------------------- Business Lines
     with tab6:
@@ -331,7 +410,7 @@ def page_admin_data():
             JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
             ORDER BY bu.name, bl.name
         """)
-        _reference_table(df, "search_bls", "business_lines.csv", "dl_business_lines")
+        _reference_table(df, "search_bls", "business_lines.csv", "dl_business_lines", "bls")
 
     # --------------------------------------------------------------- Items
     with tab7:
@@ -343,12 +422,12 @@ def page_admin_data():
             JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
             ORDER BY COALESCE(i.article_number, i.product_id)
         """)
-        _reference_table(df, "search_items", "items.csv", "dl_items")
+        _reference_table(df, "search_items", "items.csv", "dl_items", "items")
 
     # ----------------------------------------------------------- Objectives
     with tab8:
         df = query_df("SELECT * FROM objectives ORDER BY objective_id")
-        _reference_table(df, "search_objectives", "objectives.csv", "dl_objectives")
+        _reference_table(df, "search_objectives", "objectives.csv", "dl_objectives", "objectives")
 
     # --------------------------------------------------------------- Home Visits
     with tab9:

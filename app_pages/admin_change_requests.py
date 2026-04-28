@@ -442,26 +442,11 @@ def _render_force_tab(admin_uid: int):
     visit_options = [""] + [_vlabel(r) for _, r in filtered.iterrows()]
     visit_id_map  = {_vlabel(r): int(r["visit_id"]) for _, r in filtered.iterrows()}
 
-    prev_vid     = st.session_state.get(f"{NS}_snap_vid")
-    chosen_label = st.selectbox("Select a visit:", visit_options, key=f"{NS}_visit_sel")
-
-    if not chosen_label:
-        st.info("Select a visit above to start a forced adjustment.")
-        return
-
-    visit_id = visit_id_map[chosen_label]
-
-    # Prefill session state when visit changes
-    if prev_vid != visit_id:
-        snap = _fa_load_visit_snap(visit_id)
-        if not snap:
-            st.error("Visit not found.")
-            return
-        # Clear old form state
+    def _prefill_visit_snap(snap, visit_id: int):
+        """Write visit snap values into session state. Called from on_change only."""
         for k in list(st.session_state.keys()):
             if k.startswith(f"{NS}_") and k not in (f"{NS}_search", f"{NS}_visit_sel"):
                 del st.session_state[k]
-        # Pre-fill
         st.session_state[f"{NS}_snap"]     = snap
         st.session_state[f"{NS}_snap_vid"] = visit_id
         st.session_state[f"{NS}_notes"]    = _norm(snap.get("notes"))
@@ -472,7 +457,6 @@ def _render_force_tab(admin_uid: int):
         st.session_state[f"{NS}_lat"] = "" if lat is None else str(lat)
         st.session_state[f"{NS}_lon"] = "" if lon is None else str(lon)
         st.session_state[f"{NS}_acc"] = "" if acc is None else str(acc)
-        # Date/time prefill
         raw_dt = snap.get("submitted_at_local")
         try:
             parsed = pd.to_datetime(raw_dt, errors="coerce")
@@ -484,7 +468,6 @@ def _render_force_tab(admin_uid: int):
             st.session_state[f"{NS}_date"] = datetime.date.today()
             st.session_state[f"{NS}_hour"] = 0
             st.session_state[f"{NS}_minute"] = 0
-        # Prefill cascading customer selectors from snap
         cust_df_snap = query_df(
             "SELECT region, city, sector FROM customers WHERE customer_id = :cid LIMIT 1",
             {"cid": int(snap["customer_id"])},
@@ -499,11 +482,10 @@ def _render_force_tab(admin_uid: int):
         st.session_state[f"{NS}_cid_locked"] = False
         st.session_state[f"{NS}_acct_input"] = ""
         st.session_state[f"{NS}_qf_msg"]     = ""
-        st.session_state[f"{NS}_qf_msg_type"]= ""
-        if snap.get("audience_id"):
-            st.session_state[f"{NS}_aud_sel"] = _audience_label_for_id(int(snap["audience_id"]))
-        else:
-            st.session_state[f"{NS}_aud_sel"] = ""
+        st.session_state[f"{NS}_qf_msg_type"] = ""
+        st.session_state[f"{NS}_aud_sel"] = (
+            _audience_label_for_id(int(snap["audience_id"])) if snap.get("audience_id") else ""
+        )
         bl_id = _safe_int(snap.get("business_line_id"))
         if bl_id:
             infer = _infer_bu_cat_bl(bl_id)
@@ -514,16 +496,41 @@ def _render_force_tab(admin_uid: int):
             st.session_state[f"{NS}_bu_sel"]  = ""
             st.session_state[f"{NS}_cat_sel"] = ""
             st.session_state[f"{NS}_bl_sel"]  = ""
-        if snap.get("product_id"):
-            st.session_state[f"{NS}_prod_sel"] = _fa_product_label_for_id(_norm(snap["product_id"]))
-        else:
-            st.session_state[f"{NS}_prod_sel"] = ""
+        st.session_state[f"{NS}_prod_sel"] = (
+            _fa_product_label_for_id(_norm(snap["product_id"])) if snap.get("product_id") else ""
+        )
         st.session_state[f"{NS}_obj_sel"] = _norm(snap.get("objective_name"))
-        st.rerun()
+
+    def _on_visit_sel_change():
+        """on_change for the visit selectbox — only fires when user actually changes it."""
+        label = st.session_state.get(f"{NS}_visit_sel", "")
+        if not label or label not in visit_id_map:
+            return
+        new_vid = visit_id_map[label]
+        if st.session_state.get(f"{NS}_snap_vid") == new_vid:
+            return
+        snap = _fa_load_visit_snap(new_vid)
+        if snap:
+            _prefill_visit_snap(snap, new_vid)
+
+    chosen_label = st.selectbox(
+        "Select a visit:", visit_options, key=f"{NS}_visit_sel",
+        on_change=_on_visit_sel_change,
+    )
+
+    if not chosen_label or chosen_label not in visit_id_map:
+        st.info("Select a visit above to start a forced adjustment.")
+        return
+
+    visit_id = visit_id_map[chosen_label]
 
     snap = st.session_state.get(f"{NS}_snap")
-    if not snap:
-        return
+    if not snap or st.session_state.get(f"{NS}_snap_vid") != visit_id:
+        snap = _fa_load_visit_snap(visit_id)
+        if not snap:
+            st.error("Visit not found.")
+            return
+        _prefill_visit_snap(snap, visit_id)
 
     # ── Visit summary ─────────────────────────────────────────────────────────
     rep_df   = query_df("SELECT name FROM users WHERE user_id=:uid", {"uid": int(snap["user_id"])})
@@ -868,6 +875,118 @@ def _render_force_tab(admin_uid: int):
                 st.error(f"Failed to apply: {err_msg}")
 
 
+
+
+def _render_review_pending_tab(admin_uid: int):
+    success_key = f"{PAGE_NS}_review_success"
+    if st.session_state.get(success_key):
+        st.success(st.session_state.pop(success_key))
+
+    pending_df = _load_pending()
+    count = len(pending_df)
+
+    if count == 0:
+        st.info("No pending change requests.")
+    else:
+        st.markdown(
+            status_badge(f"{count} request{'s' if count != 1 else ''} pending review", "warning"),
+            unsafe_allow_html=True,
+        )
+        st.markdown("")
+
+        def _label(row) -> str:
+            date_str = pd.to_datetime(row["request_date"]).strftime("%b %d") if pd.notna(row["request_date"]) else "?"
+            n = int(row["fields_changed"])
+            return f"Request #{int(row['request_id'])} — Visit #{int(row['visit_id'])} — {row['rep_name']} — {date_str} ({n} field{'s' if n != 1 else ''})"
+
+        options = {_label(row): row for _, row in pending_df.iterrows()}
+        option_labels = [""] + list(options.keys())
+
+        preselect_id = st.session_state.pop("_admin_preselect_id", None)
+        if preselect_id is not None:
+            for lbl in options:
+                if f"Request #{preselect_id}" in lbl:
+                    st.session_state[f"{PAGE_NS}_sel"] = lbl
+                    break
+
+        # Keep the dropdown safe when pending requests change between reruns.
+        if st.session_state.get(f"{PAGE_NS}_sel", "") not in option_labels:
+            st.session_state[f"{PAGE_NS}_sel"] = ""
+
+        chosen_label = st.selectbox(
+            "Select a request to review:",
+            option_labels,
+            key=f"{PAGE_NS}_sel",
+            format_func=lambda x: "" if x == "" else x,
+        )
+
+        if not chosen_label:
+            st.info("Please select a request to review.")
+            return
+
+        sel = options[chosen_label]
+        request_id = int(sel["request_id"])
+        visit_id   = int(sel["visit_id"])
+
+        ctx = _load_visit_context(visit_id)
+        if ctx:
+            date_str = pd.to_datetime(ctx.get("submitted_at_local")).strftime("%d/%m/%Y") if pd.notna(ctx.get("submitted_at_local")) else "—"
+            st.info(
+                f"**Visit #{visit_id}**  \n"
+                f"Customer: {ctx.get('customer_name', '—')}  \n"
+                f"Rep: {ctx.get('rep_name', '—')}  \n"
+                f"Date: {date_str}  \n"
+                f"Business Line: {ctx.get('business_line', '—')}"
+            )
+
+        if pd.notna(sel.get("request_note")) and sel.get("request_note"):
+            st.info(f"**Rep note:** \"{sel['request_note']}\"")
+
+        diff_df = _load_diff(request_id)
+        if not diff_df.empty:
+            _render_diff_table(diff_df)
+        else:
+            st.warning("No field details found for this request.")
+
+        st.markdown("---")
+        col_approve, col_reject = st.columns(2)
+
+        with col_approve:
+            st.markdown("**Approve**")
+            if st.button("✅ Approve & Apply Changes", type="primary", key=f"{PAGE_NS}_approve_{request_id}"):
+                ok, err = _apply_changes(request_id, visit_id, admin_uid)
+                if ok:
+                    st.session_state[success_key] = f"Request #{request_id} approved — changes applied to Visit #{visit_id}."
+                    st.rerun()
+                else:
+                    st.error(f"Apply failed: {err}")
+
+        with col_reject:
+            st.markdown("**Reject**")
+            reject_note = st.text_area(
+                "Rejection reason (required)",
+                key=f"{PAGE_NS}_reject_note_{request_id}",
+                placeholder="Explain why the request is rejected.",
+            )
+            if st.button("❌ Reject Request", type="secondary", key=f"{PAGE_NS}_reject_{request_id}"):
+                if not reject_note or not reject_note.strip():
+                    st.error("Rejection reason is required.")
+                else:
+                    exec_sql(
+                        """
+                        UPDATE request_changes
+                        SET status = 'REJECTED',
+                            reject_note = :note,
+                            resolve_date = NOW(),
+                            changed_by = :admin_uid
+                        WHERE request_id = :rid
+                        """,
+                        {"note": reject_note.strip(), "admin_uid": admin_uid, "rid": request_id},
+                    )
+                    st.session_state[success_key] = f"Request #{request_id} rejected."
+                    st.rerun()
+
+
 def page_admin_change_requests():
     set_current_page(PAGE_NS)
 
@@ -889,117 +1008,25 @@ def page_admin_change_requests():
 
     section_header("Review Change Requests", "Force adjustments, approve or reject rep requests")
 
-    tab_force, tab_review, tab_history = st.tabs(["⚡ Force Adjust", "🔍 Review Pending", "📋 All Requests"])
+    # NOTE:
+    # st.tabs() resets visually to the first tab whenever any widget reruns the page.
+    # A session-state controlled segmented control keeps the selected section stable
+    # after changing dropdowns/selectboxes inside Review Pending or All Requests.
+    active_tab = st.radio(
+        "Admin Change Requests Section",
+        ["⚡ Force Adjust", "🔍 Review Pending", "📋 All Requests"],
+        key=f"{PAGE_NS}_active_tab",
+        horizontal=True,
+        label_visibility="collapsed",
+    )
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 0 — Force Adjustment
-    # ──────────────────────────────────────────────────────────────────────────
-    with tab_force:
+    if active_tab == "⚡ Force Adjust":
         _render_force_tab(admin_uid)
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 1 — Review Pending
-    # ──────────────────────────────────────────────────────────────────────────
-    with tab_review:
-        success_key = f"{PAGE_NS}_review_success"
-        if st.session_state.get(success_key):
-            st.success(st.session_state.pop(success_key))
+    elif active_tab == "🔍 Review Pending":
+        _render_review_pending_tab(admin_uid)
 
-        pending_df = _load_pending()
-        count = len(pending_df)
-
-        if count == 0:
-            st.info("No pending change requests.")
-        else:
-            st.markdown(
-                status_badge(f"{count} request{'s' if count != 1 else ''} pending review", "warning"),
-                unsafe_allow_html=True,
-            )
-            st.markdown("")
-
-            def _label(row) -> str:
-                date_str = pd.to_datetime(row["request_date"]).strftime("%b %d") if pd.notna(row["request_date"]) else "?"
-                n = int(row["fields_changed"])
-                return f"Request #{int(row['request_id'])} — Visit #{int(row['visit_id'])} — {row['rep_name']} — {date_str} ({n} field{'s' if n != 1 else ''})"
-
-            options = {_label(row): row for _, row in pending_df.iterrows()}
-            preselect_id = st.session_state.pop("_admin_preselect_id", None)
-            if preselect_id is not None:
-                for lbl in options:
-                    if f"Request #{preselect_id}" in lbl:
-                        st.session_state[f"{PAGE_NS}_sel"] = lbl
-                        break
-            chosen_label = st.selectbox(
-                "Select a request to review:",
-                list(options.keys()),
-                key=f"{PAGE_NS}_sel",
-            )
-            sel = options[chosen_label]
-            request_id = int(sel["request_id"])
-            visit_id   = int(sel["visit_id"])
-
-            ctx = _load_visit_context(visit_id)
-            if ctx:
-                date_str = pd.to_datetime(ctx.get("submitted_at_local")).strftime("%d/%m/%Y") if pd.notna(ctx.get("submitted_at_local")) else "—"
-                st.info(
-                    f"**Visit #{visit_id}**  \n"
-                    f"Customer: {ctx.get('customer_name', '—')}  \n"
-                    f"Rep: {ctx.get('rep_name', '—')}  \n"
-                    f"Date: {date_str}  \n"
-                    f"Business Line: {ctx.get('business_line', '—')}"
-                )
-
-            if pd.notna(sel.get("request_note")) and sel.get("request_note"):
-                st.info(f"**Rep note:** \"{sel['request_note']}\"")
-
-            diff_df = _load_diff(request_id)
-            if not diff_df.empty:
-                _render_diff_table(diff_df)
-            else:
-                st.warning("No field details found for this request.")
-
-            st.markdown("---")
-            col_approve, col_reject = st.columns(2)
-
-            with col_approve:
-                st.markdown("**Approve**")
-                if st.button("✅ Approve & Apply Changes", type="primary", key=f"{PAGE_NS}_approve_{request_id}"):
-                    ok, err = _apply_changes(request_id, visit_id, admin_uid)
-                    if ok:
-                        st.session_state[success_key] = f"Request #{request_id} approved — changes applied to Visit #{visit_id}."
-                        st.rerun()
-                    else:
-                        st.error(f"Apply failed: {err}")
-
-            with col_reject:
-                st.markdown("**Reject**")
-                reject_note = st.text_area(
-                    "Rejection reason (required)",
-                    key=f"{PAGE_NS}_reject_note_{request_id}",
-                    placeholder="Explain why the request is rejected.",
-                )
-                if st.button("❌ Reject Request", type="secondary", key=f"{PAGE_NS}_reject_{request_id}"):
-                    if not reject_note or not reject_note.strip():
-                        st.error("Rejection reason is required.")
-                    else:
-                        exec_sql(
-                            """
-                            UPDATE request_changes
-                            SET status = 'REJECTED',
-                                reject_note = :note,
-                                resolve_date = NOW(),
-                                changed_by = :admin_uid
-                            WHERE request_id = :rid
-                            """,
-                            {"note": reject_note.strip(), "admin_uid": admin_uid, "rid": request_id},
-                        )
-                        st.session_state[success_key] = f"Request #{request_id} rejected."
-                        st.rerun()
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 2 — All Requests (History)
-    # ──────────────────────────────────────────────────────────────────────────
-    with tab_history:
+    elif active_tab == "📋 All Requests":
         _render_history_tab()
 
 

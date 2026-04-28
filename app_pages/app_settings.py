@@ -32,8 +32,8 @@ def _save_prefs(uid: int, prefs: dict):
 def _section_label(icon_svg: str, text: str):
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:7px;padding:1.1rem 0 0.45rem;">'
-        f'<span style="display:flex;align-items:center;color:#8b949e;">{icon_svg}</span>'
-        f'<span style="font-size:0.68rem;font-weight:700;color:#8b949e;'
+        f'<span style="display:flex;align-items:center;color:var(--color-text-subtle);">{icon_svg}</span>'
+        f'<span style="font-size:0.68rem;font-weight:700;color:var(--color-text-subtle);'
         f'text-transform:uppercase;letter-spacing:0.09em;">{text}</span></div>',
         unsafe_allow_html=True,
     )
@@ -43,7 +43,7 @@ def _coming_soon_pill() -> str:
     return (
         '<span style="display:inline-flex;align-items:center;padding:1px 7px;'
         'border-radius:20px;font-size:0.68rem;font-weight:600;line-height:1.6;'
-        'background:#f0f6ff;color:#2563eb;border:1px solid #bfdbfe;'
+        'background:var(--color-primary-subtle);color:var(--color-primary);border:1px solid var(--color-border);'
         'margin-left:7px;vertical-align:middle;">Coming soon</span>'
     )
 
@@ -60,10 +60,10 @@ def _setting_row(
         pill = _coming_soon_pill() if coming_soon else ""
         st.markdown(
             f'<div style="padding:6px 0;">'
-            f'<div style="font-size:0.9375rem;font-weight:500;color:#0d1117;'
+            f'<div style="font-size:0.9375rem;font-weight:500;color:var(--color-text);'
             f'display:flex;align-items:center;flex-wrap:wrap;gap:0;">'
             f'{title}{pill}</div>'
-            f'<div style="font-size:0.8rem;color:#57606a;margin-top:3px;">{description}</div>'
+            f'<div style="font-size:0.8rem;color:var(--color-text-muted);margin-top:3px;">{description}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -113,7 +113,6 @@ def page_app_settings():
             "Darker interface for low-light environments",
             "app_settings_theme",
             theme_is_dark,
-            coming_soon=True,
         )
         st.divider()
         col_save, col_msg = st.columns([1, 3])
@@ -128,10 +127,21 @@ def page_app_settings():
             prefs["language"] = "ar" if new_lang_ar else "en"
             prefs["theme"]    = "dark" if new_dark else "light"
             _save_prefs(uid, prefs)
+            _new_theme = prefs["theme"]
+            components.html(
+                f'<script>'
+                f'(function(){{var t={repr(_new_theme)};'
+                f'try{{localStorage.setItem("_ascenda_theme",t);}}catch(e){{}}'
+                f'try{{var d=window.parent!==window?window.parent.document:document;'
+                f'd.documentElement.setAttribute("data-theme",t);}}catch(e){{}}'
+                f'}})();'
+                f'</script>',
+                height=0,
+            )
             with col_msg:
                 st.markdown(
                     '<div style="display:flex;align-items:center;height:100%;padding-top:6px;">'
-                    '<span style="font-size:0.875rem;color:#0e8a4f;font-weight:500;">'
+                    '<span style="font-size:0.875rem;color:var(--status-success-text);font-weight:500;">'
                     '&#10003;&nbsp; Preferences saved</span></div>',
                     unsafe_allow_html=True,
                 )
@@ -148,14 +158,14 @@ def page_app_settings():
     with st.container(border=True):
         st.markdown(
             '<div style="display:flex;align-items:flex-start;gap:12px;padding:4px 0 8px;">'
-            '<div style="width:36px;height:36px;border-radius:9px;background:#eef2ff;'
+            '<div style="width:36px;height:36px;border-radius:9px;background:var(--color-primary-subtle);'
             'display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;">'
-            '<svg width="18" height="18" fill="none" stroke="#2563eb" stroke-width="2" viewBox="0 0 24 24">'
+            '<svg width="18" height="18" fill="none" stroke="var(--color-primary)" stroke-width="2" viewBox="0 0 24 24">'
             '<path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/>'
             '</svg></div>'
             '<div>'
-            '<div style="font-size:0.9375rem;font-weight:500;color:#0d1117;">Install App</div>'
-            '<div style="font-size:0.8rem;color:#57606a;margin-top:2px;line-height:1.5;">'
+            '<div style="font-size:0.9375rem;font-weight:500;color:var(--color-text);">Install App</div>'
+            '<div style="font-size:0.8rem;color:var(--color-text-muted);margin-top:2px;line-height:1.5;">'
             'Add Ascenda to your home screen for quick, full-screen access — no app store needed.</div>'
             '</div>'
             '</div>',
@@ -184,6 +194,10 @@ def page_app_settings():
     display: none; color: #0e8a4f; font-size: 14px; font-weight: 500;
     display: none; align-items: center; gap: 6px;
   }
+  /* dark mode overrides */
+  body.dark #install-btn:disabled { background: #30363d; color: #8b949e; }
+  body.dark #ios-guide { background: #0d1b2e; border-color: #1d3557; color: #79c0ff; }
+  body.dark #already-msg { color: #3fb950; }
 </style>
 <div id="iw">
   <button id="install-btn">
@@ -204,6 +218,10 @@ def page_app_settings():
 </div>
 <script>
 (function() {
+  try {
+    var t = window.parent.document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') document.body.classList.add('dark');
+  } catch(e) {}
   const btn = document.getElementById('install-btn');
   const iosGuide = document.getElementById('ios-guide');
   const alreadyMsg = document.getElementById('already-msg');

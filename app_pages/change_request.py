@@ -884,10 +884,10 @@ def page_change_request():
             st.markdown(
                 "<style>"
                 "div[class*='st-key-change_request'][class*='withdraw'] button {"
-                "  border-color:#dc2626!important; color:#dc2626!important;"
+                "  border-color:var(--status-danger-text)!important; color:var(--status-danger-text)!important;"
                 "}"
                 "div[class*='st-key-change_request'][class*='withdraw'] button:hover {"
-                "  background-color:#dc2626!important; color:#fff!important;"
+                "  background-color:var(--status-danger-text)!important; color:#fff!important;"
                 "}"
                 "</style>",
                 unsafe_allow_html=True,
@@ -953,20 +953,20 @@ def page_change_request():
                         badge = status_badge(status_val, _BADGE_MAP.get(status_val, "neutral"))
                         if is_delete:
                             source_badge = (
-                                '<span style="font-size:0.75rem;font-weight:600;color:#991b1b;'
-                                'background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;'
+                                '<span style="font-size:0.75rem;font-weight:600;color:var(--status-danger-text);'
+                                'background:var(--status-danger-bg);border:1px solid var(--status-danger-text);border-radius:4px;'
                                 'padding:1px 7px;">🗑️ Deleted</span>'
                             )
                         elif is_force:
                             source_badge = (
-                                '<span style="font-size:0.75rem;font-weight:600;color:#b45309;'
-                                'background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;'
+                                '<span style="font-size:0.75rem;font-weight:600;color:var(--status-warning-text);'
+                                'background:var(--status-warning-bg);border:1px solid var(--status-warning-text);border-radius:4px;'
                                 'padding:1px 7px;">⚡ Force</span>'
                             )
                         else:
                             source_badge = (
-                                '<span style="font-size:0.75rem;font-weight:600;color:#1d4ed8;'
-                                'background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;'
+                                '<span style="font-size:0.75rem;font-weight:600;color:var(--status-info-text);'
+                                'background:var(--status-info-bg);border:1px solid var(--status-info-text);border-radius:4px;'
                                 'padding:1px 7px;">👤 Rep</span>'
                             )
 

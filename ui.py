@@ -30,15 +30,19 @@ from widgets import _reset_location_state_for_page
 
 
 def get_logo_base64() -> str:
-    """
-    Read logo from your Git repo static folder and return it as base64 string.
-    Adjust the relative path if your app file is in a subfolder.
-    """
     logo_path = Path(__file__).parent / "static" / "Login_Logo.png"
     try:
         with open(logo_path, "rb") as f:
-            data = f.read()
-        return base64.b64encode(data).decode("utf-8")
+            return base64.b64encode(f.read()).decode("utf-8")
+    except Exception:
+        return ""
+
+
+def get_main_logo_base64() -> str:
+    logo_path = Path(__file__).parent / "static" / "Main Logo.png"
+    try:
+        with open(logo_path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
     except Exception:
         return ""
 
@@ -113,6 +117,26 @@ def capture_client_fingerprints():
             # Library unavailable — mark checked so we don't spin forever
             st.session_state["_sid_checked"] = True
 
+    # Write-back: persist the current SID to localStorage via streamlit_js_eval.
+    # components.html() iframes may run in a different sandbox context and cannot
+    # reliably write to the same localStorage that streamlit_js_eval reads from,
+    # causing the SID to be missing on page refresh.  Using streamlit_js_eval for
+    # both the read (above) and write ensures they share the same origin context.
+    if streamlit_js_eval and "_stored_sid" in st.session_state and "_sid_ls_written" not in st.session_state:
+        import uuid as _uuid
+        if "_sid_write_key" not in st.session_state:
+            st.session_state["_sid_write_key"] = f"_write_sid_{_uuid.uuid4().hex}"
+        _sid_to_write = st.session_state["_stored_sid"]
+        try:
+            _write_result = streamlit_js_eval(
+                js_expressions=f"localStorage.setItem('_ascenda_sid',{repr(_sid_to_write)});'written'",
+                key=st.session_state["_sid_write_key"],
+            )
+            if _write_result == "written":
+                st.session_state["_sid_ls_written"] = True
+        except Exception:
+            pass
+
 
 def apply_role_based_layout():
     """
@@ -151,7 +175,8 @@ def apply_role_based_layout():
 
 def login_block():
     app_root = Path(__file__).parent
-    logo_path = app_root / "static" / "Login_Logo.png"
+    logo_light_path = app_root / "static" / "Login_Logo.png"
+    logo_dark_path  = app_root / "static" / "Main Logo.png"
 
     # Override: light blue-tinted page bg for login, strip main block card style
     st.markdown("""
@@ -163,17 +188,27 @@ def login_block():
         border: none !important;
         max-width: 100% !important;
     }
+    .login-logo-dark  { display: none; }
+    html[data-theme="dark"] .login-logo-light { display: none; }
+    html[data-theme="dark"] .login-logo-dark  { display: inline-block; }
     </style>
     """, unsafe_allow_html=True)
 
     _, col, _ = st.columns([1, 1.6, 1])
     with col:
-        if logo_path.exists():
-            b64 = _img_b64(logo_path)
+        light_b64 = _img_b64(logo_light_path) if logo_light_path.exists() else ""
+        dark_b64  = _img_b64(logo_dark_path)  if logo_dark_path.exists()  else ""
+        if light_b64 or dark_b64:
+            _light = (
+                f'<img class="login-logo-light" src="data:image/png;base64,{light_b64}" alt="Ascenda" style="width:200px;height:auto;" />'
+                if light_b64 else ""
+            )
+            _dark = (
+                f'<img class="login-logo-dark" src="data:image/png;base64,{dark_b64}" alt="Ascenda" style="width:200px;height:auto;" />'
+                if dark_b64 else ""
+            )
             st.markdown(
-                f'<div style="text-align:center;margin-bottom:1.5rem;">'
-                f'<img src="data:image/png;base64,{b64}" alt="Ascenda"'
-                f' style="width:200px;height:auto;" /></div>',
+                f'<div style="text-align:center;margin-bottom:1.5rem;">{_light}{_dark}</div>',
                 unsafe_allow_html=True,
             )
 
@@ -267,16 +302,18 @@ def _do_logout():
         delete_session(sid)
 
     set_url_session_param(None)
-    # Clear the SID from browser localStorage so the tab cannot re-auth.
-    import streamlit.components.v1 as _comp
-    _comp.html(
-        '<script>'
-        'localStorage.removeItem("_ascenda_sid");'
-        'localStorage.removeItem("_ascenda_theme");'
-        '</script>',
-        height=0,
-    )
+    # Clear the SID from browser localStorage via streamlit_js_eval (reliable same-origin access).
+    if streamlit_js_eval:
+        try:
+            streamlit_js_eval(
+                js_expressions="localStorage.removeItem('_ascenda_sid');localStorage.removeItem('_ascenda_theme');'cleared'",
+                key="_clear_sid_logout",
+            )
+        except Exception:
+            pass
     st.session_state.pop("_sid_checked", None)
+    st.session_state.pop("_sid_ls_written", None)
+    st.session_state.pop("_sid_write_key", None)
 
     st.session_state.user = None
     st.session_state.pop("_current_page", None)
@@ -307,6 +344,9 @@ def sidebar_nav():
             border-bottom: 1px solid var(--color-border) !important;
             margin-bottom: 0.5rem !important;
         }
+        .ascenda-logo-wrap .logo-dark { display: none; }
+        html[data-theme="dark"] .ascenda-logo-wrap .logo-light { display: none; }
+        html[data-theme="dark"] .ascenda-logo-wrap .logo-dark  { display: block; }
 
         /* Collapse Streamlit's default element margins inside sidebar */
         section[data-testid="stSidebar"] .stMarkdown {
@@ -414,17 +454,23 @@ def sidebar_nav():
         "Admin: Import Lookups":   '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
         "Admin: Data Browser":     '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
         "Admin: Users":            '<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+        "App Settings":            '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
     }
     _ICON_DEFAULT = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg>'
 
     # ── Logo (built into nav block below to avoid Streamlit element gap) ────
-    logo_b64 = get_logo_base64()
-    if logo_b64:
-        _logo_html = (
-            f'<div class="ascenda-logo-wrap">'
-            f'<img src="data:image/png;base64,{logo_b64}" alt="Ascenda"'
-            f' style="width:150px;height:auto;" /></div>'
+    logo_light_b64 = get_logo_base64()
+    logo_dark_b64  = get_main_logo_base64()
+    if logo_light_b64 or logo_dark_b64:
+        _light_img = (
+            f'<img class="logo-light" src="data:image/png;base64,{logo_light_b64}" alt="Ascenda" style="width:150px;height:auto;" />'
+            if logo_light_b64 else ""
         )
+        _dark_img = (
+            f'<img class="logo-dark" src="data:image/png;base64,{logo_dark_b64}" alt="Ascenda" style="width:150px;height:auto;" />'
+            if logo_dark_b64 else ""
+        )
+        _logo_html = f'<div class="ascenda-logo-wrap">{_light_img}{_dark_img}</div>'
     else:
         _logo_html = '<div class="ascenda-logo-wrap"><strong style="font-size:1.1rem;color:var(--color-text);">Ascenda</strong></div>'
 
@@ -876,6 +922,69 @@ def kpi_card_v2(
         f'</div>'
         f'{icon_html}'
         f'</div>'
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THEMED HTML TABLE (replaces st.dataframe for dark-mode compatibility)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def html_table(df, max_rows: int = 500, max_height: int = 400) -> str:
+    """Return a fully theme-aware HTML table string from a DataFrame.
+
+    st.dataframe() uses a canvas renderer that ignores CSS variables, so in
+    custom dark mode the table background stays white. Use this instead and
+    render with st.markdown(..., unsafe_allow_html=True).
+    """
+    import html as _html
+
+    cols = list(df.columns)
+
+    rows_html = ""
+    for i, (_, row) in enumerate(df.head(max_rows).iterrows()):
+        bg = "background:var(--color-surface-2);" if i % 2 == 1 else ""
+        cells = "".join(
+            f'<td style="padding:0.45rem 0.75rem;color:var(--color-text);'
+            f'font-size:0.85rem;border-bottom:1px solid var(--color-border);'
+            f'white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;">'
+            f'{_html.escape(str(val) if val is not None else "—")}</td>'
+            for val in row
+        )
+        rows_html += f'<tr style="{bg}">{cells}</tr>'
+
+    if len(df) > max_rows:
+        rows_html += (
+            f'<tr><td colspan="{len(cols)}" style="padding:0.5rem 0.75rem;'
+            f'color:var(--color-text-subtle);font-size:0.8rem;font-style:italic;">'
+            f'… {len(df) - max_rows} more rows not shown</td></tr>'
+        )
+
+    sticky_th = (
+        'padding:0.5rem 0.75rem;text-align:left;font-weight:600;'
+        'color:var(--color-text-muted);white-space:nowrap;font-size:0.8rem;'
+        'letter-spacing:0.03em;text-transform:uppercase;'
+        'position:sticky;top:0;z-index:1;'
+        'background:var(--color-surface-2);'
+        'border-bottom:2px solid var(--color-border);'
+    )
+    header_cells = "".join(
+        f'<th style="{sticky_th}">{_html.escape(str(c))}</th>'
+        for c in cols
+    )
+    return (
+        '<style>'
+        '.ascenda-html-table::-webkit-scrollbar { width: 6px; height: 6px; }'
+        '.ascenda-html-table::-webkit-scrollbar-track { background: var(--color-surface-2); border-radius: 0 10px 10px 0; }'
+        '.ascenda-html-table::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 6px; }'
+        '.ascenda-html-table::-webkit-scrollbar-thumb:hover { background: var(--color-text-subtle); }'
+        '.ascenda-html-table { scrollbar-color: var(--color-border-strong) var(--color-surface-2); scrollbar-width: thin; }'
+        '</style>'
+        f'<div class="ascenda-html-table" style="border:1px solid var(--color-border);border-radius:10px;'
+        f'margin:0.5rem 0;overflow:auto;max-height:{max_height}px;">'
+        '<table style="width:100%;border-collapse:collapse;">'
+        f'<thead><tr>{header_cells}</tr></thead>'
+        f'<tbody>{rows_html}</tbody>'
+        '</table></div>'
     )
 
 

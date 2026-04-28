@@ -7,7 +7,7 @@ from passlib.hash import pbkdf2_sha256
 from db_ops import query_df, exec_sql
 from utils import _gen_tmp_pw
 from widgets import set_current_page
-from ui import section_header, status_badge as _status_badge
+from ui import section_header, status_badge as _status_badge, html_table
 
 # ── SVG icon helpers ──────────────────────────────────────────────────────────
 _ICON_ADD_USER = (
@@ -42,7 +42,7 @@ _PAGE_CSS = """
 <style>
 /* ── Section panel ────────────────────────────────────────── */
 .au-panel {
-    background: #fff;
+    background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: 14px;
     padding: 1.375rem 1.5rem 1.125rem;
@@ -272,7 +272,7 @@ def page_admin_users():
         f'</div>',
         unsafe_allow_html=True,
     )
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.markdown(html_table(df), unsafe_allow_html=True)
     if not df.empty:
         st.download_button(
             "Download CSV",

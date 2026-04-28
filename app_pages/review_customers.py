@@ -10,7 +10,7 @@ from db import engine
 from db_ops import query_df, exec_sql
 from utils import _utcnow_iso
 from widgets import set_current_page
-from ui import section_header, status_badge
+from ui import section_header, status_badge, html_table
 
 
 @st.cache_data(ttl=300)
@@ -176,24 +176,13 @@ def page_review_other_customers():
     # show resolved name column
     display_df["Provided Customer Name (Other/Notes)"] = unresolved_df["resolved_other_name"]
 
-    st.dataframe(
-        display_df[
-            [
-                "visit_id",
-                "Selected Customer",
-                "Provided Customer Name (Other/Notes)",
-                "Visit Date/Time",
-                "region",
-                "city",
-                "sector",
-                "Notes",
-                "Submitted By",
-                "Email",
-                "Business Unit",
-            ]
-        ],
-        width="stretch",
-        hide_index=True,
+    st.markdown(
+        html_table(display_df[[
+            "visit_id", "Selected Customer",
+            "Provided Customer Name (Other/Notes)", "Visit Date/Time",
+            "region", "city", "sector", "Notes", "Submitted By", "Email", "Business Unit",
+        ]]),
+        unsafe_allow_html=True,
     )
 
     # ------------- Pick a visit to review -------------
@@ -292,10 +281,9 @@ def page_review_other_customers():
         top_df = candidates_df.head(15).copy()
         top_df["Similarity"] = top_df["similarity"].map(lambda x: f"{x*100:.0f}%")
 
-        st.dataframe(
-            top_df[["customer_id", "account_name", "Similarity", "region", "city", "sector", "account_id", "party_id"]],
-            width="stretch",
-            hide_index=True,
+        st.markdown(
+            html_table(top_df[["customer_id", "account_name", "Similarity", "region", "city", "sector", "account_id", "party_id"]]),
+            unsafe_allow_html=True,
         )
 
         for r in top_df.itertuples(index=False):

@@ -10,7 +10,7 @@ from db import engine
 from db_ops import query_df, exec_sql
 from utils import _utcnow_iso
 from widgets import set_current_page
-from ui import section_header, status_badge
+from ui import section_header, status_badge, html_table
 
 
 @st.cache_data(ttl=300)
@@ -225,26 +225,14 @@ def page_review_target_audiences():
         }
     )
 
-    st.dataframe(
-        unresolved_display[
-            [
-                "visit_id",
-                "Customer",
-                "Visit Date/Time",
-                "Other TA Title",
-                "Other TA Name",
-                "Other TA Dept",
-                "Other TA Position",
-                "Other TA Phone",
-                "Other TA Email",
-                "Notes",
-                "Submitted By",
-                "Email",
-                "Business Unit",
-            ]
-        ],
-        width="stretch",
-        hide_index=True,
+    st.markdown(
+        html_table(unresolved_display[[
+            "visit_id", "Customer", "Visit Date/Time",
+            "Other TA Title", "Other TA Name", "Other TA Dept",
+            "Other TA Position", "Other TA Phone", "Other TA Email",
+            "Notes", "Submitted By", "Email", "Business Unit",
+        ]]),
+        unsafe_allow_html=True,
     )
 
     # ------------- Pick a visit to review -------------
@@ -381,22 +369,15 @@ def page_review_target_audiences():
         ta_display["Label"] = ta_display.apply(format_ta_label, axis=1)
         ta_display["Similarity"] = ta_display["similarity"].map(lambda x: f"{x*100:.0f}%")
 
-        st.dataframe(
-            ta_display[
-                ["audience_id", "Label", "Similarity", "department", "position", "mobile", "email", "last_visited_date", "last_visited_by"]
-            ].rename(
-                columns={
-                    "audience_id": "ID",
-                    "department": "Dept",
-                    "position": "Position",
-                    "mobile": "Mobile",
-                    "email": "Email",
-                    "last_visited_date": "Last Visited At",
-                    "last_visited_by": "Visited By",
-                }
+        st.markdown(
+            html_table(
+                ta_display[["audience_id", "Label", "Similarity", "department", "position", "mobile", "email", "last_visited_date", "last_visited_by"]].rename(
+                    columns={"audience_id": "ID", "department": "Dept", "position": "Position",
+                             "mobile": "Mobile", "email": "Email",
+                             "last_visited_date": "Last Visited At", "last_visited_by": "Visited By"}
+                )
             ),
-            width='stretch',
-            hide_index=True,
+            unsafe_allow_html=True,
         )
 
         existing_options = [
