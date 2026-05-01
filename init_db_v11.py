@@ -307,7 +307,8 @@ CREATE TABLE IF NOT EXISTS visits (
     other_customer_name TEXT,
     is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
     deleted_at  TIMESTAMPTZ,
-    deleted_by  INTEGER REFERENCES users(user_id)
+    deleted_by  INTEGER REFERENCES users(user_id),
+    version     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS home_visits (
@@ -452,6 +453,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_target_audience_customer_name_dept_pos_ci
         lower(COALESCE(department, '')),
         lower(COALESCE(position, ''))
     );
+
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS ix_app_sessions_active
     ON app_sessions(expires_at_utc)

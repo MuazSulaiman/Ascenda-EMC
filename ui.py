@@ -10,6 +10,9 @@ import streamlit.components.v1 as components
 from PIL import Image
 from passlib.hash import pbkdf2_sha256
 
+# Constant-time dummy used to prevent email enumeration via timing differences.
+DUMMY_HASH = pbkdf2_sha256.hash("dummy")
+
 from auth import (
     resolve_session_user,
     create_session,
@@ -55,8 +58,8 @@ except Exception:
 
 
 def capture_client_fingerprints():
-    """Populate st.session_state['client_ip'] and ['user_agent'] from the browser.
-    Also reads the session ID from browser sessionStorage so SID never lives in the URL."""
+    """Populate st.session_state['client_ip'] and ['user_agent'].
+    Also reads the session ID from browser localStorage so SID never lives in the URL."""
     # User Agent
     if "user_agent" not in st.session_state:
         ua_val = None
@@ -70,22 +73,14 @@ def capture_client_fingerprints():
         if ua_val:
             st.session_state["user_agent"] = str(ua_val)
 
-    # Public IP (must be fetched client-side; server-side requests return the server IP)
     if "client_ip" not in st.session_state:
-        ip_val = None
         try:
-            if streamlit_js_eval:
-                ip_val = streamlit_js_eval(
-                    js_expressions=(
-                        "await fetch('https://api.ipify.org?format=json')"
-                        ".then(r=>r.json()).then(j=>j.ip)"
-                    ),
-                    key="client_ip_fetch"
-                )
+            headers = st.context.headers
+            ip = headers.get("X-Forwarded-For", headers.get("X-Real-IP", "unknown"))
+            ip = ip.split(",")[0].strip()
         except Exception:
-            ip_val = None
-        if ip_val:
-            st.session_state["client_ip"] = str(ip_val)
+            ip = "unknown"
+        st.session_state["client_ip"] = ip
 
     # Session ID — read from browser localStorage so it is never exposed in the URL.
     # localStorage (not sessionStorage) is used because it is shared across all same-origin
@@ -237,8 +232,9 @@ def login_block():
 
             u = get_user_by_email(em)
             if not u:
+                pbkdf2_sha256.verify(pw, DUMMY_HASH)  # constant-time dummy to prevent email enumeration
                 record_failed_login(em)
-                st.error("User not found.")
+                st.error("Invalid email or password.")
                 return
 
             if not bool(u.get("is_active", True)):
@@ -247,7 +243,7 @@ def login_block():
 
             if not pbkdf2_sha256.verify(pw, u["password_hash"]):
                 record_failed_login(em)
-                st.error("Invalid password.")
+                st.error("Invalid email or password.")
                 return
 
             reset_login_attempts(em)

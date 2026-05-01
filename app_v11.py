@@ -1,45 +1,7 @@
 # app_v11.py — Ascenda Sales Daily Feedback (orchestrator)
-import os
 import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image
-
-
-def _patch_streamlit_index() -> None:
-    """Inject PWA tags into Streamlit's index.html so they appear in <head>
-    before any JS runs — required for iOS Safari to pick up apple-touch-icon.
-    Uses a proper URL (not a data URI) because iOS Safari ignores data-URI icons."""
-    import re
-    import streamlit as _st
-    index_path = os.path.join(os.path.dirname(_st.__file__), "static", "index.html")
-    try:
-        html = open(index_path, encoding="utf-8").read()
-        # Already patched with the correct URL-based approach — nothing to do.
-        if 'apple-touch-icon" href="/app/static/' in html:
-            return
-        # Remove any old patch (e.g. data-URI from a previous deploy) so we can re-inject cleanly.
-        html = re.sub(r'\s*<link rel="apple-touch-icon"[^>]*/>', '', html)
-        html = re.sub(r'\s*<link rel="manifest"[^>]*/>', '', html)
-        html = re.sub(r'\s*<meta name="apple-mobile-web-app-capable"[^>]*/>', '', html)
-        html = re.sub(r'\s*<meta name="apple-mobile-web-app-status-bar-style"[^>]*/>', '', html)
-        html = re.sub(r'\s*<meta name="apple-mobile-web-app-title"[^>]*/>', '', html)
-        html = re.sub(r'\s*<meta name="theme-color"[^>]*/>', '', html)
-        tags = (
-            '    <link rel="apple-touch-icon" href="/app/static/ascenda_180.png" />\n'
-            '    <link rel="manifest" href="/app/static/manifest.webmanifest" />\n'
-            '    <meta name="apple-mobile-web-app-capable" content="yes" />\n'
-            '    <meta name="apple-mobile-web-app-status-bar-style" content="default" />\n'
-            '    <meta name="apple-mobile-web-app-title" content="Ascenda" />\n'
-            '    <meta name="theme-color" content="#2667ff" />\n'
-        )
-        # Insert before the closing </head> tag (handles both indented and tight HTML).
-        html = re.sub(r'(\s*</head>)', '\n' + tags + r'\1', html, count=1)
-        open(index_path, "w", encoding="utf-8").write(html)
-    except Exception:
-        pass  # never crash the app over a cosmetic patch
-
-
-_patch_streamlit_index()
 
 from config import APP_TITLE
 from theme import inject_theme
@@ -117,6 +79,7 @@ components.html("""
     add('link', { rel: 'manifest', href: '/app/static/manifest.webmanifest' });
     add('meta', { name: 'theme-color', content: '#2667ff' });
     add('link', { rel: 'icon', type: 'image/png', sizes: '192x192', href: '/app/static/ascenda_192.png' });
+    add('meta', { name: 'referrer', content: 'no-referrer' });
   }
   // Capture the browser install prompt so any page can trigger it later
   if (!p.__ascendaInstallReady) {
@@ -381,9 +344,27 @@ else:
         "App Settings":             page_app_settings,
     }
 
+    PAGE_ROLES = {
+        "Admin: Import Lookups":   ["admin"],
+        "Admin: Data Browser":     ["admin"],
+        "Admin: Users":            ["admin"],
+        "Review Target Audiences": ["admin"],
+        "Review Other Customers":  ["admin"],
+        "Review Change Requests":  ["admin"],
+    }
+
+    def route_page(page_name: str, page_fn):
+        allowed = PAGE_ROLES.get(page_name)
+        if allowed is not None:
+            role = (user.get("role") or "").lower().strip()
+            if role not in allowed:
+                st.error("Access denied.")
+                return
+        page_fn()
+
     fn = PAGE_MAP.get(page)
     if fn:
-        fn()
+        route_page(page, fn)
     else:
         st.warning(f"Unknown page: {page}")
 

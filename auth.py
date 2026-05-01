@@ -21,7 +21,8 @@ def _user_agent() -> Optional[str]:
 
 
 def _client_ip() -> Optional[str]:
-    return st.session_state.get("client_ip")
+    ip = st.session_state.get("client_ip")
+    return ip if ip and ip != "unknown" else None
 
 
 def _log_event(conn, sid: str, evt: str, details=None):

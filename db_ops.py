@@ -7,6 +7,15 @@ from sqlalchemy import text
 
 from db import engine
 
+VISIT_INSERT_COLUMNS = (
+    "user_id", "customer_id", "audience_id", "business_line_id",
+    "product_id", "objective_id", "notes", "evaluation",
+    "latitude", "longitude", "accuracy_m",
+    "submitted_at_utc", "submitted_at_local",
+    "project_id", "other_customer_name", "other_audience_title",
+    "other_audience_name", "region", "business_unit_id",
+)
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -32,15 +41,11 @@ def exec_sql(sql: str, params: Optional[dict] = None):
 
 
 def insert_visit_returning_id(row: dict) -> int:
-    """
-    Insert a visit row into PostgreSQL and return the new visit_id via RETURNING.
-    `row` is a dict of column -> value.
-    """
-    cols = list(row.keys())
+    cols = [c for c in VISIT_INSERT_COLUMNS if c in row]
     named = [f":{c}" for c in cols]
     sql = f"INSERT INTO visits ({', '.join(cols)}) VALUES ({', '.join(named)}) RETURNING visit_id"
     with engine.begin() as conn:
-        vid = conn.execute(text(sql), row).scalar_one()
+        vid = conn.execute(text(sql), {c: row[c] for c in cols}).scalar_one()
     return int(vid)
 
 
@@ -53,7 +58,7 @@ def insert_visit_atomic(
     Insert a visit and the optional related entities atomically (PostgreSQL).
     Returns the new visit_id. Rolls back everything on any failure.
     """
-    visit_cols = list(visit_row.keys())
+    visit_cols = [c for c in VISIT_INSERT_COLUMNS if c in visit_row]
     visit_vals_named = [f":{c}" for c in visit_cols]
     sql_visit = f"""
         INSERT INTO visits ({', '.join(visit_cols)})
@@ -62,7 +67,7 @@ def insert_visit_atomic(
     """
 
     with engine.begin() as conn:
-        vid = conn.execute(text(sql_visit), visit_row).scalar_one()
+        vid = conn.execute(text(sql_visit), {c: visit_row[c] for c in visit_cols}).scalar_one()
 
         if home_visit:
             conn.execute(

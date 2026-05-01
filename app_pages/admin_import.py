@@ -87,6 +87,15 @@ def page_admin_import():
         s = s.replace(" ", "_")
         return s
 
+    def _validate_upload(f):
+        MAX_UPLOAD_MB = 5
+        if f.size > MAX_UPLOAD_MB * 1024 * 1024:
+            st.error(f"File too large. Maximum size is {MAX_UPLOAD_MB} MB.")
+            st.stop()
+        if not f.name.lower().endswith((".xlsx", ".xls", ".csv")):
+            st.error("Only .xlsx, .xls, and .csv files are accepted.")
+            st.stop()
+
     def _read_df_upload(file):
         if file.name.endswith(".xlsx"):
             df = pd.read_excel(file, dtype=str)
@@ -97,6 +106,44 @@ def page_admin_import():
 
     def _norm_or_empty(v):
         return (v.strip() if isinstance(v, str) else v) or ""
+
+    def _preview_and_confirm(df: pd.DataFrame, required_fields: list, key: str) -> bool:
+        """Show a styled dataframe preview (first 20 rows, invalid rows in red),
+        report valid/invalid counts, and require an explicit confirm click."""
+        invalid_indices: set = set()
+        for i, row in enumerate(df.itertuples(index=False)):
+            for f in required_fields:
+                val = getattr(row, f, None)
+                if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == "":
+                    invalid_indices.add(i)
+                    break
+
+        valid_count = len(df) - len(invalid_indices)
+        invalid_count = len(invalid_indices)
+
+        preview = df.head(20).copy()
+        preview_invalid = {i for i in invalid_indices if i < 20}
+
+        def _highlight(row):
+            return (
+                ["background-color: #ffcccc"] * len(row)
+                if row.name in preview_invalid
+                else [""] * len(row)
+            )
+
+        st.dataframe(preview.style.apply(_highlight, axis=1), use_container_width=True)
+        if len(df) > 20:
+            st.caption(f"Showing first 20 of {len(df)} rows.")
+
+        if invalid_count > 0:
+            st.warning(
+                f"**{valid_count}** rows valid · **{invalid_count}** rows with errors "
+                f"(missing required fields) — highlighted in red above."
+            )
+        else:
+            st.success(f"**{valid_count}** rows valid, no errors found.")
+
+        return st.button(f"Confirm Import ({valid_count} rows) ✅", key=f"{key}_confirm")
 
     # =====================================================================
     # MAIN TABS FOR ENTITIES
@@ -308,12 +355,15 @@ def page_admin_import():
                 "Upload Customers file", type=["xlsx", "csv"], key="cust_upload"
             )
             if f1 is not None:
+                _validate_upload(f1)
                 df = _read_df_upload(f1)
 
                 if "account_name" not in df.columns:
                     st.error("Missing required column: account_name")
                 else:
                     total = len(df)
+                    if not _preview_and_confirm(df, ["account_name"], "cust"):
+                        st.stop()
                     inserted = 0
                     skipped = 0
                     sts, pb, ln, has_status = _mk_status("Importing Customers…")
@@ -876,12 +926,15 @@ def page_admin_import():
 
             f2 = st.file_uploader("Upload Target Audiences", type=["xlsx", "csv"], key="aud_upload")
             if f2 is not None:
+                _validate_upload(f2)
                 df = _read_df_upload(f2)
                 needed = {"customer_name", "name"}
                 if not needed.issubset(df.columns):
                     st.error("Missing required columns: customer_name, name")
                 else:
                     total = len(df)
+                    if not _preview_and_confirm(df, ["customer_name", "name"], "aud"):
+                        st.stop()
                     inserted = 0
                     skipped = 0
                     sts, pb, ln, has_status = _mk_status("Importing Target Audiences…")
@@ -1435,11 +1488,14 @@ def page_admin_import():
                 key="bu_upload",
             )
             if fbu is not None:
+                _validate_upload(fbu)
                 df = _read_df_upload(fbu)
                 if "name" not in df.columns:
                     st.error("Missing required column: name")
                 else:
                     total = len(df)
+                    if not _preview_and_confirm(df, ["name"], "bu"):
+                        st.stop()
                     inserted = 0
                     skipped = 0
                     sts, pb, ln, has_status = _mk_status("Importing Business Units…")
@@ -1884,6 +1940,7 @@ def page_admin_import():
 
             fbl = st.file_uploader("Upload Business Lines file", type=["xlsx", "csv"], key="blines")
             if fbl is not None:
+                _validate_upload(fbl)
                 df = _read_df_upload(fbl)
                 st.caption(f"Detected columns: {list(df.columns)}")
                 needed = {"business_unit", "name", "category"}
@@ -1892,6 +1949,8 @@ def page_admin_import():
                     st.error(f"Missing required columns: {', '.join(missing)}")
                 else:
                     total = len(df)
+                    if not _preview_and_confirm(df, ["business_unit", "name", "category"], "blines"):
+                        st.stop()
                     inserted, skipped = 0, 0
                     sts, pb, ln, has_status = _mk_status("Importing Business Lines…")
                     try:
@@ -2429,12 +2488,15 @@ def page_admin_import():
 
             f3 = st.file_uploader("Upload Items file", type=["xlsx", "csv"], key="items_upload")
             if f3 is not None:
+                _validate_upload(f3)
                 df = _read_df_upload(f3)
                 needed = {"product_id", "business_unit", "business_line"}
                 if not needed.issubset(df.columns):
                     st.error("Missing required columns: product_id, business_unit, business_line")
                 else:
                     total = len(df)
+                    if not _preview_and_confirm(df, ["product_id", "business_unit", "business_line"], "items"):
+                        st.stop()
                     inserted = 0
                     updated = 0
                     skipped = 0
@@ -2916,12 +2978,15 @@ def page_admin_import():
 
             fobj = st.file_uploader("Upload file", type=["xlsx", "csv"], key="obj_file")
             if fobj is not None:
+                _validate_upload(fobj)
                 df = _read_df_upload(fobj)
 
                 if "name" not in df.columns:
                     st.error("Missing required column: `name`")
                 else:
                     total = len(df)
+                    if not _preview_and_confirm(df, ["name"], "obj"):
+                        st.stop()
                     inserted = 0
                     skipped = 0
                     sts, pb, ln, has_status = _mk_status("Importing Objectives…")

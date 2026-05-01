@@ -29,18 +29,28 @@ _TZ = pytz.timezone(TIMEZONE)
 PAGE_NS = "admin_change_req"
 _FA_NS  = f"{PAGE_NS}_fa"
 
-ALLOWED_VISIT_FIELDS = {
-    "visits.customer_id", "visits.audience_id", "visits.business_line_id",
-    "visits.product_id", "visits.objective_id", "visits.notes",
-    "visits.evaluation", "visits.project_id", "visits.other_customer_name",
-    "visits.other_audience_title", "visits.other_audience_name",
-    "visits.other_audience_department", "visits.other_audience_position",
-    "visits.other_audience_phone", "visits.other_audience_email",
-}
-
-FORCE_EXTRA_FIELDS = {
-    "visits.latitude", "visits.longitude", "visits.accuracy_m",
-    "visits.submitted_at_local", "visits.submitted_at_utc",
+FIELD_TO_COLUMN = {
+    "visits.customer_id":              "customer_id",
+    "visits.audience_id":              "audience_id",
+    "visits.business_line_id":         "business_line_id",
+    "visits.product_id":               "product_id",
+    "visits.objective_id":             "objective_id",
+    "visits.notes":                    "notes",
+    "visits.evaluation":               "evaluation",
+    "visits.project_id":               "project_id",
+    "visits.other_customer_name":      "other_customer_name",
+    "visits.other_audience_title":     "other_audience_title",
+    "visits.other_audience_name":      "other_audience_name",
+    "visits.other_audience_department":"other_audience_department",
+    "visits.other_audience_position":  "other_audience_position",
+    "visits.other_audience_phone":     "other_audience_phone",
+    "visits.other_audience_email":     "other_audience_email",
+    # force-only fields:
+    "visits.latitude":                 "latitude",
+    "visits.longitude":                "longitude",
+    "visits.accuracy_m":               "accuracy_m",
+    "visits.submitted_at_local":       "submitted_at_local",
+    "visits.submitted_at_utc":         "submitted_at_utc",
 }
 
 
@@ -62,11 +72,10 @@ def _apply_changes(request_id: int, visit_id: int, admin_uid: int):
     if detail_rows.empty:
         return False, "No change details found for this request."
 
-    # Whitelist check before opening transaction
-    # Fields are stored as "visits.columnname" — must match ALLOWED_VISIT_FIELDS exactly.
+    # Registry check before opening transaction — rejects any field not in the hardcoded map.
     for _, r in detail_rows.iterrows():
-        if r["field"] not in ALLOWED_VISIT_FIELDS:
-            return False, f"Field not in allowed list: {r['field']}"
+        if r["field"] not in FIELD_TO_COLUMN:
+            return False, f"Disallowed field: {r['field']}"
 
     NULLABLE_VISIT_FIELDS = {"visits.notes", "visits.product_id", "visits.audience_id", "visits.project_id"}
     for _, r in detail_rows.iterrows():
@@ -75,12 +84,28 @@ def _apply_changes(request_id: int, visit_id: int, admin_uid: int):
 
     try:
         with engine.begin() as conn:
+            ver_row = conn.execute(
+                text("SELECT version FROM visits WHERE visit_id = :vid AND is_deleted = FALSE"),
+                {"vid": visit_id},
+            ).fetchone()
+            if ver_row is None:
+                raise ValueError("This visit has been deleted. The change request cannot be applied.")
+            expected_version = ver_row[0]
+
             for _, r in detail_rows.iterrows():
-                col = r["field"].split(".", 1)[-1]
+                col = FIELD_TO_COLUMN[r["field"]]
                 conn.execute(
-                    text(f"UPDATE visits SET {col} = :val WHERE visit_id = :vid"),
+                    text(f"UPDATE visits SET {col} = :val WHERE visit_id = :vid AND is_deleted = FALSE"),
                     {"val": r["new_value"], "vid": visit_id},
                 )
+
+            bump = conn.execute(
+                text("UPDATE visits SET version = version + 1 WHERE visit_id = :vid AND version = :ver"),
+                {"vid": visit_id, "ver": expected_version},
+            )
+            if bump.rowcount == 0:
+                raise ValueError("This visit was modified by another user. Refresh and try again.")
+
             conn.execute(
                 text(
                     """
@@ -220,7 +245,8 @@ def _fa_load_visit_snap(visit_id: int) -> dict | None:
           v.submitted_at_local, v.submitted_at_utc,
           v.other_audience_title, v.other_audience_name,
           v.other_audience_department, v.other_audience_position,
-          v.other_audience_phone, v.other_audience_email
+          v.other_audience_phone, v.other_audience_email,
+          v.version
         FROM visits v
         JOIN customers c ON c.customer_id = v.customer_id
         LEFT JOIN business_lines bl ON bl.business_line_id = v.business_line_id
@@ -253,26 +279,46 @@ def _fa_product_label_for_id(product_id: str) -> str:
     return f"{art} — {desc}" if desc else str(art)
 
 
-def _apply_force_adjustment(visit_id: int, admin_uid: int, details: list[dict], note: str):
-    force_allowed = ALLOWED_VISIT_FIELDS | FORCE_EXTRA_FIELDS
+_TIMESTAMP_FIELDS = {"visits.submitted_at_local", "visits.submitted_at_utc"}
+
+
+def _apply_force_adjustment(visit_id: int, admin_uid: int, details: list[dict], note: str, expected_version: int):
     for d in details:
-        if d["field"] not in force_allowed:
+        if d["field"] not in FIELD_TO_COLUMN:
             return False, f"Field not allowed: {d['field']}"
+
+    for d in details:
+        if d["field"] in _TIMESTAMP_FIELDS:
+            val = d.get("new_value")
+            if not val or str(val).strip() == "":
+                return False, f"Visit time cannot be empty (field: {d['field']})."
+            try:
+                datetime.datetime.fromisoformat(str(val).strip())
+            except ValueError:
+                return False, f"Invalid datetime format for '{d['field']}': {val}"
+
     try:
         with engine.begin() as conn:
             # Snapshot current DB values before any UPDATE so audit log has authoritative before-state
-            cols = [d["field"].split(".", 1)[-1] for d in details]
+            cols = [FIELD_TO_COLUMN[d["field"]] for d in details]
             before_row = conn.execute(
                 text(f"SELECT {', '.join(cols)} FROM visits WHERE visit_id = :vid"),
                 {"vid": visit_id},
             ).mappings().one_or_none()
 
             for d in details:
-                col = d["field"].split(".", 1)[-1]
+                col = FIELD_TO_COLUMN[d["field"]]
                 conn.execute(
                     text(f"UPDATE visits SET {col} = :val WHERE visit_id = :vid"),
                     {"val": d["new_value"], "vid": visit_id},
                 )
+
+            bump = conn.execute(
+                text("UPDATE visits SET version = version + 1 WHERE visit_id = :vid AND version = :ver"),
+                {"vid": visit_id, "ver": expected_version},
+            )
+            if bump.rowcount == 0:
+                raise ValueError("This visit was modified by another user. Refresh and try again.")
             request_id = conn.execute(
                 text(
                     """
@@ -288,7 +334,7 @@ def _apply_force_adjustment(visit_id: int, admin_uid: int, details: list[dict], 
                 {"vid": visit_id, "admin_uid": admin_uid, "note": note},
             ).scalar_one()
             for d in details:
-                col = d["field"].split(".", 1)[-1]
+                col = FIELD_TO_COLUMN[d["field"]]
                 db_old = None
                 if before_row is not None:
                     raw = before_row[col]
@@ -600,6 +646,17 @@ def _render_force_tab(admin_uid: int):
 
     # ── Customer (Quick Find + cascading Region/City/Sector/Customer) ────────
     st.markdown("#### Customer")
+    _orig_cust_df = query_df(
+        "SELECT region, city, sector FROM customers WHERE customer_id = :cid LIMIT 1",
+        {"cid": int(snap["customer_id"])},
+    )
+    if not _orig_cust_df.empty:
+        _ocr = _orig_cust_df.iloc[0]
+        _orig_region  = _norm(_ocr.get("region"))  or "—"
+        _orig_city    = _norm(_ocr.get("city"))    or "—"
+        _orig_sector  = _norm(_ocr.get("sector"))  or "—"
+        _orig_cust_nm = _norm(snap.get("account_name")) or "—"
+        st.caption(f"↩ Original: **{_orig_region}** → **{_orig_city}** → **{_orig_sector}** → **{_orig_cust_nm}**")
     customer_quick_find_module(
         page_ns=NS,
         query_df=query_df,
@@ -636,6 +693,12 @@ def _render_force_tab(admin_uid: int):
     aud_sel_val = st.session_state.get(f"{NS}_aud_sel", "")
     if aud_sel_val not in aud_options:
         st.session_state[f"{NS}_aud_sel"] = ""
+    _orig_fa_aud = (
+        _audience_label_for_id(int(snap["audience_id"])) if snap.get("audience_id")
+        else (_norm(snap.get("other_audience_name")) or "")
+    )
+    if _orig_fa_aud:
+        st.caption(f"↩ Original: **{_orig_fa_aud}**")
     aud_choice = st.selectbox("Target Audience", aud_options, key=f"{NS}_aud_sel")
     is_other_aud = (aud_choice == "Other")
     new_audience_id = (
@@ -667,6 +730,8 @@ def _render_force_tab(admin_uid: int):
     # ── Product & Business ────────────────────────────────────────────────────
     st.markdown("#### Product & Business")
     bu_options = _load_bu_options()
+    if _norm(snap.get("bu_name")):
+        st.caption(f"↩ Original: **{_norm(snap['bu_name'])}**")
     bu_choice  = st.selectbox("Business Unit *", bu_options, key=f"{NS}_bu_sel")
     bu_id      = _bu_id_from_name(bu_choice) if bu_choice else None
 
@@ -674,12 +739,16 @@ def _render_force_tab(admin_uid: int):
     cat_sel_val = st.session_state.get(f"{NS}_cat_sel", "")
     if cat_sel_val not in cat_options:
         st.session_state[f"{NS}_cat_sel"] = ""
+    if _norm(snap.get("category")):
+        st.caption(f"↩ Original: **{_norm(snap['category'])}**")
     cat_choice = st.selectbox("Category *", cat_options, key=f"{NS}_cat_sel", disabled=not bu_id)
 
     bl_options = _load_bl_options(bu_id, cat_choice)
     bl_sel_val = st.session_state.get(f"{NS}_bl_sel", "")
     if bl_sel_val not in bl_options:
         st.session_state[f"{NS}_bl_sel"] = ""
+    if _norm(snap.get("bl_name")):
+        st.caption(f"↩ Original: **{_norm(snap['bl_name'])}**")
     bl_choice  = st.selectbox("Business Line *", bl_options, key=f"{NS}_bl_sel", disabled=not cat_choice)
     new_bl_id  = _bl_id_from_name(bu_id, cat_choice, bl_choice) if (bu_id and cat_choice and bl_choice) else None
 
@@ -687,11 +756,21 @@ def _render_force_tab(admin_uid: int):
     prod_sel_val = st.session_state.get(f"{NS}_prod_sel", "")
     if prod_sel_val not in prod_options:
         st.session_state[f"{NS}_prod_sel"] = ""
+    _orig_fa_prod = ""
+    if snap.get("article_number") or snap.get("product_desc"):
+        _art = str(snap["article_number"]).strip() if pd.notna(snap.get("article_number")) else str(snap.get("product_id", ""))
+        _desc = str(snap["product_desc"]).strip() if pd.notna(snap.get("product_desc")) else ""
+        _orig_fa_prod = f"{_art} — {_desc}" if _desc else _art
+    if _orig_fa_prod:
+        st.caption(f"↩ Original: **{_orig_fa_prod}**")
     prod_choice    = st.selectbox("Product (optional)", prod_options, key=f"{NS}_prod_sel", disabled=not new_bl_id)
     new_product_id = _product_id_from_label(new_bl_id, prod_choice) if (new_bl_id and prod_choice) else None
 
     # ── Date & Time (locked for rep, editable here) ───────────────────────────
     st.markdown("#### Date & Time")
+    _orig_fa_dt = str(snap.get("submitted_at_local") or "")[:16]
+    if _orig_fa_dt:
+        st.caption(f"↩ Original: **{_orig_fa_dt}**")
     col_date, col_hour, col_min = st.columns([2, 1, 1])
     with col_date:
         new_date = st.date_input("Visit Date *", key=f"{NS}_date")
@@ -709,6 +788,8 @@ def _render_force_tab(admin_uid: int):
     obj_sel_val = st.session_state.get(f"{NS}_obj_sel", "")
     if obj_sel_val not in obj_options:
         st.session_state[f"{NS}_obj_sel"] = ""
+    if _norm(snap.get("objective_name")):
+        st.caption(f"↩ Original: **{_norm(snap['objective_name'])}**")
     obj_choice     = st.selectbox("Business Objective *", obj_options, key=f"{NS}_obj_sel")
     new_objective_id = _objective_id_from_name(obj_choice) if obj_choice else None
 
@@ -718,10 +799,20 @@ def _render_force_tab(admin_uid: int):
     eval_sel_val = st.session_state.get(f"{NS}_eval_sel", "")
     if eval_sel_val not in eval_options:
         st.session_state[f"{NS}_eval_sel"] = ""
+    if _norm(snap.get("evaluation")):
+        st.caption(f"↩ Original: **{_norm(snap['evaluation'])}**")
     eval_choice = st.selectbox("Evaluation *", eval_options, key=f"{NS}_eval_sel")
 
     # ── Location (locked for rep, editable here) ──────────────────────────────
     st.markdown("#### Location")
+    _orig_lat = snap.get("latitude")
+    _orig_lon = snap.get("longitude")
+    _orig_acc = snap.get("accuracy_m")
+    if _orig_lat is not None and _orig_lon is not None:
+        _orig_loc_str = f"{_orig_lat}, {_orig_lon}"
+        if _orig_acc is not None:
+            _orig_loc_str += f" (±{_orig_acc}m)"
+        st.caption(f"↩ Original: **{_orig_loc_str}**")
     col_lat, col_lon, col_acc = st.columns(3)
     with col_lat:
         lat_val = st.text_input("Latitude *", key=f"{NS}_lat")
@@ -864,7 +955,7 @@ def _render_force_tab(admin_uid: int):
         for err in errors:
             st.error(err)
         if not errors:
-            ok, err_msg = _apply_force_adjustment(visit_id, admin_uid, details, admin_note.strip())
+            ok, err_msg = _apply_force_adjustment(visit_id, admin_uid, details, admin_note.strip(), int(snap.get("version", 0)))
             if ok:
                 st.session_state[success_key] = f"Force adjustment applied to V-{visit_id}."
                 for k in list(st.session_state.keys()):
@@ -996,10 +1087,6 @@ def page_admin_change_requests():
         return
 
     role = (u.get("role") or "").lower().strip()
-    if role != "admin":
-        st.warning("You do not have access to this page.")
-        return
-
     uid_raw = u.get("user_id") or u.get("id")
     if not uid_raw:
         st.error("Session user ID could not be resolved.")

@@ -8,6 +8,7 @@ import folium
 import pandas as pd
 import streamlit as st
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from streamlit_folium import st_folium
 
 from auth import resolve_session_user
@@ -272,36 +273,25 @@ def _insert_request_and_details(visit_id: int, requested_by: int, note: str, det
         """
     )
 
-    with engine.begin() as conn:
-        chk = conn.execute(
-            text(
-                """
-                SELECT 1
-                FROM request_changes
-                WHERE visit_id = :vid AND status = 'IN_REVIEW'
-                LIMIT 1
-                """
-            ),
-            {"vid": int(visit_id)},
-        ).fetchone()
-        if chk:
-            raise ValueError("There is already an IN_REVIEW request for this visit.")
+    try:
+        with engine.begin() as conn:
+            request_id = conn.execute(
+                sql_req,
+                {"visit_id": int(visit_id), "requested_by": int(requested_by), "request_note": str(note)},
+            ).scalar_one()
 
-        request_id = conn.execute(
-            sql_req,
-            {"visit_id": int(visit_id), "requested_by": int(requested_by), "request_note": str(note)},
-        ).scalar_one()
-
-        for d in details:
-            conn.execute(
-                sql_det,
-                {
-                    "request_id": int(request_id),
-                    "field": str(d["field"]),
-                    "old_value": d.get("old_value"),
-                    "new_value": d.get("new_value"),
-                },
-            )
+            for d in details:
+                conn.execute(
+                    sql_det,
+                    {
+                        "request_id": int(request_id),
+                        "field": str(d["field"]),
+                        "old_value": d.get("old_value"),
+                        "new_value": d.get("new_value"),
+                    },
+                )
+    except IntegrityError:
+        raise ValueError("A change request for this visit is already under review.")
 
     return int(request_id)
 
@@ -484,6 +474,19 @@ def page_change_request():
             # =====================================================
             _render_location_view(v.get("latitude"), v.get("longitude"), v.get("accuracy_m"))
 
+            # Pre-compute original display values for contextual hints (T23)
+            _orig_aud_label = (
+                _audience_label_for_id(int(v["audience_id"])) if v.get("audience_id")
+                else (f"Other — {_norm(v.get('other_audience_name'))}" if _norm(v.get("other_audience_name")) else "")
+            )
+            _orig_infer = _infer_bu_cat_bl(_safe_int(v.get("business_line_id"))) if v.get("business_line_id") else {}
+            _orig_bu_label = _orig_infer.get("bu_name", "")
+            _orig_cat_label = _orig_infer.get("category", "")
+            _orig_bl_label = _orig_infer.get("bl_name", "")
+            _orig_prod_label = (_product_label_for_id(_norm(v.get("product_id"))) or "") if v.get("product_id") else ""
+            _orig_obj_label = _objective_name_for_id(int(v["objective_id"])) if v.get("objective_id") else ""
+            _orig_eval = _norm(v.get("evaluation")) or ""
+
             # =====================================================
             # SECTION 3 — Customer & Target Audience
             # =====================================================
@@ -497,6 +500,8 @@ def page_change_request():
             st.text_input("Customer *", value=_norm(cust.get("account_name")), disabled=True, key=f"{PAGE_NS}/cust_view")
 
             aud_labels = _load_audience_options(customer_id, include_other=True)
+            if _orig_aud_label:
+                st.caption(f"↩ Original: **{_orig_aud_label}**")
             _prefill_selectbox(
                 "Target Audience *",
                 aud_labels,
@@ -549,6 +554,8 @@ def page_change_request():
             st.markdown("### 3️⃣ Product Details")
 
             bu_names = _load_bu_options()
+            if _orig_bu_label:
+                st.caption(f"↩ Original: **{_orig_bu_label}**")
             st.selectbox(
                 "Business Unit *",
                 bu_names,
@@ -560,6 +567,8 @@ def page_change_request():
             bu_id = _bu_id_from_name(bu_choice) if bu_choice else None
 
             cat_names = _load_category_options(bu_id)
+            if _orig_cat_label:
+                st.caption(f"↩ Original: **{_orig_cat_label}**")
             st.selectbox(
                 "Category *",
                 cat_names,
@@ -571,6 +580,8 @@ def page_change_request():
             cat_choice = st.session_state.get(f"{PAGE_NS}/cat_sel", "")
 
             bl_names = _load_bl_options(bu_id, cat_choice)
+            if _orig_bl_label:
+                st.caption(f"↩ Original: **{_orig_bl_label}**")
             st.selectbox(
                 "Business Line *",
                 bl_names,
@@ -586,6 +597,8 @@ def page_change_request():
             )
 
             prod_labels = _load_product_options(new_business_line_id)
+            if _orig_prod_label:
+                st.caption(f"↩ Original: **{_orig_prod_label}**")
             st.selectbox(
                 "Article Number/Product (optional)",
                 prod_labels,
@@ -601,6 +614,8 @@ def page_change_request():
             st.markdown("### 4️⃣ Visit Details & Outcome")
 
             obj_names = _load_objective_options_for_role(role)
+            if _orig_obj_label:
+                st.caption(f"↩ Original: **{_orig_obj_label}**")
             _prefill_selectbox(
                 "Business Objective *",
                 obj_names,
@@ -614,6 +629,8 @@ def page_change_request():
             prefilled_notes = st.session_state.get(f"{PAGE_NS}/notes", "")
             notes = st.text_area("Notes (optional)", value=prefilled_notes, key=f"{PAGE_NS}/notes")
 
+            if _orig_eval:
+                st.caption(f"↩ Original: **{_orig_eval}**")
             _prefill_selectbox(
                 "Evaluation *",
                 ["", "Positive", "Negative", "Neutral"],
@@ -836,6 +853,8 @@ def page_change_request():
                             st.session_state.pop(k, None)
 
                         st.rerun()
+                    except ValueError as e:
+                        st.warning(str(e))
                     except Exception as e:
                         st.error("Could not submit your request.")
                         st.caption(str(e))

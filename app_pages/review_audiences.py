@@ -66,10 +66,6 @@ def page_review_target_audiences():
         st.stop()
 
     role = (u.get("role") or "").lower().strip()
-    if role not in ("admin", "manager"):
-        st.warning("You do not have access to this page.")
-        st.stop()
-
     uid = int(u.get("user_id") or u.get("id"))
     display_name   = u.get("name") or u.get("email") or f"User #{uid}"
     display_region = u.get("region") or "—"
