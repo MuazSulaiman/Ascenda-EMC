@@ -575,6 +575,38 @@ def sidebar_nav():
     nav_html += '</nav>'
     st.sidebar.markdown(nav_html, unsafe_allow_html=True)
 
+    # ── Collapse sidebar when a nav item is clicked ───────────────────────────
+    with st.sidebar:
+        components.html(
+            """
+            <script>
+            (function() {
+                function attachCollapseHandlers() {
+                    var doc = window.parent.document;
+                    var navItems = doc.querySelectorAll('a.nav-item');
+                    if (!navItems.length) return false;
+                    navItems.forEach(function(link) {
+                        if (link._collapseAttached) return;
+                        link._collapseAttached = true;
+                        link.addEventListener('click', function() {
+                            var closeBtn = doc.querySelector('[data-testid="stSidebarCollapseButton"]');
+                            if (closeBtn) { closeBtn.click(); return; }
+                            var toggleBtn = doc.querySelector('[data-testid="collapsedControl"]');
+                            if (toggleBtn) toggleBtn.click();
+                        });
+                    });
+                    return true;
+                }
+                var attempts = 0;
+                var timer = setInterval(function() {
+                    if (attachCollapseHandlers() || ++attempts > 20) clearInterval(timer);
+                }, 100);
+            })();
+            </script>
+            """,
+            height=0,
+        )
+
     # ── User profile footer ───────────────────────────────────────────────────
     if user:
         _name     = user.get("name") or user.get("email") or "User"
@@ -989,13 +1021,18 @@ def html_table(df, max_rows: int = 500, max_height: int = 400) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def circular_fab() -> None:
-    """Render the fixed blue floating action button (bottom-right)."""
+    """Render the fixed blue floating action button (bottom-right) — navigates to Submit Visit."""
+    _sid = st.session_state.get("_stored_sid", "")
+    href = f"?page=Submit+Visit&_sid={_sid}" if _sid else "?page=Submit+Visit"
     st.markdown(
-        """
-        <div class="ascenda-fab" role="button" aria-label="New Visit" tabindex="0">
+        f"""
+        <a href="{href}" target="_self" class="ascenda-fab" aria-label="New Visit">
           <svg aria-hidden="true" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.5"
-               viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-        </div>
+               stroke-linecap="round" viewBox="0 0 24 24">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </a>
         """,
         unsafe_allow_html=True,
     )

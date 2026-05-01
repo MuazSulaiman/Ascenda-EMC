@@ -239,6 +239,11 @@ def _get_export_tables() -> dict:
 # ---------------------------------------------------------------------------
 
 def page_admin_data():
+    u = st.session_state.get("user")
+    if not u or (u.get("role") or "").lower().strip() != "admin":
+        st.error("Access denied.")
+        st.stop()
+
     section_header("Admin — Data Browser", "Browse and export all app data tables")
     set_current_page("admin_data")
 

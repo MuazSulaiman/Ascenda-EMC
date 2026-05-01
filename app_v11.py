@@ -35,6 +35,7 @@ st.set_page_config(
     page_title=APP_TITLE,
     page_icon=Image.open("static/ascenda_180.png"),
     layout="centered",
+    initial_sidebar_state="collapsed",
 )
 
 inject_theme()
@@ -71,6 +72,14 @@ components.html("""
     Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k, v));
     head.appendChild(el);
   }
+  // Prevent iOS Safari auto-zoom on input focus by ensuring maximum-scale=1
+  const vp = p.document.querySelector('meta[name="viewport"]');
+  if (vp) {
+    const content = vp.getAttribute('content') || '';
+    if (!content.includes('maximum-scale')) {
+      vp.setAttribute('content', content + ', maximum-scale=1.0');
+    }
+  }
   if (!p.document.querySelector('link[rel="manifest"]')) {
     add('link', { rel: 'apple-touch-icon', href: '/app/static/ascenda_180.png' });
     add('meta', { name: 'apple-mobile-web-app-capable', content: 'yes' });
@@ -92,6 +101,32 @@ components.html("""
     p.addEventListener('appinstalled', function() {
       p.__ascendaDeferredPrompt = null;
     });
+  }
+  // Auto-close sidebar on mobile when a nav link is tapped.
+  // Use event delegation on document (survives React re-renders) with a guard
+  // so the listener is only registered once per page load.
+  if (!p.__ascendaNavDelegated) {
+    p.__ascendaNavDelegated = true;
+    var doc = p.document;
+    doc.addEventListener('click', function(e) {
+      if (p.innerWidth >= 768) return;
+      var t = e.target;
+      var navItem = t && t.closest ? t.closest('a.nav-item') : null;
+      if (!navItem) return;
+      // Try clicking Streamlit's own collapse button first
+      var btn = doc.querySelector('[data-testid="collapsedControl"]');
+      if (btn) {
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: p }));
+      }
+      // Also directly force sidebar off-screen as a fallback
+      var sb = doc.querySelector('section[data-testid="stSidebar"]');
+      if (sb) {
+        sb.style.cssText += ';transform:translateX(-110%) !important;transition:transform 0.15s ease !important;';
+      }
+      doc.querySelectorAll('[data-testid="stSidebarOverlay"]').forEach(function(o) {
+        o.style.display = 'none';
+      });
+    }, true);
   }
 })();
 </script>
@@ -124,6 +159,7 @@ st.markdown("""
     background: #2667ff; display: flex; align-items: center; justify-content: center;
     box-shadow: 0 4px 16px rgba(38,103,255,0.35);
     cursor: pointer; z-index: 999; transition: background 0.15s ease, box-shadow 0.15s ease;
+    text-decoration: none !important;
 }
 .ascenda-fab:hover { background: #1a50d4; box-shadow: 0 6px 20px rgba(38,103,255,0.45); }
 

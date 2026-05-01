@@ -537,24 +537,103 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
                 st.rerun()
             return (None, None, None)
 
-        # Success UI
-        st.success(f"Captured location: {flat:.6f}, {flon:.6f}{_acc_str(facc)}")
+        # Success UI — coordinate badge
+        acc_label = f" · ±{facc:.0f}m" if facc is not None else ""
+        st.markdown(
+            f"""
+            <div style="
+                display:flex;align-items:center;gap:10px;
+                padding:10px 14px;margin:6px 0 2px;
+                background:linear-gradient(135deg,#f0fdf4,#dcfce7);
+                border:1px solid #86efac;border-left:4px solid #16a34a;
+                border-radius:8px;
+            ">
+                <span style="font-size:18px">✅</span>
+                <div>
+                    <div style="font-size:10px;color:#15803d;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Location Captured</div>
+                    <div style="font-size:13px;color:#166534;font-family:'Courier New',monospace;font-weight:500;margin-top:1px">
+                        {flat:.6f}°, {flon:.6f}°{acc_label}
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        # Use a local PNG (put your marker in ./static/location_marker.png)
-        marker_icon_path = "static/location_marker.png"
-        custom_icon = None
-        try:
-            custom_icon = folium.CustomIcon(marker_icon_path, icon_size=(40, 40))
-        except Exception:
-            pass  # fallback to default if file missing
+        # Styled map iframe
+        st.markdown(
+            """
+            <style>
+            /* Map iframe: rounded corners + depth shadow */
+            iframe[title="streamlit_folium.st_folium"] {
+                border-radius: 12px !important;
+                box-shadow: 0 4px 24px rgba(0,0,0,.15) !important;
+                margin-top: 8px;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        m = folium.Map(location=[flat, flon], zoom_start=16, control_scale=True)
+        # Pulsing marker icon via DivIcon (no PNG dependency)
+        _marker_icon_html = """
+        <div style="position:relative;width:20px;height:20px">
+            <div style="
+                position:absolute;top:50%;left:50%;
+                transform:translate(-50%,-50%);
+                width:14px;height:14px;
+                background:#1d4ed8;border:2.5px solid #fff;
+                border-radius:50%;z-index:2;
+                box-shadow:0 2px 8px rgba(0,0,0,.35);
+            "></div>
+            <div style="
+                position:absolute;top:50%;left:50%;
+                transform:translate(-50%,-50%);
+                width:14px;height:14px;
+                background:rgba(29,78,216,.35);
+                border-radius:50%;
+                animation:loc-ripple 2s ease-out infinite;
+            "></div>
+        </div>
+        <style>
+        @keyframes loc-ripple {
+            0%  { width:14px;height:14px;opacity:.9 }
+            100%{ width:52px;height:52px;opacity:0  }
+        }
+        </style>
+        """
+
+        m = folium.Map(
+            location=[flat, flon],
+            zoom_start=17,
+            tiles="CartoDB positron",
+            control_scale=True,
+        )
+
+        # GPS accuracy radius circle
+        if facc is not None:
+            folium.Circle(
+                location=[flat, flon],
+                radius=facc,
+                color="#3b82f6",
+                weight=1.5,
+                fill=True,
+                fill_color="#3b82f6",
+                fill_opacity=0.10,
+                tooltip=f"GPS accuracy: ±{facc:.0f} m",
+            ).add_to(m)
+
         folium.Marker(
             [flat, flon],
             tooltip="Your location",
-            icon=custom_icon if custom_icon else None
+            icon=folium.DivIcon(
+                html=_marker_icon_html,
+                icon_size=(20, 20),
+                icon_anchor=(10, 10),
+            ),
         ).add_to(m)
-        st_folium(m, height=300, key=k("geo_map"))
+
+        st_folium(m, height=360, width="100%", key=k("geo_map"))
 
         if st.button("🔁 Capture again", key=k("btn_retry_after_ok")):
             st.session_state.pop(tried_key, None)

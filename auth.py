@@ -160,7 +160,13 @@ def delete_session(sid: str) -> None:
     revoke_session(sid, reason="manual_revoke")
 
 
+_sessions_table_ensured = False
+
+
 def _ensure_sessions_table_exists():
+    global _sessions_table_ensured
+    if _sessions_table_ensured:
+        return
     # DDL must stay in sync with init_db_v11.py, which is the authoritative schema.
     ddl = """
     CREATE TABLE IF NOT EXISTS app_sessions (
@@ -177,6 +183,7 @@ def _ensure_sessions_table_exists():
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
+    _sessions_table_ensured = True
 
 
 def set_url_param(name: str, value: str | None):

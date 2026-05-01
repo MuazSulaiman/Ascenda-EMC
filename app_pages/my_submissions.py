@@ -1,7 +1,9 @@
 # pages/my_submissions.py  — "My Visits" card-list + detail view
 import html
+import folium
 import pandas as pd
 import streamlit as st
+from streamlit_folium import st_folium
 
 from auth import resolve_session_user, get_url_param, set_url_param
 from config import TIMEZONE
@@ -245,20 +247,111 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
     if lat and lon:
         maps_url = f"https://www.google.com/maps/search/{lat},{lon}"
         loc_rows = [
-            ("Coordinates", f"{lat:.6f}, {lon:.6f}"),
-            ("Accuracy",    f"{acc:.0f} m" if acc else "—"),
+            ("Coordinates", f"{float(lat):.6f}, {float(lon):.6f}"),
+            ("Accuracy",    f"{float(acc):.0f} m" if acc else "—"),
         ]
-        loc_html = (
-            _CARD_WRAP
-            + _SECTION_TITLE.format(label="Location")
-            + "".join(_ROW.format(key=k, val=v) for k, v in loc_rows)
-            + f'<div style="margin-top:0.625rem;">'
-            f'<a href="{maps_url}" target="_blank" '
-            f'style="font-size:0.85rem;color:var(--color-primary);font-weight:500;text-decoration:none;">'
-            f'Open in Google Maps →</a></div>'
-            + _CARD_CLOSE
+        rows_html = "".join(_ROW.format(key=k, val=v) for k, v in loc_rows)
+
+        # Top portion of card — open bottom so the map stitches in seamlessly
+        st.markdown(
+            f"""
+            <style>
+            /* Seal gap: top-card → map */
+            [data-testid="element-container"]:has(.loc-top-card) {{
+                margin-bottom: 0 !important;
+            }}
+            [data-testid="element-container"]:has(.loc-top-card)
+              + [data-testid="element-container"] {{
+                margin-top: 0 !important;
+                padding-top: 0 !important;
+            }}
+            [data-testid="element-container"]:has(.loc-top-card)
+              + [data-testid="element-container"] iframe {{
+                border-radius: 0 !important;
+                box-shadow: none !important;
+                border-left: 1px solid var(--color-border) !important;
+                border-right: 1px solid var(--color-border) !important;
+                display: block;
+                margin: 0 !important;
+            }}
+            /* Seal gap: map → bottom cap */
+            [data-testid="element-container"]:has(.loc-bot-cap) {{
+                margin-top: 0 !important;
+                padding-top: 0 !important;
+            }}
+            </style>
+            <div class="loc-top-card" style="
+                background:var(--color-surface);
+                border:1px solid var(--color-border);
+                border-bottom:none;
+                border-radius:12px 12px 0 0;
+                padding:1rem 1.25rem 0.75rem;
+                margin-bottom:0;
+            ">
+                {_SECTION_TITLE.format(label="Location")}
+                {rows_html}
+                <div style="margin-top:0.625rem;">
+                    <a href="{maps_url}" target="_blank"
+                       style="font-size:0.85rem;color:var(--color-primary);font-weight:500;text-decoration:none;">
+                        Open in Google Maps →
+                    </a>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-        st.markdown(loc_html, unsafe_allow_html=True)
+
+        # Static pin — slate, no animation (this is a recorded location, not live)
+        _pin_html = """
+        <div style="
+            width:14px;height:14px;
+            background:#475569;
+            border:2.5px solid #fff;
+            border-radius:50%;
+            box-shadow:0 2px 6px rgba(0,0,0,.4);
+        "></div>
+        """
+
+        flat, flon = float(lat), float(lon)
+        m = folium.Map(
+            location=[flat, flon],
+            zoom_start=17,
+            tiles="CartoDB positron",
+            control_scale=True,
+        )
+        if acc:
+            folium.Circle(
+                location=[flat, flon],
+                radius=float(acc),
+                color="#64748b",
+                weight=1.5,
+                fill=True,
+                fill_color="#64748b",
+                fill_opacity=0.10,
+                tooltip=f"GPS accuracy: ±{float(acc):.0f} m",
+            ).add_to(m)
+        folium.Marker(
+            [flat, flon],
+            tooltip="Visit location",
+            icon=folium.DivIcon(
+                html=_pin_html,
+                icon_size=(14, 14),
+                icon_anchor=(7, 7),
+            ),
+        ).add_to(m)
+        st_folium(m, height=300, width="100%", key=f"visit_map_{row.get('visit_id', flat)}")
+
+        # Bottom cap — closes the card visually
+        st.markdown(
+            '<div class="loc-bot-cap" style="'
+            "background:var(--color-surface);"
+            "border:1px solid var(--color-border);"
+            "border-top:none;"
+            "border-radius:0 0 12px 12px;"
+            "height:0.6rem;"
+            'margin-bottom:0.75rem;"></div>',
+            unsafe_allow_html=True,
+        )
 
 
 # ── List view ─────────────────────────────────────────────────────────────────

@@ -159,6 +159,11 @@ def _render_license_panel(total_users: int, max_users: int | None) -> None:
 
 
 def page_admin_users():
+    u = st.session_state.get("user")
+    if not u or (u.get("role") or "").lower().strip() != "admin":
+        st.error("Access denied.")
+        st.stop()
+
     st.markdown(_PAGE_CSS, unsafe_allow_html=True)
     section_header("Admin — Users", "Create, manage, and deactivate user accounts")
     set_current_page("admin_users")

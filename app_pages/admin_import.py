@@ -20,6 +20,11 @@ from widgets import set_current_page
 from ui import section_header
 
 def page_admin_import():
+    u = st.session_state.get("user")
+    if not u or (u.get("role") or "").lower().strip() != "admin":
+        st.error("Access denied.")
+        st.stop()
+
     section_header("Admin — Import Lookups", "Upload Excel/CSV files to populate lookup tables. Existing rows are kept; duplicates are skipped.")
 
     set_current_page("admin_import")
