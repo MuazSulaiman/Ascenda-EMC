@@ -123,9 +123,11 @@ LEFT JOIN target_breakdown tb ON tb.target_rep_id = tr.id
 GROUP BY tr.id, tr.year, tr.user_id, u.name,
          u.region, u.role, tr.target_amount, tr.target_visits;
 
+DROP VIEW IF EXISTS v_target_breakdown_reporting;
 CREATE OR REPLACE VIEW v_target_breakdown_reporting AS
 SELECT
     tb.id,
+    tb.target_rep_id,
     tb.year,
     tb.breakdown_level,
     tb.user_id,
