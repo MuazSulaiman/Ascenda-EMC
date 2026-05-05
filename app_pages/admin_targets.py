@@ -448,12 +448,25 @@ def _page_rep_allocation(u):
                         _nav("Rep Breakdown", selected_year=selected_year, selected_rep_id=rep_id)
                     st.session_state.pop(f"tgt_ra_remove_{rep_id}", None)
                 else:
-                    st.warning(f"Remove {rep['rep_name']} from year {selected_year}? This cannot be undone.")
-                    if st.button("Confirm Remove", type="primary", key=f"ra_confirm_remove_{rep_id}"):
-                        remove_rep(rep_id)
-                        st.session_state.pop(f"tgt_ra_remove_{rep_id}", None)
-                        st.success("Rep removed.")
-                        st.rerun()
+                    if year_row["status"] == "ACTIVE":
+                        st.error(
+                            f"This year is ACTIVE. Removing {rep['rep_name']} will permanently "
+                            "delete all their breakdown data. This cannot be undone."
+                        )
+                        st.checkbox(
+                            "I understand this is an active year and wish to proceed.",
+                            key=f"tgt_ra_active_remove_{rep_id}",
+                        )
+                    else:
+                        st.warning(f"Remove {rep['rep_name']} from year {selected_year}? This cannot be undone.")
+                    can_remove = (year_row["status"] != "ACTIVE") or st.session_state.get(f"tgt_ra_active_remove_{rep_id}", False)
+                    if can_remove:
+                        if st.button("Confirm Remove", type="primary", key=f"ra_confirm_remove_{rep_id}"):
+                            remove_rep(rep_id)
+                            st.session_state.pop(f"tgt_ra_remove_{rep_id}", None)
+                            st.session_state.pop(f"tgt_ra_active_remove_{rep_id}", None)
+                            st.success("Rep removed.")
+                            st.rerun()
 
 
 def _page_rep_breakdown(u):
@@ -588,37 +601,47 @@ def _page_rep_breakdown(u):
             unsafe_allow_html=True,
         )
 
+        # Compute confirmation requirements unconditionally so checkboxes are
+        # stable widgets (not recreated inside a button block on every rerun).
+        needs_zero_confirm = row_amount == 0 and row_visits == 0
+        new_total_amount = bd_totals["amount"] + row_amount
+        new_total_visits = bd_totals["visits"] + row_visits
+        over_a = new_total_amount > float(rep_row["target_amount"])
+        over_v = new_total_visits > int(rep_row["target_visits"])
+        needs_over_confirm = over_a or over_v
+
+        if needs_zero_confirm:
+            st.warning("This row has zero amount and zero visits. Tick below to proceed.")
+            st.checkbox("Add row with zero values anyway", key=f"{_bk}_zero_confirm")
+
+        if needs_over_confirm:
+            warn_parts = []
+            if over_a:
+                warn_parts.append(f"amount ({new_total_amount:,.2f} > {float(rep_row['target_amount']):,.2f})")
+            if over_v:
+                warn_parts.append(f"visits ({new_total_visits:,} > {int(rep_row['target_visits']):,})")
+            st.warning(f"Breakdown total exceeds rep target for: {', '.join(warn_parts)}.")
+            st.checkbox("I understand this exceeds the rep target and wish to proceed.",
+                        key=f"{_bk}_over_confirm")
+
+        zero_ok = (not needs_zero_confirm) or st.session_state.get(f"{_bk}_zero_confirm", False)
+        over_ok = (not needs_over_confirm) or st.session_state.get(f"{_bk}_over_confirm", False)
+
+        dims = {
+            "customer_id": cust_id, "business_unit_id": bu_id,
+            "product_category_id": pc_id, "business_line_id": bl_id,
+            "article_id": article_id,
+        }
+
         if st.button("+ Add Row", type="primary", key=f"{_bk}_add"):
-            dims = {
-                "customer_id": cust_id, "business_unit_id": bu_id,
-                "product_category_id": pc_id, "business_line_id": bl_id,
-                "article_id": article_id,
-            }
             errs = []
 
-            if row_amount == 0 and row_visits == 0:
-                st.warning("This row has zero amount and zero visits. Tick below to proceed.")
-                st.checkbox("Add row with zero values anyway", key=f"{_bk}_zero_confirm")
-                if not st.session_state.get(f"{_bk}_zero_confirm"):
-                    errs.append("Zero-value row not confirmed.")
-
+            if not zero_ok:
+                errs.append("Zero-value row not confirmed.")
+            if not over_ok:
+                errs.append("Over-allocation not confirmed.")
             if check_duplicate_breakdown(selected_rep_id, dims):
                 errs.append("An identical breakdown row already exists for this rep.")
-
-            new_total_amount = bd_totals["amount"] + row_amount
-            new_total_visits = bd_totals["visits"] + row_visits
-            over_a = new_total_amount > float(rep_row["target_amount"])
-            over_v = new_total_visits > int(rep_row["target_visits"])
-            if (over_a or over_v) and not st.session_state.get(f"{_bk}_over_confirm"):
-                warn_parts = []
-                if over_a:
-                    warn_parts.append(f"amount ({new_total_amount:,.2f} > {float(rep_row['target_amount']):,.2f})")
-                if over_v:
-                    warn_parts.append(f"visits ({new_total_visits:,} > {int(rep_row['target_visits']):,})")
-                st.warning(f"Breakdown total exceeds rep target for: {', '.join(warn_parts)}.")
-                st.checkbox("I understand this exceeds the rep target and wish to proceed.",
-                            key=f"{_bk}_over_confirm")
-                errs.append("Over-allocation not confirmed.")
 
             if not errs:
                 try:
@@ -639,6 +662,9 @@ def _page_rep_breakdown(u):
                 except Exception as e:
                     st.error("Could not add row.")
                     st.caption(str(e))
+            else:
+                for err in errs:
+                    st.error(err)
 
     st.markdown('<div class="tgt-sub-divider"></div>', unsafe_allow_html=True)
     st.markdown("**Existing Breakdown Rows**")
