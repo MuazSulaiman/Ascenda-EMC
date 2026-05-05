@@ -534,6 +534,16 @@ CREATE INDEX IF NOT EXISTS idx_target_bd_rep         ON target_breakdown(target_
 CREATE INDEX IF NOT EXISTS idx_target_bd_year_user   ON target_breakdown(year, user_id);
 CREATE INDEX IF NOT EXISTS idx_target_bd_customer    ON target_breakdown(customer_id);
 CREATE INDEX IF NOT EXISTS idx_target_bd_bu          ON target_breakdown(business_unit_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_target_breakdown
+    ON target_breakdown (
+        target_rep_id,
+        COALESCE(customer_id,          -1),
+        COALESCE(business_unit_id,     -1),
+        COALESCE(product_category_id,  -1),
+        COALESCE(business_line_id,     -1),
+        COALESCE(article_id,           '')
+    );
 """
 
 
