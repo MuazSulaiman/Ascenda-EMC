@@ -2,6 +2,7 @@
 import io
 import json
 import re
+import unicodedata
 import uuid
 import zipfile
 from datetime import datetime, timezone
