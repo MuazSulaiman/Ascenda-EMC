@@ -156,9 +156,11 @@ def _page_overview(u):
                     _nav("Year Setup", edit_year=year)
             if row["status"] == "DRAFT":
                 if bc3.button("Activate", key=f"ov_act_{year}"):
-                    transition_year_status(year, "ACTIVE", uid)
-                    st.success(f"Year {year} activated.")
-                    st.rerun()
+                    if transition_year_status(year, "ACTIVE", uid, "DRAFT"):
+                        st.success(f"Year {year} activated.")
+                        st.rerun()
+                    else:
+                        st.error("Activation failed — year status changed by another session.")
             if row["status"] == "ACTIVE":
                 if bc4.button("Lock", key=f"ov_lock_{year}"):
                     st.session_state[f"tgt_lock_confirm_{year}"] = True
@@ -168,10 +170,12 @@ def _page_overview(u):
                 confirm_input = st.text_input("Type year to confirm lock", key=f"tgt_lock_input_{year}")
                 if st.button("Confirm Lock", type="primary", key=f"tgt_lock_btn_{year}"):
                     if confirm_input.strip() == str(year):
-                        transition_year_status(year, "LOCKED", uid)
-                        st.session_state.pop(f"tgt_lock_confirm_{year}", None)
-                        st.success(f"Year {year} is now locked.")
-                        st.rerun()
+                        if transition_year_status(year, "LOCKED", uid, "ACTIVE"):
+                            st.session_state.pop(f"tgt_lock_confirm_{year}", None)
+                            st.success(f"Year {year} is now locked.")
+                            st.rerun()
+                        else:
+                            st.error("Lock failed — year status changed by another session.")
                     else:
                         st.error("Year number does not match. Lock cancelled.")
 
@@ -197,6 +201,8 @@ def _page_year_setup(u):
         year_val = st.number_input(
             "Year *", min_value=2000, max_value=2099,
             value=int(edit_year) if edit_year else 2025, step=1,
+            disabled=bool(existing),
+            help="Year cannot be changed after creation." if existing else None,
         )
         amount_val = st.number_input(
             "Overall Target Amount (SAR) *",
@@ -487,8 +493,9 @@ def _page_rep_breakdown(u):
 
     remaining_amount = float(rep_row["target_amount"]) - bd_totals["amount"]
     remaining_visits = int(rep_row["target_visits"]) - bd_totals["visits"]
-    pct = min(bd_totals["amount"] / float(rep_row["target_amount"]) * 100, 100) if float(rep_row["target_amount"]) > 0 else 0
+    pct = bd_totals["amount"] / float(rep_row["target_amount"]) * 100 if float(rep_row["target_amount"]) > 0 else 0
     bar_color = "#ef4444" if pct > 100 else ("#f59e0b" if pct > 90 else "#2563eb")
+    bar_width = min(pct, 100)
 
     st.markdown(
         f'<div class="tgt-context">'
@@ -498,7 +505,7 @@ def _page_rep_breakdown(u):
         f'<div class="tgt-context-item">Remaining: <strong>SAR {_fmt_num(remaining_amount)}</strong></div>'
         f'</div>'
         f'<div style="background:var(--color-surface-2);border-radius:6px;height:8px;margin-bottom:1rem;overflow:hidden;">'
-        f'<div style="width:{pct:.1f}%;height:100%;background:{bar_color};border-radius:6px;"></div>'
+        f'<div style="width:{bar_width:.1f}%;height:100%;background:{bar_color};border-radius:6px;"></div>'
         f'</div>',
         unsafe_allow_html=True,
     )

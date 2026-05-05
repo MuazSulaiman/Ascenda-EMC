@@ -73,9 +73,32 @@ def test_update_year(admin_user_id):
 
 def test_transition_year_status(admin_user_id):
     create_year(TEST_YEAR, 500000, 300, admin_user_id)
-    transition_year_status(TEST_YEAR, "ACTIVE", admin_user_id)
+    changed = transition_year_status(TEST_YEAR, "ACTIVE", admin_user_id, "DRAFT")
+    assert changed is True
     row = get_year(TEST_YEAR)
     assert row["status"] == "ACTIVE"
+
+
+def test_transition_year_status_active_to_locked(admin_user_id):
+    create_year(TEST_YEAR, 500000, 300, admin_user_id)
+    transition_year_status(TEST_YEAR, "ACTIVE", admin_user_id, "DRAFT")
+    changed = transition_year_status(TEST_YEAR, "LOCKED", admin_user_id, "ACTIVE")
+    assert changed is True
+    row = get_year(TEST_YEAR)
+    assert row["status"] == "LOCKED"
+
+
+def test_transition_nonexistent_year_returns_false(admin_user_id):
+    changed = transition_year_status(9999, "ACTIVE", admin_user_id, "DRAFT")
+    assert changed is False
+
+
+def test_transition_wrong_expected_status_does_not_change_row(admin_user_id):
+    create_year(TEST_YEAR, 500000, 300, admin_user_id)
+    changed = transition_year_status(TEST_YEAR, "LOCKED", admin_user_id, "ACTIVE")
+    assert changed is False
+    row = get_year(TEST_YEAR)
+    assert row["status"] == "DRAFT"
 
 
 def test_upsert_and_get_rep(admin_user_id, any_user_id):

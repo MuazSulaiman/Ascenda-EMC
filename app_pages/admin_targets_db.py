@@ -76,15 +76,21 @@ def update_year(year: int, amount: float, visits: int, updated_by: int) -> None:
     )
 
 
-def transition_year_status(year: int, new_status: str, updated_by: int) -> None:
-    exec_sql(
-        """
-        UPDATE target_year
-        SET status = :status, updated_by = :ub, updated_at = NOW()
-        WHERE year = :year
-        """,
-        {"year": year, "status": new_status, "ub": updated_by},
-    )
+def transition_year_status(
+    year: int, new_status: str, updated_by: int, expected_status: str
+) -> bool:
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                """
+                UPDATE target_year
+                SET status = :status, updated_by = :ub, updated_at = NOW()
+                WHERE year = :year AND status = :expected_status
+                """
+            ),
+            {"year": year, "status": new_status, "ub": updated_by, "expected_status": expected_status},
+        )
+    return result.rowcount > 0
 
 
 def get_year_allocated_totals(year: int) -> dict:
