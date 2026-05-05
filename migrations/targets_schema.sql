@@ -166,21 +166,20 @@ LEFT JOIN items           i ON i.product_id              = tb.article_id;
 
 CREATE OR REPLACE VIEW v_actual_vs_target_rep AS
 SELECT
-    tb.year, tb.user_id, u.name AS rep_name, u.region AS rep_region,
-    tb.target_amount, tb.target_visits,
+    tr.year, tr.user_id, u.name AS rep_name, u.region AS rep_region,
+    tr.target_amount, tr.target_visits,
     COUNT(DISTINCT v.visit_id)  AS actual_visits,
-    CASE WHEN tb.target_visits > 0
-         THEN ROUND(COUNT(DISTINCT v.visit_id)::NUMERIC / tb.target_visits * 100, 1)
+    CASE WHEN tr.target_visits > 0
+         THEN ROUND(COUNT(DISTINCT v.visit_id)::NUMERIC / tr.target_visits * 100, 1)
          ELSE NULL END          AS visit_achievement_pct,
     NULL::NUMERIC               AS actual_sales_amount
-FROM target_breakdown tb
-JOIN users u ON u.user_id = tb.user_id
+FROM target_rep tr
+JOIN users u ON u.user_id = tr.user_id
 LEFT JOIN visits v
-    ON  v.user_id    = tb.user_id
-    AND EXTRACT(YEAR FROM COALESCE(v.submitted_at_local, v.submitted_at_utc)) = tb.year
+    ON  v.user_id    = tr.user_id
+    AND EXTRACT(YEAR FROM COALESCE(v.submitted_at_local, v.submitted_at_utc)) = tr.year
     AND v.is_deleted = FALSE
-WHERE tb.breakdown_level = 'rep'
-GROUP BY tb.year, tb.user_id, u.name, u.region, tb.target_amount, tb.target_visits;
+GROUP BY tr.year, tr.user_id, u.name, u.region, tr.target_amount, tr.target_visits;
 
 CREATE OR REPLACE VIEW v_actual_vs_target_customer AS
 SELECT
