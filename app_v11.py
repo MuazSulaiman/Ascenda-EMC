@@ -25,6 +25,7 @@ from app_pages.project_management import page_project_management
 from app_pages.admin_import import page_admin_import
 from app_pages.admin_data import page_admin_data
 from app_pages.admin_users import page_admin_users
+from app_pages.admin_targets import page_admin_targets
 from app_pages.review_audiences import page_review_target_audiences
 from app_pages.review_customers import page_review_other_customers
 from app_pages.change_request import page_change_request
@@ -373,6 +374,7 @@ else:
         "Admin: Import Lookups":    page_admin_import,
         "Admin: Data Browser":      page_admin_data,
         "Admin: Users":             page_admin_users,
+        "Admin: Targets":           page_admin_targets,
         "Review Target Audiences":  page_review_target_audiences,
         "Review Other Customers":   page_review_other_customers,
         "My Change Requests":        page_change_request,
@@ -384,6 +386,7 @@ else:
         "Admin: Import Lookups":   ["admin"],
         "Admin: Data Browser":     ["admin"],
         "Admin: Users":            ["admin"],
+        "Admin: Targets":          ["admin"],
         "Review Target Audiences": ["admin"],
         "Review Other Customers":  ["admin"],
         "Review Change Requests":  ["admin"],

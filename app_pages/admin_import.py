@@ -2,6 +2,7 @@
 import io
 import json
 import re
+import unicodedata
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -154,7 +155,7 @@ def page_admin_import():
     # MAIN TABS FOR ENTITIES
     # =====================================================================
     main_tabs = st.tabs(
-        ["Customers", "Target Audiences", "Business Units", "Business Lines", "Items", "Objectives"]
+        ["Customers", "Target Audiences", "Business Units", "Business Lines", "Items", "Objectives", "Product Categories"]
     )
 
     # =====================================================================
@@ -3235,6 +3236,109 @@ def page_admin_import():
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
+
+    # =====================================================================
+    # 7) PRODUCT CATEGORIES
+    # =====================================================================
+    with main_tabs[6]:
+        st.subheader("Product Categories")
+
+        st.markdown("**Upload Product Categories CSV/Excel**")
+        st.markdown(
+            "Columns required: `business_unit_name` (TEXT), `category_name` (TEXT)\n\n"
+            "Rows with unknown business_unit_name are skipped."
+        )
+        pc_file = st.file_uploader("Choose file", type=["xlsx", "csv"], key="pc_upload")
+
+        if pc_file:
+            try:
+                if pc_file.name.endswith(".csv"):
+                    pc_df = pd.read_csv(pc_file)
+                else:
+                    pc_df = pd.read_excel(pc_file)
+                pc_df.columns = [c.strip().lower() for c in pc_df.columns]
+
+                required = {"business_unit_name", "category_name"}
+                if not required.issubset(set(pc_df.columns)):
+                    st.error(f"Missing columns: {required - set(pc_df.columns)}")
+                else:
+                    st.dataframe(pc_df.head(10))
+                    if st.button("Import Product Categories", type="primary", key="pc_import_btn"):
+                        inserted = skipped = 0
+                        bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active = TRUE")
+                        bu_map = {r.name.strip().lower(): int(r.business_unit_id) for r in bu_df.itertuples(index=False)}
+
+                        for _, row in pc_df.iterrows():
+                            bu_name = str(row.get("business_unit_name", "")).strip().lower()
+                            cat_name = str(row.get("category_name", "")).strip()
+                            if not bu_name or not cat_name or bu_name not in bu_map:
+                                skipped += 1
+                                continue
+                            try:
+                                exec_sql(
+                                    """
+                                    INSERT INTO product_categories (business_unit_id, name)
+                                    VALUES (:buid, :name)
+                                    ON CONFLICT (business_unit_id, name) DO NOTHING
+                                    """,
+                                    {"buid": bu_map[bu_name], "name": cat_name},
+                                )
+                                inserted += 1
+                            except Exception:
+                                skipped += 1
+
+                        st.success(f"Done — {inserted} inserted, {skipped} skipped.")
+            except Exception as e:
+                st.error(f"Could not read file: {e}")
+
+        st.markdown("---")
+        st.markdown("**Migrate existing Business Lines categories → Product Categories**")
+        st.markdown(
+            "This one-time migration reads `business_lines.category` and creates matching "
+            "`product_categories` rows, then links each business line."
+        )
+        if st.button("Run Category Migration", key="pc_migrate_btn"):
+            try:
+                bl_df = query_df(
+                    """
+                    SELECT bl.business_line_id, bl.business_unit_id,
+                           LOWER(TRIM(bl.category)) AS cat_name
+                    FROM business_lines bl
+                    WHERE bl.category IS NOT NULL AND TRIM(bl.category) != ''
+                      AND bl.product_category_id IS NULL
+                    """
+                )
+                created = linked = 0
+                for _, row in bl_df.iterrows():
+                    cat_name = str(row["cat_name"]).strip()
+                    if not cat_name:
+                        continue
+                    exec_sql(
+                        """
+                        INSERT INTO product_categories (business_unit_id, name)
+                        VALUES (:buid, :name)
+                        ON CONFLICT (business_unit_id, name) DO NOTHING
+                        """,
+                        {"buid": int(row["business_unit_id"]), "name": cat_name},
+                    )
+                    created += 1
+                    exec_sql(
+                        """
+                        UPDATE business_lines SET product_category_id = (
+                            SELECT product_category_id FROM product_categories
+                            WHERE business_unit_id = :buid AND name = :name
+                        )
+                        WHERE business_line_id = :blid
+                        """,
+                        {"buid": int(row["business_unit_id"]), "name": cat_name,
+                         "blid": int(row["business_line_id"])},
+                    )
+                    linked += 1
+                st.success(f"Migration complete — {created} categories created, {linked} business lines linked.")
+            except Exception as e:
+                st.error(f"Migration failed: {e}")
+                st.caption(str(e))
+
 
 # =============================
 # Page — Admin: Data Browser

@@ -83,5 +83,13 @@ def _run_migrations() -> None:
             WHERE change_source = 'DELETE'
         """))
 
+    # Target Management Module — schema migration
+    _migration_path = os.path.join(os.path.dirname(__file__), "migrations", "targets_schema.sql")
+    if os.path.exists(_migration_path):
+        with open(_migration_path, "r") as _f:
+            _targets_sql = _f.read()
+        with engine.begin() as conn:
+            conn.execute(text(_targets_sql))
+
 
 _run_migrations()
