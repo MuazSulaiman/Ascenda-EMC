@@ -125,9 +125,8 @@ def _panel_header(title: str, subtitle: str, icon_svg: str) -> str:
     )
 
 
-def _get_max_users() -> int | None:
-    """Return the configured seat limit from MAX_USERS env var, or None if unlimited."""
-    raw = os.environ.get("MAX_USERS", "").strip()
+def _parse_env_int(key: str) -> int | None:
+    raw = os.environ.get(key, "").strip()
     try:
         v = int(raw)
         return v if v > 0 else None
@@ -135,27 +134,53 @@ def _get_max_users() -> int | None:
         return None
 
 
-def _render_license_panel(total_users: int, max_users: int | None) -> None:
-    if max_users is None:
+def _get_role_limits() -> dict[str, int | None]:
+    """Return per-role seat limits from MAX_USERS_ADMIN / MAX_USERS_OTHER env vars."""
+    return {
+        "admin": _parse_env_int("MAX_USERS_ADMIN"),
+        "other": _parse_env_int("MAX_USERS_OTHER"),
+    }
+
+
+def _render_license_panel(
+    total_users: int,
+    admin_count: int,
+    other_count: int,
+    role_limits: dict[str, int | None],
+) -> None:
+    lim_admin = role_limits["admin"]
+    lim_other = role_limits["other"]
+    if lim_admin is None and lim_other is None:
         return
-    used     = total_users
-    pct      = min(used / max_users, 1.0) * 100
-    free     = max(max_users - used, 0)
+
+    max_total = (lim_admin or 0) + (lim_other or 0)
+    pct       = min(total_users / max_total, 1.0) * 100 if max_total else 0
+    free      = max(max_total - total_users, 0)
     bar_color = "#ef4444" if pct >= 100 else ("#f59e0b" if pct >= 80 else "#2563EB")
-    st.markdown(
-        _panel_header("Account Licence", "Seats provisioned for this deployment.", _ICON_LICENSE)
-        + f'<div class="au-pills">'
-        f'<div class="au-pill"><strong>{used}</strong> used</div>'
+
+    html = _panel_header("Account Licence", "Seats provisioned for this deployment.", _ICON_LICENSE)
+    html += (
+        f'<div class="au-pills">'
+        f'<div class="au-pill"><strong>{total_users}</strong> used</div>'
         f'<div class="au-pill"><strong>{free}</strong> available</div>'
-        f'<div class="au-pill"><strong>{max_users}</strong> total seats</div>'
+        f'<div class="au-pill"><strong>{max_total}</strong> total</div>'
         f'</div>'
         f'<div class="au-license-bar-wrap">'
         f'<div class="au-license-bar-fill" style="width:{pct:.1f}%;background:{bar_color};"></div>'
         f'</div>'
         f'<div class="au-license-label">{pct:.0f}% of seats used</div>'
-        f'</div>',
-        unsafe_allow_html=True,
+        f'<div style="height:10px;"></div>'
+        f'<div style="font-size:0.8rem;font-weight:600;color:var(--color-text-muted);margin-bottom:4px;">Per-role breakdown</div>'
+        f'<div class="au-pills">'
     )
+    if lim_admin is not None:
+        free_a = max(lim_admin - admin_count, 0)
+        html += f'<div class="au-pill">Admin: <strong>{admin_count}</strong>/{lim_admin} &nbsp;·&nbsp; <strong>{free_a}</strong> free</div>'
+    if lim_other is not None:
+        free_o = max(lim_other - other_count, 0)
+        html += f'<div class="au-pill">Other: <strong>{other_count}</strong>/{lim_other} &nbsp;·&nbsp; <strong>{free_o}</strong> free</div>'
+    html += '</div></div>'
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def page_admin_users():
@@ -168,12 +193,14 @@ def page_admin_users():
     section_header("Admin — Users", "Create, manage, and deactivate user accounts")
     set_current_page("admin_users")
 
-    # ── Fetch live user count once (used by licence panel + guard) ──
-    _count_row = query_df("SELECT COUNT(*) AS n FROM users")
-    _total_users = int(_count_row["n"].iloc[0]) if not _count_row.empty else 0
-    _max_users   = _get_max_users()
+    # ── Fetch live user counts once (used by licence panel + guards) ──
+    _counts_df   = query_df("SELECT role, COUNT(*) AS n FROM users GROUP BY role")
+    _total_users = int(_counts_df["n"].sum()) if not _counts_df.empty else 0
+    _admin_count = int(_counts_df.loc[_counts_df["role"] == "admin", "n"].sum()) if not _counts_df.empty else 0
+    _other_count = _total_users - _admin_count
+    _role_limits = _get_role_limits()
 
-    _render_license_panel(_total_users, _max_users)
+    _render_license_panel(_total_users, _admin_count, _other_count, _role_limits)
 
     # ═══════════════════════════════════════════════════════════════
     # SECTION 1 — Add a User
@@ -219,9 +246,14 @@ def page_admin_users():
             st.error("Email, Name, and Password are required.")
         elif len(pw) < 8:
             st.error("Password must be at least 8 characters.")
-        elif _max_users is not None and _total_users >= _max_users:
+        elif role == "admin" and _role_limits["admin"] is not None and _admin_count >= _role_limits["admin"]:
             st.error(
-                f"Seat limit reached — this deployment is licensed for {_max_users} account(s). "
+                f"Admin seat limit reached — this deployment allows {_role_limits['admin']} admin account(s). "
+                "Contact your administrator to increase the limit."
+            )
+        elif role != "admin" and _role_limits["other"] is not None and _other_count >= _role_limits["other"]:
+            st.error(
+                f"User seat limit reached — this deployment allows {_role_limits['other']} non-admin account(s). "
                 "Contact your administrator to increase the limit."
             )
         else:

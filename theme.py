@@ -286,22 +286,9 @@ html[data-theme] [data-testid="stAppViewContainer"] {
   }
   var stored = null;
   try { stored = localStorage.getItem('_ascenda_theme'); } catch (e) {}
-  if (stored === 'dark' || stored === 'light') {
-    applyTheme(stored);
-  } else {
-    applyTheme(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  }
-
-  /* ── 3. Listen for OS preference changes (only when no manual override) ── */
-  try {
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
-      try {
-        if (!localStorage.getItem('_ascenda_theme')) {
-          applyTheme(e.matches ? 'dark' : 'light');
-        }
-      } catch (ex) {}
-    });
-  } catch (e) {}
+  /* Always default to light — OS preference is intentionally ignored.
+     Dark mode is only activated when the user explicitly enables it in App Settings. */
+  applyTheme(stored === 'dark' ? 'dark' : 'light');
 
   /* ── 4. Toggle track patcher ─────────────────────────────────────────────
      Streamlit emotion CSS uses generated class names with high specificity
@@ -342,11 +329,32 @@ html[data-theme] [data-testid="stAppViewContainer"] {
     });
   }
 
+  /* ── 5. Required-field asterisk colouring ───────────────────────────────
+     Streamlit renders label text as plain text inside <p>, so CSS alone
+     cannot target the trailing *. This walker wraps it in a red <span>.   */
+  function patchRequiredLabels() {
+    doc.querySelectorAll('[data-testid="stWidgetLabel"] p').forEach(function (p) {
+      if (p.dataset.reqPatched) return;
+      var raw = p.textContent || '';
+      if (!raw.trimEnd().endsWith('*')) return;
+      var before = raw.trimEnd().slice(0, -1);
+      p.textContent = '';
+      p.appendChild(doc.createTextNode(before));
+      var star = doc.createElement('span');
+      star.style.cssText = 'color:#d00000;font-weight:700;';
+      star.textContent = '*';
+      p.appendChild(star);
+      p.dataset.reqPatched = '1';
+    });
+  }
+
   /* run after Streamlit renders, and on any DOM mutation */
   setTimeout(patchToggles, 300);
   setTimeout(patchToggles, 900);
+  setTimeout(patchRequiredLabels, 400);
+  setTimeout(patchRequiredLabels, 1000);
   try {
-    new MutationObserver(patchToggles).observe(doc.body, {
+    new MutationObserver(function () { patchToggles(); patchRequiredLabels(); }).observe(doc.body, {
       childList: true, subtree: true, attributes: true, attributeFilter: ['checked', 'data-theme']
     });
   } catch (e) {}

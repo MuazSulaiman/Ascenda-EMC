@@ -186,6 +186,7 @@ def login_block():
     .login-logo-dark  { display: none; }
     html[data-theme="dark"] .login-logo-light { display: none; }
     html[data-theme="dark"] .login-logo-dark  { display: inline-block; }
+    [data-testid="InputInstructions"] { display: none !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -263,11 +264,9 @@ def login_block():
                     _prefs = json.loads(_prefs)
                 except Exception:
                     _prefs = {}
-            _theme = _prefs.get("theme", "")
+            _theme = _prefs.get("theme", "light")
             _comp.html(
-                f'<script>try{{if({repr(_theme)})'
-                f'localStorage.setItem("_ascenda_theme",{repr(_theme)});'
-                f'else localStorage.removeItem("_ascenda_theme");}}catch(e){{}}</script>',
+                f'<script>try{{localStorage.setItem("_ascenda_theme",{repr(_theme)});}}catch(e){{}}</script>',
                 height=0,
             )
             st.session_state["_stored_sid"] = sid
