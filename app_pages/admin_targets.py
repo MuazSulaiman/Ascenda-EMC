@@ -440,60 +440,64 @@ def _render_state_c(u, selected_year, year_row, selected_rep_id, rep_row):
 
 # ── Add row form ──────────────────────────────────────────────────────────────
 
+def _derive_level(dims: dict) -> str | None:
+    if dims.get("article_id"):          return "article"
+    if dims.get("business_line_id"):    return "business_line"
+    if dims.get("product_category_id"): return "product_category"
+    if dims.get("business_unit_id"):    return "business_unit"
+    if dims.get("customer_id"):         return "customer"
+    return None
+
+
 def _render_add_row_form(u, selected_year, year_row, selected_rep_id, rep_row):
-    uid  = u["user_id"]
-    _bk  = f"arf_{selected_rep_id}"
+    uid = u["user_id"]
+    _bk = f"arf_{selected_rep_id}"
 
     st.markdown("**Add Row**")
-
-    level_options = ["customer", "business_unit", "product_category", "business_line", "article"]
-    level_labels  = ["Customer", "Bus. Unit", "Prod. Category", "Bus. Line", "Article"]
-
-    selected_level = st.radio(
-        "Level", level_options,
-        format_func=lambda x: level_labels[level_options.index(x)],
-        horizontal=True, key=f"{_bk}_level",
-    )
+    st.caption("Select as many levels as needed — stop at any point. Deeper levels unlock as you go.")
 
     dims = {
         "customer_id": None, "business_unit_id": None,
         "product_category_id": None, "business_line_id": None, "article_id": None,
     }
 
-    if selected_level == "customer":
-        df = get_customers()
-        m  = {"": None, **{r.account_name: int(r.customer_id) for r in df.itertuples(index=False)}}
-        sel = st.selectbox("Customer", list(m.keys()), key=f"{_bk}_cust")
-        dims["customer_id"] = m.get(sel)
+    # Customer (always visible)
+    cust_df = get_customers()
+    cust_map = {"": None, **{r.account_name: int(r.customer_id) for r in cust_df.itertuples(index=False)}}
+    cust_sel = st.selectbox("Customer", list(cust_map.keys()), key=f"{_bk}_cust")
+    dims["customer_id"] = cust_map.get(cust_sel)
 
-    elif selected_level == "business_unit":
-        df = get_business_units()
-        m  = {"": None, **{r.name: int(r.business_unit_id) for r in df.itertuples(index=False)}}
-        sel = st.selectbox("Business Unit", list(m.keys()), key=f"{_bk}_bu")
-        dims["business_unit_id"] = m.get(sel)
+    # Business Unit (always visible — independent of customer)
+    bu_df = get_business_units()
+    bu_map = {"": None, **{r.name: int(r.business_unit_id) for r in bu_df.itertuples(index=False)}}
+    bu_sel = st.selectbox("Business Unit", list(bu_map.keys()), key=f"{_bk}_bu")
+    dims["business_unit_id"] = bu_map.get(bu_sel)
 
-    elif selected_level == "product_category":
-        df = get_product_categories()
-        m  = {"": None, **{r.name: int(r.product_category_id) for r in df.itertuples(index=False)}}
-        sel = st.selectbox("Product Category", list(m.keys()), key=f"{_bk}_pc")
-        dims["product_category_id"] = m.get(sel)
+    # Product Category (unlocks when BU is selected)
+    if dims["business_unit_id"]:
+        pc_df = get_product_categories(dims["business_unit_id"])
+        pc_map = {"": None, **{r.name: int(r.product_category_id) for r in pc_df.itertuples(index=False)}}
+        pc_sel = st.selectbox("Product Category", list(pc_map.keys()), key=f"{_bk}_pc")
+        dims["product_category_id"] = pc_map.get(pc_sel)
 
-    elif selected_level == "business_line":
-        df = get_business_lines()
-        m  = {"": None, **{r.name: int(r.business_line_id) for r in df.itertuples(index=False)}}
-        sel = st.selectbox("Business Line", list(m.keys()), key=f"{_bk}_bl")
-        dims["business_line_id"] = m.get(sel)
+    # Business Line (unlocks when PC is selected)
+    if dims["product_category_id"]:
+        bl_df = get_business_lines(dims["product_category_id"])
+        bl_map = {"": None, **{r.name: int(r.business_line_id) for r in bl_df.itertuples(index=False)}}
+        bl_sel = st.selectbox("Business Line", list(bl_map.keys()), key=f"{_bk}_bl")
+        dims["business_line_id"] = bl_map.get(bl_sel)
 
-    elif selected_level == "article":
-        df = get_articles()
-        m  = {"": None, **{
+    # Article (unlocks when BL is selected)
+    if dims["business_line_id"]:
+        art_df = get_articles(dims["business_line_id"])
+        art_map = {"": None, **{
             f"{r.article_number} — {r.description or ''}".strip(" —"): r.product_id
-            for r in df.itertuples(index=False)
+            for r in art_df.itertuples(index=False)
         }}
-        sel = st.selectbox("Article", list(m.keys()), key=f"{_bk}_art")
-        dims["article_id"] = m.get(sel)
+        art_sel = st.selectbox("Article", list(art_map.keys()), key=f"{_bk}_art")
+        dims["article_id"] = art_map.get(art_sel)
 
-    a1, a2    = st.columns(2)
+    a1, a2     = st.columns(2)
     row_amount = a1.number_input("Amount (SAR)", min_value=0.0, step=1000.0,
                                   format="%.2f", key=f"{_bk}_amount")
     row_visits = a2.number_input("Visits", min_value=0, step=1, key=f"{_bk}_visits")
@@ -511,11 +515,12 @@ def _render_add_row_form(u, selected_year, year_row, selected_rep_id, rep_row):
         )
 
     if st.button("＋ Add Row", type="primary", key=f"{_bk}_add"):
+        derived_level = _derive_level(dims)
         errs = []
-        if not any(v is not None for v in dims.values()):
-            errs.append("Select a dimension value before adding.")
-        if check_duplicate_breakdown(selected_rep_id, selected_level, dims):
-            errs.append("This combination already exists for this rep.")
+        if derived_level is None:
+            errs.append("Select at least one dimension before adding.")
+        elif check_duplicate_breakdown(selected_rep_id, derived_level, dims):
+            errs.append("This exact combination already exists for this rep.")
         if errs:
             for e in errs:
                 st.error(e)
@@ -523,13 +528,13 @@ def _render_add_row_form(u, selected_year, year_row, selected_rep_id, rep_row):
             if row_amount == 0 and row_visits == 0:
                 st.warning("Amount and visits are both zero — row added.")
             new_row = {
-                "target_rep_id":     selected_rep_id,
-                "year":              selected_year,
-                "user_id":           int(rep_row["user_id"]),
-                "breakdown_level":   selected_level,
+                "target_rep_id":   selected_rep_id,
+                "year":            selected_year,
+                "user_id":         int(rep_row["user_id"]),
+                "breakdown_level": derived_level,
                 **dims,
-                "target_amount":     row_amount,
-                "target_visits":     row_visits,
+                "target_amount":   row_amount,
+                "target_visits":   row_visits,
             }
             try:
                 add_breakdown_row(new_row, uid)
@@ -564,11 +569,16 @@ def _render_breakdown_table(selected_rep_id, is_locked):
 
     for _, row in rows_df.iterrows():
         bd_id = int(row["id"])
-        dim   = (
-            row.get("customer_name") or row.get("business_unit_name") or
-            row.get("product_category_name") or row.get("business_line_name") or
-            row.get("article_number") or "—"
-        )
+        parts = [
+            p for p in [
+                row.get("customer_name"),
+                row.get("business_unit_name"),
+                row.get("product_category_name"),
+                row.get("business_line_name"),
+                row.get("article_number"),
+            ] if p
+        ]
+        dim = " › ".join(parts) if parts else "—"
         amt = float(row.get("target_amount", 0))
         vis = int(row.get("target_visits", 0))
         total_amount += amt
