@@ -9,7 +9,7 @@ from app_pages.admin_targets_db import (
     get_reps_for_year, add_rep_to_year, remove_rep, get_rep_breakdown_count,
     get_non_admin_users,
     get_breakdown_rows, get_breakdown_totals, check_duplicate_breakdown,
-    add_breakdown_row, delete_breakdown_row,
+    add_breakdown_row, update_breakdown_row, delete_breakdown_row,
     get_customers, get_business_units, get_product_categories,
     get_business_lines, get_articles,
 )
@@ -412,7 +412,7 @@ def _render_state_c(u, selected_year, year_row, selected_rep_id, rep_row):
         _render_add_row_form(u, selected_year, year_row, selected_rep_id, rep_row)
 
     st.markdown('<div class="tgt-divider"></div>', unsafe_allow_html=True)
-    _render_breakdown_table(selected_rep_id, is_locked)
+    _render_breakdown_table(u, selected_rep_id, is_locked)
 
     # Remove rep
     if not is_locked:
@@ -547,7 +547,7 @@ def _render_add_row_form(u, selected_year, year_row, selected_rep_id, rep_row):
 
 # ── Breakdown table ───────────────────────────────────────────────────────────
 
-def _render_breakdown_table(selected_rep_id, is_locked):
+def _render_breakdown_table(u, selected_rep_id, is_locked):
     rows_df = get_breakdown_rows(selected_rep_id)
 
     if rows_df.empty:
@@ -557,7 +557,7 @@ def _render_breakdown_table(selected_rep_id, is_locked):
     st.markdown("**Breakdown Rows**")
 
     # Column headers
-    h = st.columns([2, 3, 2, 2, 1])
+    h = st.columns([2, 4, 2, 2, 1])
     h[0].caption("Level")
     h[1].caption("Dimension")
     h[2].caption("Amount (SAR)")
@@ -586,7 +586,7 @@ def _render_breakdown_table(selected_rep_id, is_locked):
 
         if st.session_state.get(f"tgt/del_{bd_id}"):
             dc = st.columns([5, 2, 2])
-            dc[0].warning(f"Delete row: **{row.get('breakdown_level')}** / {dim}?")
+            dc[0].warning(f"Delete **{row.get('breakdown_level')}** / {dim}?")
             if dc[1].button("Confirm", type="primary", key=f"del_ok_{bd_id}"):
                 delete_breakdown_row(bd_id)
                 st.session_state.pop(f"tgt/del_{bd_id}", None)
@@ -595,16 +595,41 @@ def _render_breakdown_table(selected_rep_id, is_locked):
             if dc[2].button("Cancel", key=f"del_no_{bd_id}"):
                 st.session_state.pop(f"tgt/del_{bd_id}", None)
                 st.rerun()
+
+        elif st.session_state.get(f"tgt/edit_{bd_id}"):
+            st.markdown(f"*Editing: {row.get('breakdown_level')} / {dim}*")
+            ec1, ec2 = st.columns(2)
+            new_amt = ec1.number_input(
+                "Amount (SAR)", min_value=0.0, step=1000.0, format="%.2f",
+                value=amt, key=f"edit_amt_{bd_id}",
+            )
+            new_vis = ec2.number_input(
+                "Visits", min_value=0, step=1,
+                value=vis, key=f"edit_vis_{bd_id}",
+            )
+            sc1, sc2 = st.columns(2)
+            if sc1.button("Save", type="primary", key=f"edit_save_{bd_id}"):
+                update_breakdown_row(bd_id, new_amt, new_vis, u["user_id"])
+                st.session_state.pop(f"tgt/edit_{bd_id}", None)
+                st.rerun()
+            if sc2.button("Cancel", key=f"edit_cancel_{bd_id}"):
+                st.session_state.pop(f"tgt/edit_{bd_id}", None)
+                st.rerun()
+
         else:
-            rc = st.columns([2, 3, 2, 2, 1])
+            rc = st.columns([2, 4, 2, 2, 1])
             rc[0].write(row.get("breakdown_level", "—"))
             rc[1].write(dim)
             rc[2].write(f"{_fmt(amt)}")
             rc[3].write(f"{vis}")
             if not is_locked:
-                if rc[4].button("×", key=f"del_{bd_id}"):
-                    st.session_state[f"tgt/del_{bd_id}"] = True
-                    st.rerun()
+                with rc[4]:
+                    if st.button("✎", key=f"edit_{bd_id}", help="Edit amount / visits"):
+                        st.session_state[f"tgt/edit_{bd_id}"] = True
+                        st.rerun()
+                    if st.button("×", key=f"del_{bd_id}", help="Delete row"):
+                        st.session_state[f"tgt/del_{bd_id}"] = True
+                        st.rerun()
 
     st.markdown('<div class="tgt-divider"></div>', unsafe_allow_html=True)
     st.markdown(f"**Rep total: SAR {_fmt(total_amount)} &nbsp;·&nbsp; {total_visits} visits**")

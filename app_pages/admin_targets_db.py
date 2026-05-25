@@ -171,6 +171,20 @@ def add_breakdown_row(row: dict, created_by: int) -> int:
         return int(result.scalar_one())
 
 
+def update_breakdown_row(
+    breakdown_id: int, target_amount: float, target_visits: int, updated_by: int
+) -> None:
+    exec_sql(
+        """
+        UPDATE target_breakdown
+        SET target_amount = :amount, target_visits = :visits,
+            updated_by = :ub, updated_at = NOW()
+        WHERE id = :id
+        """,
+        {"id": breakdown_id, "amount": target_amount, "visits": target_visits, "ub": updated_by},
+    )
+
+
 def delete_breakdown_row(breakdown_id: int) -> None:
     exec_sql("DELETE FROM target_breakdown WHERE id = :id", {"id": breakdown_id})
 
