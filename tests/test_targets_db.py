@@ -151,10 +151,10 @@ def test_add_and_delete_breakdown_row(admin_user_id, any_user_id):
 
 def test_breakdown_totals_sum_from_rows(admin_user_id, any_user_id):
     rep_id = _make_rep(admin_user_id, any_user_id)
-    for amount in [50000, 30000]:
+    for level, amount in [("business_unit", 50000), ("customer", 30000)]:
         add_breakdown_row({
             "target_rep_id": rep_id, "year": TEST_YEAR, "user_id": any_user_id,
-            "breakdown_level": "business_unit", **_base_dims(),
+            "breakdown_level": level, **_base_dims(),
             "target_amount": amount, "target_visits": 10,
         }, admin_user_id)
     totals = get_breakdown_totals(rep_id)

@@ -67,8 +67,8 @@ CREATE TABLE target_breakdown (
 );
 
 -- ── Indexes ───────────────────────────────────────────────────────────────────
-CREATE INDEX idx_product_categories_bu ON product_categories(business_unit_id);
-CREATE INDEX idx_business_lines_cat    ON business_lines(product_category_id);
+CREATE INDEX IF NOT EXISTS idx_product_categories_bu ON product_categories(business_unit_id);
+CREATE INDEX IF NOT EXISTS idx_business_lines_cat    ON business_lines(product_category_id);
 CREATE INDEX idx_target_rep_year       ON target_rep(year);
 CREATE INDEX idx_target_rep_user       ON target_rep(user_id);
 CREATE INDEX idx_target_bd_rep         ON target_breakdown(target_rep_id);
