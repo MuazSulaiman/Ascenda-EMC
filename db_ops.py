@@ -40,15 +40,6 @@ def exec_sql(sql: str, params: Optional[dict] = None):
         conn.execute(text(sql), params or {})
 
 
-def insert_visit_returning_id(row: dict) -> int:
-    cols = [c for c in VISIT_INSERT_COLUMNS if c in row]
-    named = [f":{c}" for c in cols]
-    sql = f"INSERT INTO visits ({', '.join(cols)}) VALUES ({', '.join(named)}) RETURNING visit_id"
-    with engine.begin() as conn:
-        vid = conn.execute(text(sql), {c: row[c] for c in cols}).scalar_one()
-    return int(vid)
-
-
 def insert_visit_atomic(
     visit_row: dict,
     home_visit: Optional[dict] = None,

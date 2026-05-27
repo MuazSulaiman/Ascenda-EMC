@@ -317,11 +317,6 @@ def _do_logout():
     st.rerun()
 
 
-def logout_button():
-    if st.sidebar.button("Logout"):
-        _do_logout()
-
-
 def sidebar_nav():
     # ── Sidebar CSS ──────────────────────────────────────────────────────────
     st.sidebar.markdown(
@@ -637,21 +632,6 @@ def sidebar_nav():
     return current
 
 
-def get_almadar_logo_base64() -> str:
-    """
-    Load Al Madar logo from /static and return as base64 string.
-    Adjust the path if app_v11.py is inside a subfolder.
-    """
-    logo_path = Path(__file__).parent / "static" / "Almadar-Logo-01.png"
-    try:
-        with open(logo_path, "rb") as f:
-            data = f.read()
-        return base64.b64encode(data).decode("utf-8")
-    except Exception as e:
-        print("Logo load error:", e)
-        return ""
-
-
 def status_badge(label: str, variant: str = "neutral") -> str:
     """Return inline HTML for a soft-color status badge."""
     palettes = {
@@ -697,25 +677,6 @@ def section_header(title: str, subtitle: str = "") -> None:
     )
 
 
-def kpi_card(label: str, value: str, delta: str = "", delta_positive: bool = True) -> str:
-    """Return HTML string for a KPI card (pass to st.markdown)."""
-    delta_color = "var(--status-success-text)" if delta_positive else "var(--status-danger-text)"
-    delta_html = (
-        f'<div style="margin-top:4px;font-size:0.75rem;font-weight:600;color:{delta_color};">'
-        f'{delta}</div>'
-        if delta else ""
-    )
-    return (
-        f'<div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:14px;'
-        f'padding:1rem 1.25rem;box-shadow:var(--shadow-card);">'
-        f'<div style="font-size:0.8rem;font-weight:500;color:var(--color-text-muted);'
-        f'text-transform:uppercase;letter-spacing:0.04em;">{label}</div>'
-        f'<div style="font-size:1.75rem;font-weight:700;color:var(--color-text);'
-        f'line-height:1.2;margin-top:4px;">{value}</div>'
-        f'{delta_html}</div>'
-    )
-
-
 def compare_row(field: str, original: str, requested: str, changed: bool = False) -> str:
     """Return an HTML <tr> for a compare-grid table."""
     row_bg = "background:var(--status-warning-bg);" if changed else ""
@@ -729,45 +690,6 @@ def compare_row(field: str, original: str, requested: str, changed: bool = False
         f'<td style="padding:8px 12px;font-size:0.875rem;{req_style}'
         f'border-bottom:1px solid var(--color-border);">{requested}</td>'
         f'</tr>'
-    )
-
-
-def stepper(steps: list, current: int) -> None:
-    """Render a horizontal step indicator. current is 0-indexed."""
-    items = []
-    for i, label in enumerate(steps):
-        if i < current:
-            circle = "background:var(--color-primary);border:2px solid var(--color-primary);color:#fff;"
-            text = "color:var(--color-primary);font-weight:600;"
-            icon = "&#10003;"
-        elif i == current:
-            circle = "background:var(--color-surface);border:2px solid var(--color-primary);color:var(--color-primary);"
-            text = "color:var(--color-primary);font-weight:700;"
-            icon = str(i + 1)
-        else:
-            circle = "background:var(--color-surface);border:2px solid var(--color-border);color:var(--color-text-subtle);"
-            text = "color:var(--color-text-subtle);"
-            icon = str(i + 1)
-
-        connector_color = "var(--color-primary)" if i < current else "var(--color-border)"
-        connector = (
-            f'<div style="flex:1;height:2px;background:{connector_color};'
-            f'margin:0 4px;align-self:center;min-width:12px;"></div>'
-            if i < len(steps) - 1 else ""
-        )
-        items.append(
-            f'<div style="display:flex;flex-direction:column;align-items:center;min-width:56px;">'
-            f'<div style="width:32px;height:32px;border-radius:50%;display:flex;'
-            f'align-items:center;justify-content:center;font-size:0.8rem;font-weight:700;{circle}">'
-            f'{icon}</div>'
-            f'<span style="margin-top:4px;font-size:0.75rem;white-space:nowrap;{text}">{label}</span>'
-            f'</div>'
-            + connector
-        )
-    st.markdown(
-        f'<div style="display:flex;align-items:flex-start;justify-content:center;'
-        f'padding:1rem 0 1.5rem;gap:0;">' + "".join(items) + "</div>",
-        unsafe_allow_html=True,
     )
 
 
@@ -787,51 +709,6 @@ def show_footer():
           <div style="text-align:right;font-size:0.8rem;color:var(--color-text-subtle);line-height:1.6;">
             Core System © Cube n' Compass &nbsp;·&nbsp;
             Version 13
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TOP NAVIGATION BAR
-# ─────────────────────────────────────────────────────────────────────────────
-
-def top_nav_bar(page_name: str) -> None:
-    """Render the fixed top navigation bar. Call once per page render."""
-    st.markdown(
-        f"""
-        <div class="ascenda-top-nav">
-          <div class="ascenda-top-nav-left">
-            <svg class="ascenda-top-ham" width="18" height="18" fill="none"
-                 stroke="var(--color-text-muted)" stroke-width="2" viewBox="0 0 24 24">
-              <line x1="3" y1="12" x2="21" y2="12"/>
-              <line x1="3" y1="6"  x2="21" y2="6"/>
-              <line x1="3" y1="18" x2="21" y2="18"/>
-            </svg>
-            <span class="ascenda-top-brand">Ascenda</span>
-            <svg width="14" height="14" fill="none" stroke="var(--color-border-strong)" stroke-width="2"
-                 viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
-            <span class="ascenda-top-page">{page_name}</span>
-          </div>
-          <div class="ascenda-top-nav-right">
-            <button class="ascenda-top-icon-btn" title="Help">
-              <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"
-                   viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="10"/>
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-                <line x1="12" y1="17" x2="12.01" y2="17"/>
-              </svg>
-            </button>
-            <button class="ascenda-top-icon-btn" title="Notifications">
-              <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"
-                   viewBox="0 0 24 24">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-                <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-              </svg>
-            </button>
-            <button class="ascenda-top-new-visit">+ New Visit</button>
           </div>
         </div>
         """,
