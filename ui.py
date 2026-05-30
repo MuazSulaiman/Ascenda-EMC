@@ -346,9 +346,9 @@ def sidebar_nav():
         /* ── Section labels ─────────────────────────────────────────────────── */
         .nav-section-label {
             display: block; padding: 0.65rem 12px 0.2rem;
-            font-size: 0.68rem !important; font-weight: 700 !important;
+            font-size: 0.75rem !important; font-weight: 700 !important;
             color: var(--color-text-subtle) !important; text-transform: uppercase !important;
-            letter-spacing: 0.09em !important; user-select: none !important;
+            letter-spacing: 0.07em !important; user-select: none !important;
         }
         .nav-section-label:first-child { padding-top: 0.1rem !important; }
 
@@ -406,16 +406,16 @@ def sidebar_nav():
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;
         }
         .sidebar-user-meta {
-            font-size: 0.72rem; color: var(--color-text-subtle);
+            font-size: 0.75rem; color: var(--color-text-subtle);
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;
         }
 
         /* ── Sign out button ─────────────────────────────────────────────────── */
         section[data-testid="stSidebar"] .stButton > button {
             background: transparent !important; border: none !important;
-            color: var(--status-danger-text) !important; font-size: 0.8rem !important;
+            color: var(--status-danger-text) !important; font-size: 0.875rem !important;
             font-weight: 500 !important; padding: 5px 14px !important;
-            border-radius: 8px !important; text-align: left !important;
+            border-radius: 10px !important; text-align: left !important;
             cursor: pointer !important; width: 100% !important;
             justify-content: flex-start !important;
             transition: background 0.15s ease !important;
@@ -659,21 +659,59 @@ def required_legend() -> str:
     )
 
 
+def subsection_label(title: str) -> None:
+    """Render an uppercase section-divider label (e.g. 'Field Activity', 'Pending Reviews')."""
+    st.markdown(
+        f'<div style="margin:1.5rem 0 0.75rem;">'
+        f'<span style="font-size:0.75rem;font-weight:700;color:var(--color-text-subtle);'
+        f'text-transform:uppercase;letter-spacing:0.07em;">{title}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def section_header(title: str, subtitle: str = "") -> None:
     """Render an artifact-style page section header."""
     sub_html = (
-        f'<p style="margin:4px 0 0;font-size:0.875rem;color:var(--color-text-muted);">{subtitle}</p>'
+        f'<p style="margin:6px 0 0;font-size:0.875rem;color:var(--color-text-muted);">{subtitle}</p>'
         if subtitle else ""
     )
     st.markdown(
         f"""
-        <div style="margin-bottom:1.25rem;">
-          <h2 style="margin:0;font-size:1.375rem;font-weight:700;
-                     color:var(--color-text);letter-spacing:-0.01em;">{title}</h2>
+        <div style="margin-bottom:1.75rem;">
+          <h2 style="margin:0;font-size:1.875rem;font-weight:700;
+                     color:var(--color-text);letter-spacing:-0.02em;line-height:1.15;">{title}</h2>
           {sub_html}
         </div>
         """,
         unsafe_allow_html=True,
+    )
+
+
+def form_section(n: int, title: str, first: bool = False) -> str:
+    """Return HTML for a numbered in-form section header with a ruled line."""
+    top_margin = "0.75rem" if first else "2.5rem"
+    return (
+        f'<div style="display:flex;align-items:center;gap:10px;margin:{top_margin} 0 1rem;">'
+        f'<div style="min-width:26px;width:26px;height:26px;border-radius:50%;'
+        f'background:var(--color-primary-subtle);color:var(--color-primary);'
+        f'font-size:0.75rem;font-weight:700;line-height:1;'
+        f'display:flex;align-items:center;justify-content:center;flex-shrink:0;'
+        f'box-shadow:0 0 0 3px var(--color-primary-subtle);">{n}</div>'
+        f'<span style="font-size:1rem;font-weight:700;color:var(--color-text);'
+        f'letter-spacing:-0.01em;white-space:nowrap;">{title}</span>'
+        f'<div style="flex:1;height:1px;background:var(--color-border);"></div>'
+        f'</div>'
+    )
+
+
+def form_subsection(title: str) -> str:
+    """Return HTML for a conditional sub-group label within a form section."""
+    return (
+        f'<div style="margin:1.25rem 0 0.625rem;padding:0.5rem 0.875rem;'
+        f'background:var(--color-primary-subtle);border-radius:10px;">'
+        f'<span style="font-size:0.875rem;font-weight:600;color:var(--color-primary);">{title}</span>'
+        f'</div>'
     )
 
 
@@ -706,7 +744,7 @@ def show_footer():
                     display:flex;justify-content:space-between;
                     align-items:center;flex-wrap:wrap;gap:8px;">
           <div>{placeholder_html}</div>
-          <div style="text-align:right;font-size:0.8rem;color:var(--color-text-subtle);line-height:1.6;">
+          <div style="text-align:right;font-size:0.875rem;color:var(--color-text-subtle);line-height:1.6;">
             Core System © Cube n' Compass &nbsp;·&nbsp;
             Version 13
           </div>
@@ -741,20 +779,20 @@ def visit_card(
 
     badge = status_badge(status, status_variant)
     card = (
-        f'<div class="ascenda-visit-card" style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:12px;'
+        f'<div class="ascenda-visit-card" style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:14px;'
         f'padding:0.875rem 1rem;margin-bottom:0.5rem;display:flex;align-items:center;gap:0.875rem;'
         f'cursor:pointer;transition:box-shadow 0.15s ease,border-color 0.15s ease;">'
-        f'<div style="min-width:44px;width:44px;background:var(--color-surface-2);border-radius:8px;'
+        f'<div style="min-width:44px;width:44px;background:var(--color-surface-2);border-radius:10px;'
         f'text-align:center;padding:0.5rem 0.25rem;flex-shrink:0;">'
         f'<div style="font-size:1.125rem;font-weight:700;color:var(--color-text);line-height:1;">{day}</div>'
-        f'<div style="font-size:0.7rem;font-weight:600;color:var(--color-text-subtle);text-transform:uppercase;'
+        f'<div style="font-size:0.75rem;font-weight:600;color:var(--color-text-subtle);text-transform:uppercase;'
         f'margin-top:2px;letter-spacing:0.04em;">{month}</div>'
-        f'<div style="font-size:0.65rem;color:var(--color-border-strong);margin-top:1px;letter-spacing:0.02em;">{year}</div>'
+        f'<div style="font-size:0.75rem;color:var(--color-border-strong);margin-top:1px;letter-spacing:0.02em;">{year}</div>'
         f'</div>'
         f'<div style="flex:1;min-width:0;">'
-        f'<div style="font-size:0.9375rem;font-weight:600;color:var(--color-text);'
+        f'<div style="font-size:1rem;font-weight:600;color:var(--color-text);'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{customer}</div>'
-        f'<div style="font-size:0.8rem;color:var(--color-text-muted);margin-top:2px;'
+        f'<div style="font-size:0.875rem;color:var(--color-text-muted);margin-top:2px;'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{subtitle}</div>'
         f'<div style="font-size:0.75rem;color:var(--color-text-subtle);margin-top:4px;">{visit_id}</div>'
         f'</div>'
@@ -785,47 +823,138 @@ def kpi_card_v2(
     delta_positive: bool = True,
     delta_neutral: bool = False,
     icon_svg: str = "",
-    icon_bg: str = "var(--color-primary-subtle)",
+    icon_color: str = "var(--color-text-subtle)",
+    # Legacy param kept for call-site compatibility — ignored
+    icon_bg: str = "",
 ) -> str:
-    """Return HTML for a KPI card with a right-aligned colored icon circle."""
+    """Return HTML for a KPI card with an inline icon beside the label."""
     delta_color = (
         "var(--color-text-subtle)" if delta_neutral
         else ("var(--status-success-text)" if delta_positive else "var(--status-danger-text)")
     )
     arrow_up = (
-        '<svg aria-hidden="true" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" '
+        '<svg aria-hidden="true" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" '
         'viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>'
     )
     arrow_dn = (
-        '<svg aria-hidden="true" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" '
+        '<svg aria-hidden="true" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" '
         'viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>'
     )
     delta_arrow = "" if delta_neutral else (arrow_up if delta_positive else arrow_dn)
     delta_html = (
-        f'<div style="margin-top:5px;font-size:0.8rem;font-weight:500;color:{delta_color};'
+        f'<div style="margin-top:8px;font-size:0.75rem;font-weight:500;color:{delta_color};'
         f'display:flex;align-items:center;gap:3px;">'
         f'{delta_arrow}{delta}</div>'
         if delta else ""
     )
     icon_html = (
-        f'<div style="width:40px;height:40px;border-radius:50%;background:{icon_bg};'
-        f'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
-        f'{icon_svg}</div>'
+        f'<span style="display:inline-flex;align-items:center;color:{icon_color};'
+        f'flex-shrink:0;margin-right:6px;vertical-align:middle;">{icon_svg}</span>'
         if icon_svg else ""
     )
     return (
         f'<div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:14px;'
-        f'padding:1rem 1.25rem;box-shadow:var(--shadow-card);'
-        f'display:flex;justify-content:space-between;align-items:flex-start;'
-        f'margin-bottom:12px;">'
-        f'<div style="flex:1;">'
-        f'<div style="font-size:0.8rem;font-weight:500;color:var(--color-text-muted);'
-        f'text-transform:uppercase;letter-spacing:0.04em;">{label}</div>'
-        f'<div style="font-size:1.75rem;font-weight:700;color:var(--color-text);'
-        f'line-height:1.1;margin-top:4px;">{value}</div>'
+        f'padding:1.25rem 1.5rem;box-shadow:var(--shadow-card);margin-bottom:12px;">'
+        f'<div style="display:flex;align-items:center;margin-bottom:8px;">'
+        f'{icon_html}'
+        f'<span style="font-size:0.75rem;font-weight:600;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.05em;">{label}</span>'
+        f'</div>'
+        f'<div style="font-size:2rem;font-weight:700;color:var(--color-text);line-height:1.1;letter-spacing:-0.02em;">{value}</div>'
         f'{delta_html}'
         f'</div>'
-        f'{icon_html}'
+    )
+
+
+def kpi_hero_block(
+    primary_label: str,
+    primary_value: str,
+    primary_delta: str = "",
+    primary_delta_positive: bool = True,
+    primary_icon_svg: str = "",
+    primary_icon_color: str = "var(--color-text-subtle)",
+    stat1_label: str = "",
+    stat1_value: str = "",
+    stat1_delta: str = "",
+    stat1_delta_positive: bool = True,
+    stat1_icon_svg: str = "",
+    stat1_icon_color: str = "var(--color-text-subtle)",
+    stat2_label: str = "",
+    stat2_value: str = "",
+    stat2_delta: str = "",
+    stat2_delta_positive: bool = True,
+    stat2_icon_svg: str = "",
+    stat2_icon_color: str = "var(--color-text-subtle)",
+) -> str:
+    arrow_up = (
+        '<svg aria-hidden="true" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" '
+        'viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>'
+    )
+    arrow_dn = (
+        '<svg aria-hidden="true" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" '
+        'viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>'
+    )
+
+    def _icon(svg, color):
+        if not svg:
+            return ""
+        return (
+            f'<span style="display:inline-flex;align-items:center;color:{color};'
+            f'flex-shrink:0;">{svg}</span>'
+        )
+
+    def _delta_block(delta, positive, font_size="0.875rem", margin_top="10px", gap="4px"):
+        if not delta:
+            return ""
+        color = "var(--status-success-text)" if positive else "var(--status-danger-text)"
+        arrow = arrow_up if positive else arrow_dn
+        return (
+            f'<div style="margin-top:{margin_top};font-size:{font_size};font-weight:500;color:{color};'
+            f'display:flex;align-items:center;gap:{gap};">{arrow}{delta}</div>'
+        )
+
+    primary_icon_html = _icon(primary_icon_svg, primary_icon_color)
+    stat1_icon_html = _icon(stat1_icon_svg, stat1_icon_color)
+    stat2_icon_html = _icon(stat2_icon_svg, stat2_icon_color)
+
+    primary_delta_html = _delta_block(primary_delta, primary_delta_positive, "0.875rem", "10px", "4px")
+    stat1_delta_html = _delta_block(stat1_delta, stat1_delta_positive, "0.75rem", "6px", "3px")
+    stat2_delta_html = _delta_block(stat2_delta, stat2_delta_positive, "0.75rem", "6px", "3px")
+
+    primary_icon_gap = "gap:7px;" if primary_icon_svg else ""
+    stat1_icon_gap = "gap:6px;" if stat1_icon_svg else ""
+    stat2_icon_gap = "gap:6px;" if stat2_icon_svg else ""
+
+    return (
+        f'<div style="display:flex;gap:1.25rem;margin-bottom:1.5rem;align-items:stretch;">'
+        f'<div style="flex:1.5;background:var(--color-surface);border:1px solid var(--color-border);'
+        f'border-radius:14px;padding:1.75rem 2rem;box-shadow:var(--shadow-card);">'
+        f'<div style="display:flex;align-items:center;{primary_icon_gap}margin-bottom:10px;">'
+        f'{primary_icon_html}'
+        f'<span style="font-size:0.75rem;font-weight:600;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.05em;">{primary_label}</span>'
+        f'</div>'
+        f'<div style="font-size:3rem;font-weight:700;color:var(--color-text);line-height:1;letter-spacing:-0.03em;">{primary_value}</div>'
+        f'{primary_delta_html}'
+        f'</div>'
+        f'<div style="flex:1;display:flex;flex-direction:column;gap:0.875rem;">'
+        f'<div style="flex:1;background:var(--color-surface);border:1px solid var(--color-border);'
+        f'border-radius:14px;padding:1rem 1.25rem;box-shadow:var(--shadow-card);">'
+        f'<div style="display:flex;align-items:center;{stat1_icon_gap}margin-bottom:6px;">'
+        f'{stat1_icon_html}'
+        f'<span style="font-size:0.75rem;font-weight:600;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.05em;">{stat1_label}</span>'
+        f'</div>'
+        f'<div style="font-size:1.625rem;font-weight:700;color:var(--color-text);line-height:1.1;letter-spacing:-0.02em;">{stat1_value}</div>'
+        f'{stat1_delta_html}'
+        f'</div>'
+        f'<div style="flex:1;background:var(--color-surface);border:1px solid var(--color-border);'
+        f'border-radius:14px;padding:1rem 1.25rem;box-shadow:var(--shadow-card);">'
+        f'<div style="display:flex;align-items:center;{stat2_icon_gap}margin-bottom:6px;">'
+        f'{stat2_icon_html}'
+        f'<span style="font-size:0.75rem;font-weight:600;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.05em;">{stat2_label}</span>'
+        f'</div>'
+        f'<div style="font-size:1.625rem;font-weight:700;color:var(--color-text);line-height:1.1;letter-spacing:-0.02em;">{stat2_value}</div>'
+        f'{stat2_delta_html}'
+        f'</div>'
+        f'</div>'
         f'</div>'
     )
 
@@ -860,14 +989,14 @@ def html_table(df, max_rows: int = 500, max_height: int = 400) -> str:
     if len(df) > max_rows:
         rows_html += (
             f'<tr><td colspan="{len(cols)}" style="padding:0.5rem 0.75rem;'
-            f'color:var(--color-text-subtle);font-size:0.8rem;font-style:italic;">'
+            f'color:var(--color-text-subtle);font-size:0.875rem;font-style:italic;">'
             f'… {len(df) - max_rows} more rows not shown</td></tr>'
         )
 
     sticky_th = (
         'padding:0.5rem 0.75rem;text-align:left;font-weight:600;'
-        'color:var(--color-text-muted);white-space:nowrap;font-size:0.8rem;'
-        'letter-spacing:0.03em;text-transform:uppercase;'
+        'color:var(--color-text-muted);white-space:nowrap;font-size:0.75rem;'
+        'letter-spacing:0.05em;text-transform:uppercase;'
         'position:sticky;top:0;z-index:1;'
         'background:var(--color-surface-2);'
         'border-bottom:2px solid var(--color-border);'

@@ -251,6 +251,14 @@ def page_review_target_audiences():
 
     visit_select_options = [""] + visit_labels
     preselect_id = st.session_state.pop("_admin_preselect_id", None)
+    if preselect_id is None and not st.session_state.get("_url_preselect_consumed"):
+        _raw = st.query_params.get("preselect")
+        if _raw is not None:
+            try:
+                preselect_id = int(_raw)
+            except (ValueError, TypeError):
+                pass
+            st.session_state["_url_preselect_consumed"] = True
     if preselect_id is not None:
         for lbl, vid in visit_id_map.items():
             if vid == preselect_id:

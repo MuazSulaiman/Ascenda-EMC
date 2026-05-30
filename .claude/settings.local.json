@@ -39,7 +39,29 @@
       "Bash(sed -n '413,415p' app_pages/admin_change_requests.py)",
       "Bash(sed -n '530,535p' app_pages/admin_change_requests.py)",
       "Bash(git *)",
-      "Skill(remotion)"
+      "Skill(remotion)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\muazs\\\\OneDrive\\\\Desktop\\\\Streamlit11DD Claude\" -Recurse -Filter \"*.css\" -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(python3 *)",
+      "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; python3 \"C:\\\\Users\\\\muazs\\\\.claude\\\\skills\\\\ui-ux-pro-max\\\\scripts\\\\search.py\" \"admin data import dashboard SaaS enterprise upload management\" --design-system -p \"Admin Import Lookups\" -f markdown 2>&1)",
+      "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; python3 \"C:\\\\Users\\\\muazs\\\\.claude\\\\skills\\\\ui-ux-pro-max\\\\scripts\\\\search.py\" \"data upload file import validation feedback progress\" --domain ux -n 10 2>&1)",
+      "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; python3 \"C:\\\\Users\\\\muazs\\\\.claude\\\\skills\\\\ui-ux-pro-max\\\\scripts\\\\search.py\" \"form accessibility error handling tab navigation wizard steps\" --domain ux -n 8 2>&1)",
+      "Skill(update-config)",
+      "Bash(bash *)",
+      "Skill(docx-official)",
+      "Bash(npm --version)",
+      "Skill(supabase-automation)",
+      "Bash(not exist *)",
+      "Skill(superpowers:brainstorming)",
+      "PowerShell(New-Item *)",
+      "Skill(superpowers:writing-plans)",
+      "Skill(superpowers:executing-plans)",
+      "Skill(codebase-cleanup-tech-debt)",
+      "Skill(ui-review)",
+      "Bash(claude plugin *)",
+      "Skill(impeccable:impeccable)",
+      "Bash(Select-String -Path \"C:\\\\Users\\\\muazs\\\\OneDrive\\\\Desktop\\\\Streamlit11DD Claude\\\\app_pages\\\\submit_visit.py\" -Pattern \"form_section|form_subsection|1️⃣|2️⃣|3️⃣|4️⃣|➕|subheader|sticky-submit|sticky_submit|\\\\|\\\\||Article Number/Product|Saved ✅|#components\")",
+      "Bash(Select-Object LineNumber, Line)"
     ]
   }
 }

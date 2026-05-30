@@ -2,6 +2,7 @@
 import io
 import json
 import re
+import time
 import unicodedata
 import uuid
 import zipfile
@@ -26,7 +27,7 @@ def page_admin_import():
         st.error("Access denied.")
         st.stop()
 
-    section_header("Admin — Import Lookups", "Upload Excel/CSV files to populate lookup tables. Existing rows are kept; duplicates are skipped.")
+    section_header("Admin — Import Lookups", "Add records one at a time, or bulk-import from Excel/CSV. Duplicates are always skipped.")
 
     set_current_page("admin_import")
 
@@ -113,6 +114,26 @@ def page_admin_import():
     def _norm_or_empty(v):
         return (v.strip() if isinstance(v, str) else v) or ""
 
+    def _make_template(columns: list, example_rows: list = None) -> bytes:
+        """Return bytes of an .xlsx with headers and optional example rows."""
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(columns)
+        if example_rows:
+            for row in example_rows:
+                ws.append(row)
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def _df_to_xlsx(df: pd.DataFrame) -> bytes:
+        """Serialize a DataFrame to xlsx bytes."""
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False)
+        return buf.getvalue()
+
     def _preview_and_confirm(df: pd.DataFrame, required_fields: list, key: str) -> bool:
         """Show a styled dataframe preview (first 20 rows, invalid rows in red),
         report valid/invalid counts, and require an explicit confirm click."""
@@ -154,20 +175,33 @@ def page_admin_import():
     # =====================================================================
     # MAIN TABS FOR ENTITIES
     # =====================================================================
-    main_tabs = st.tabs(
-        ["Customers", "Target Audiences", "Business Units", "Business Lines", "Items", "Objectives", "Product Categories"]
-    )
+    main_tabs = st.tabs([
+        "Customers",
+        "Target Audiences",
+        "Business Units",
+        "Product Categories",
+        "Business Lines",
+        "Items",
+        "Objectives",
+    ])
 
     # =====================================================================
     # 1) CUSTOMERS
     # =====================================================================
     with main_tabs[0]:
-        st.subheader("Customers")
+        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM customers")
+        _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
+        st.markdown(
+            f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
+            f'<strong style="color:var(--color-text);">{_t}</strong> total records &nbsp;·&nbsp; '
+            f'<strong style="color:var(--status-success-text,#16a34a);">{_a}</strong> active'
+            f'</p>',
+            unsafe_allow_html=True,
+        )
 
-        # Use radio instead of nested tabs so selection persists on rerun
         mode = st.radio(
-            "Mode",
-            ["➕ Add / Import", "📝 Manage"],
+            "What do you want to do?",
+            ["Add records or bulk import", "Edit or delete existing records"],
             index=0,
             key="cust_mode",
             horizontal=True,
@@ -201,8 +235,8 @@ def page_admin_import():
         # -------------------------
         # MODE 1: Add / Import
         # -------------------------
-        if mode == "➕ Add / Import":
-            st.markdown("### ➕ Add single customer")
+        if mode == "Add records or bulk import":
+            st.markdown("### Add single customer")
             st.caption("Required field: **Account Name**. Sector, Region, and City are optional.")
 
             # init add-state
@@ -229,7 +263,7 @@ def page_admin_import():
                 key="cust_add_sector_opt",
             )
             if sector_sel == "OTHER":
-                sector_other = st.text_input("Other sector", key="cust_add_sector_other")
+                sector_other = st.text_input("Specify sector", key="cust_add_sector_other", placeholder="Specify sector…")
             else:
                 sector_other = st.session_state.get("cust_add_sector_other", "")
 
@@ -245,7 +279,7 @@ def page_admin_import():
                 key="cust_add_region_opt",
             )
             if region_sel == "OTHER":
-                region_other = st.text_input("Other region", key="cust_add_region_other")
+                region_other = st.text_input("Specify region", key="cust_add_region_other", placeholder="Specify region…")
             else:
                 region_other = st.session_state.get("cust_add_region_other", "")
 
@@ -277,7 +311,7 @@ def page_admin_import():
                 key="cust_add_city_opt",
             )
             if city_sel == "OTHER":
-                city_other = st.text_input("Other city", key="cust_add_city_other")
+                city_other = st.text_input("Specify city", key="cust_add_city_other", placeholder="Specify city…")
             else:
                 city_other = st.session_state.get("cust_add_city_other", "")
 
@@ -333,8 +367,6 @@ def page_admin_import():
                             )
 
                         if (res.rowcount or 0) > 0:
-                            st.success("Customer added ✅")
-                            # reset form
                             for key in (
                                 "cust_add_acc",
                                 "cust_add_sector_opt",
@@ -345,6 +377,8 @@ def page_admin_import():
                                 "cust_add_city_other",
                             ):
                                 st.session_state.pop(key, None)
+                            st.success("Customer added ✅")
+                            st.rerun()
                         else:
                             st.info(
                                 "A customer with the same **Name + Sector + Region + City** already exists — nothing added."
@@ -353,13 +387,37 @@ def page_admin_import():
                         st.error("Could not add customer.")
                         st.caption(str(e))
 
-            st.markdown("---")
-            st.markdown("### ⬆️ Bulk upload customers (Excel/CSV)")
-            st.write("Columns: **account_name**, sector, region, city")
-
-            f1 = st.file_uploader(
-                "Upload Customers file", type=["xlsx", "csv"], key="cust_upload"
+            st.markdown(
+                '<div style="margin:1.5rem 0 1rem;padding:0.6rem 1rem;'
+                'border-left:3px solid var(--color-primary,#2563eb);'
+                'background:var(--color-surface-2,#f8fafc);border-radius:0 6px 6px 0;">'
+                '<span style="font-weight:600;font-size:0.9rem;color:var(--color-text);">'
+                'OR — Bulk Import from Excel / CSV</span></div>',
+                unsafe_allow_html=True,
             )
+            st.markdown(
+                "- **account_name** *(required)* — customer / account name\n"
+                "- **sector** *(optional)* — industry sector (e.g. Healthcare, Retail)\n"
+                "- **region** *(optional)* — geographic region\n"
+                "- **city** *(optional)* — city name\n\n"
+                "Duplicates (same `account_name`) are skipped automatically."
+            )
+            _step1, _step2 = st.columns(2)
+            with _step1:
+                st.markdown("**Step 1 — Download Template**")
+                st.download_button(
+                    "Download Template",
+                    data=_make_template(["account_name", "sector", "region", "city"], example_rows=[["Acme Hospital", "Healthcare", "Saudi Arabia", "Riyadh"]]),
+                    file_name="customers_template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="cust_tmpl_dl",
+                )
+            with _step2:
+                st.markdown("**Step 2 — Upload your file**")
+                f1 = st.file_uploader(
+                    "Upload Customers file", type=["xlsx", "csv"], key="cust_upload",
+                    label_visibility="collapsed",
+                )
             if f1 is not None:
                 _validate_upload(f1)
                 df = _read_df_upload(f1)
@@ -368,85 +426,85 @@ def page_admin_import():
                     st.error("Missing required column: account_name")
                 else:
                     total = len(df)
-                    if not _preview_and_confirm(df, ["account_name"], "cust"):
-                        st.stop()
-                    inserted = 0
-                    skipped = 0
-                    sts, pb, ln, has_status = _mk_status("Importing Customers…")
+                    if _preview_and_confirm(df, ["account_name"], "cust"):
+                        inserted = 0
+                        skipped = 0
+                        sts, pb, ln, has_status = _mk_status("Importing Customers…")
 
-                    try:
-                        with engine.begin() as conn:
-                            for i, r in enumerate(df.itertuples(index=False), start=1):
-                                acc_raw = getattr(r, "account_name", "")
-                                acc_v = str(acc_raw).strip() if pd.notna(acc_raw) else ""
-                                if not acc_v:
-                                    skipped += 1
+                        try:
+                            with engine.begin() as conn:
+                                for i, r in enumerate(df.itertuples(index=False), start=1):
+                                    acc_raw = getattr(r, "account_name", "")
+                                    acc_v = str(acc_raw).strip() if pd.notna(acc_raw) else ""
+                                    if not acc_v:
+                                        skipped += 1
+                                        if i % 200 == 0 or i == total:
+                                            _update_progress(
+                                                pb, ln, i, total, inserted, 0, skipped, label_prefix="Customers"
+                                            )
+                                        continue
+
+                                    sector_v = (
+                                        str(getattr(r, "sector")).strip()
+                                        if hasattr(r, "sector") and pd.notna(getattr(r, "sector"))
+                                        else None
+                                    )
+                                    region_v = (
+                                        str(getattr(r, "region")).strip()
+                                        if hasattr(r, "region") and pd.notna(getattr(r, "region"))
+                                        else None
+                                    )
+                                    city_v = (
+                                        str(getattr(r, "city")).strip()
+                                        if hasattr(r, "city") and pd.notna(getattr(r, "city"))
+                                        else None
+                                    )
+
+                                    res = conn.execute(
+                                        text(
+                                            """
+                                            INSERT INTO customers(account_name, sector, region, city)
+                                            SELECT :acc, :sector, :region, :city
+                                            WHERE NOT EXISTS (
+                                                SELECT 1
+                                                FROM customers c
+                                                WHERE lower(coalesce(c.account_name, '')) = lower(coalesce(:acc, ''))
+                                                  AND lower(coalesce(c.sector,       '')) = lower(coalesce(:sector, ''))
+                                                  AND lower(coalesce(c.region,       '')) = lower(coalesce(:region, ''))
+                                                  AND lower(coalesce(c.city,         '')) = lower(coalesce(:city, ''))
+                                            )
+                                            """
+                                        ),
+                                        {"acc": acc_v, "sector": sector_v, "region": region_v, "city": city_v},
+                                    )
+
+                                    if (res.rowcount or 0) > 0:
+                                        inserted += 1
+                                    else:
+                                        skipped += 1
+
                                     if i % 200 == 0 or i == total:
                                         _update_progress(
                                             pb, ln, i, total, inserted, 0, skipped, label_prefix="Customers"
                                         )
-                                    continue
+                                        time.sleep(0.001)
 
-                                sector_v = (
-                                    str(getattr(r, "sector")).strip()
-                                    if hasattr(r, "sector") and pd.notna(getattr(r, "sector"))
-                                    else None
-                                )
-                                region_v = (
-                                    str(getattr(r, "region")).strip()
-                                    if hasattr(r, "region") and pd.notna(getattr(r, "region"))
-                                    else None
-                                )
-                                city_v = (
-                                    str(getattr(r, "city")).strip()
-                                    if hasattr(r, "city") and pd.notna(getattr(r, "city"))
-                                    else None
-                                )
-
-                                res = conn.execute(
-                                    text(
-                                        """
-                                        INSERT INTO customers(account_name, sector, region, city)
-                                        SELECT :acc, :sector, :region, :city
-                                        WHERE NOT EXISTS (
-                                            SELECT 1
-                                            FROM customers c
-                                            WHERE lower(coalesce(c.account_name, '')) = lower(coalesce(:acc, ''))
-                                              AND lower(coalesce(c.sector,       '')) = lower(coalesce(:sector, ''))
-                                              AND lower(coalesce(c.region,       '')) = lower(coalesce(:region, ''))
-                                              AND lower(coalesce(c.city,         '')) = lower(coalesce(:city, ''))
-                                        )
-                                        """
-                                    ),
-                                    {"acc": acc_v, "sector": sector_v, "region": region_v, "city": city_v},
-                                )
-
-                                if (res.rowcount or 0) > 0:
-                                    inserted += 1
-                                else:
-                                    skipped += 1
-
-                                if i % 200 == 0 or i == total:
-                                    _update_progress(
-                                        pb, ln, i, total, inserted, 0, skipped, label_prefix="Customers"
-                                    )
-                                    time.sleep(0.001)
-
-                        _finish_status(
-                            sts,
-                            has_status,
-                            f"Customers import ✅ Inserted: {inserted} | Skipped: {skipped}",
-                            ok=True,
-                        )
-                    except Exception as e:
-                        _finish_status(sts, has_status, "Customers import failed ❌", ok=False)
-                        st.caption(str(e))
+                            _finish_status(
+                                sts,
+                                has_status,
+                                f"Customers import ✅ Inserted: {inserted} | Skipped: {skipped}",
+                                ok=True,
+                            )
+                            st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{skipped}** skipped.")
+                        except Exception as e:
+                            _finish_status(sts, has_status, "Customers import failed ❌", ok=False)
+                            st.caption(str(e))
 
         # -------------------------
         # MODE 2: Manage
         # -------------------------
-        else:  # mode == "📝 Manage"
-            st.markdown("### 📝 Manage customers")
+        else:  # mode == "Edit or delete existing records"
+            st.markdown("### Manage customers")
 
             cdf = query_df(
                 """
@@ -465,14 +523,21 @@ def page_admin_import():
                 st.info("No customers yet.")
             else:
                 options = [
-                    _parts_join(r.customer_id, r.account_name, r.region, r.city)
+                    _parts_join(r.account_name, r.region, r.city)
                     + f" ({'active' if bool(r.is_active) else 'inactive'})"
                     for r in cdf.itertuples(index=False)
                 ]
                 options = [""] + options
 
+                cust_search = st.text_input(
+                    "Search customers",
+                    placeholder="Type name, region, or city…",
+                    key="mg_cust_search",
+                )
+                filtered_cust = [o for o in options if cust_search.lower() in o.lower()] if cust_search else options
+
                 sel_label = st.selectbox(
-                    "Select customer", options, index=0, key="mg_cust_sel"
+                    "Select customer", filtered_cust, index=0, key="mg_cust_sel"
                 )
 
                 if sel_label == "":
@@ -480,17 +545,29 @@ def page_admin_import():
                 else:
                     row_idx = options.index(sel_label) - 1
                     row = cdf.iloc[row_idx]
+
                     cid = int(row["customer_id"])
 
-                    # quick refs / status
-                    colA, colB = st.columns([1, 1])
-                    with colA:
-                        v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE customer_id=:cid", {"cid": cid})
-                        a_cnt = _refcount("SELECT COUNT(*) FROM target_audiences WHERE customer_id=:cid", {"cid": cid})
-                        st.caption(f"Refs → Visits: **{v_cnt}** · Audiences: **{a_cnt}**")
-                    with colB:
-                        st.caption("Status")
-                        st.write("✅ Active" if bool(row["is_active"]) else "🚫 Inactive")
+                    v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE customer_id=:cid", {"cid": cid})
+                    a_cnt = _refcount("SELECT COUNT(*) FROM target_audiences WHERE customer_id=:cid", {"cid": cid})
+                    _badge = (
+                        '<span style="background:#dcfce7;color:#15803d;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Active</span>'
+                        if bool(row["is_active"]) else
+                        '<span style="background:#fee2e2;color:#dc2626;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Inactive</span>'
+                    )
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:16px;margin:0.5rem 0 1rem;'
+                        f'padding:0.6rem 1rem;background:var(--color-surface-2,#f8fafc);border-radius:8px;">'
+                        f'<span style="font-size:0.875rem;color:var(--color-text-muted);">'
+                        f'Visits: <strong style="color:var(--color-text);">{v_cnt}</strong></span>'
+                        f'<span style="color:var(--color-border,#e2e8f0);">·</span>'
+                        f'<span style="font-size:0.875rem;color:var(--color-text-muted);">'
+                        f'Audiences: <strong style="color:var(--color-text);">{a_cnt}</strong></span>'
+                        f'<span style="color:var(--color-border,#e2e8f0);">·</span>'
+                        f'{_badge}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
                     st.markdown("---")
                     st.markdown("#### Edit customer")
@@ -529,7 +606,7 @@ def page_admin_import():
                         key=sec_key,   # ❗ no index here
                     )
                     if sector_sel_edit == "OTHER":
-                        sector_other_edit = st.text_input("Other sector", key=sec_other_key)
+                        sector_other_edit = st.text_input("Specify sector", key=sec_other_key, placeholder="Specify sector…")
                     else:
                         sector_other_edit = st.session_state.get(sec_other_key, "")
 
@@ -557,7 +634,7 @@ def page_admin_import():
                         key=reg_key,   # ❗ no index here
                     )
                     if region_sel_edit == "OTHER":
-                        region_other_edit = st.text_input("Other region", key=reg_other_key)
+                        region_other_edit = st.text_input("Specify region", key=reg_other_key, placeholder="Specify region…")
                     else:
                         region_other_edit = st.session_state.get(reg_other_key, "")
 
@@ -601,7 +678,7 @@ def page_admin_import():
                         key=city_key,   # ❗ no index here
                     )
                     if city_sel_edit == "OTHER":
-                        city_other_edit = st.text_input("Other city", key=city_other_key)
+                        city_other_edit = st.text_input("Specify city", key=city_other_key, placeholder="Specify city…")
                     else:
                         city_other_edit = st.session_state.get(city_other_key, "")
 
@@ -647,13 +724,16 @@ def page_admin_import():
                                 """
                                 SELECT 1
                                 FROM customers
-                                WHERE lower(account_name)=lower(:n)
-                                  AND customer_id<>:id
+                                WHERE lower(account_name) = lower(:n)
+                                  AND lower(coalesce(sector, '')) = lower(coalesce(:s, ''))
+                                  AND lower(coalesce(region, '')) = lower(coalesce(:r, ''))
+                                  AND lower(coalesce(city,   '')) = lower(coalesce(:c, ''))
+                                  AND customer_id <> :id
                                 """,
-                                {"n": acc_clean, "id": cid},
+                                {"n": acc_clean, "s": sector_v, "r": region_v, "c": city_v, "id": cid},
                             )
                             if not dup.empty:
-                                st.error("Account Name already exists.")
+                                st.error("A customer with the same Name + Sector + Region + City already exists.")
                             else:
                                 try:
                                     exec_sql(
@@ -681,37 +761,37 @@ def page_admin_import():
                                     st.caption(str(e))
 
                     st.markdown("---")
-                    st.markdown("#### 🔴 Danger Zone")
-                    st.write("Delete this customer permanently (only if not referenced by visits/audiences).")
-
-                    del_conf_key = f"{base_key}_del_conf"
-                    del_confirm = st.checkbox(
-                        "I understand this cannot be undone.",
-                        key=del_conf_key,
-                    )
-
-                    if st.button(
-                        "Delete Customer",
-                        type="primary",
-                        disabled=not del_confirm,
-                        key=f"{base_key}_del",
-                    ):
-                        if v_cnt > 0 or a_cnt > 0:
-                            st.error(
-                                "Cannot delete: this customer is referenced by visits and/or target audiences. "
-                                "Deactivate instead."
+                    with st.container(border=True):
+                        st.markdown(
+                            '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;'
+                            'letter-spacing:0.07em;color:#dc2626;margin:0 0 0.25rem 0;">Danger Zone</p>'
+                            '<p style="font-size:0.875rem;color:#6b7280;margin:0 0 0.5rem 0;">'
+                            'Permanently deletes this record. Cannot be undone.</p>',
+                            unsafe_allow_html=True,
+                        )
+                        del_conf_key = f"{base_key}_del_conf"
+                        _del_blocked = v_cnt > 0 or a_cnt > 0
+                        if _del_blocked:
+                            st.warning(
+                                f"This customer has **{v_cnt} visit(s)** and **{a_cnt} audience(s)** linked. "
+                                "Deletion is blocked — deactivate using the Active checkbox above."
                             )
-                        else:
+                        del_confirm = st.checkbox(
+                            "I understand this action is permanent and cannot be undone.",
+                            key=del_conf_key,
+                            disabled=_del_blocked,
+                        )
+                        if st.button(
+                            "Delete Customer",
+                            type="secondary",
+                            disabled=not del_confirm or _del_blocked,
+                            key=f"{base_key}_del",
+                        ):
                             try:
                                 exec_sql("DELETE FROM customers WHERE customer_id=:id", {"id": cid})
-                                st.success("Customer deleted ✅")
-
-                                # reset customer selection safely
+                                st.success("Customer deleted.")
                                 st.session_state.pop("mg_cust_sel", None)
-
-                                # optional: refresh UI so the deleted customer disappears from lists
                                 st.rerun()
-
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
@@ -720,11 +800,19 @@ def page_admin_import():
     # 2) TARGET AUDIENCES
     # =====================================================================
     with main_tabs[1]:
-        st.subheader("Target Audiences")
+        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM target_audiences")
+        _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
+        st.markdown(
+            f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
+            f'<strong style="color:var(--color-text);">{_t}</strong> total records &nbsp;·&nbsp; '
+            f'<strong style="color:var(--status-success-text,#16a34a);">{_a}</strong> active'
+            f'</p>',
+            unsafe_allow_html=True,
+        )
 
         mode = st.radio(
-            "Mode",
-            ["➕ Add / Import", "📝 Manage"],
+            "What do you want to do?",
+            ["Add records or bulk import", "Edit or delete existing records"],
             index=0,
             key="aud_mode",
             horizontal=True,
@@ -773,14 +861,14 @@ def page_admin_import():
 
         # Helper to build customer labels
         def _fmt_cust_label(r):
-            base = _parts_join(r.customer_id, r.account_name, r.region, r.city)
+            base = _parts_join(r.account_name, r.region, r.city)
             return base + f" ({'active' if bool(r.is_active) else 'inactive'})"
 
         # ==============================================================
         # MODE 1: Add / Import Target Audiences
         # ==============================================================
-        if mode == "➕ Add / Import":
-            st.markdown("### ➕ Add single target audience")
+        if mode == "Add records or bulk import":
+            st.markdown("### Add single target audience")
 
             if cust_df.empty:
                 st.warning("No customers found. Please add customers first.")
@@ -804,7 +892,7 @@ def page_admin_import():
                 title_choice = st.selectbox("Title", TITLE_OPTIONS, index=0, key="aud_add_title_opt")
                 title_other_val = ""
                 if title_choice == "Other":
-                    title_other_val = st.text_input("Other title", key="aud_add_title_other")
+                    title_other_val = st.text_input("Specify title", key="aud_add_title_other", placeholder="Specify title…")
 
                 # -------- Name (required) --------
                 name_val = st.text_input("Name *", key="aud_add_name")
@@ -818,7 +906,7 @@ def page_admin_import():
                 )
                 dept_other_val = ""
                 if dept_choice == "OTHER":
-                    dept_other_val = st.text_input("Other department", key="aud_add_dept_other")
+                    dept_other_val = st.text_input("Specify department", key="aud_add_dept_other", placeholder="Specify department…")
 
                 # -------- Position dropdown --------
                 pos_choice = st.selectbox(
@@ -829,7 +917,7 @@ def page_admin_import():
                 )
                 pos_other_val = ""
                 if pos_choice == "OTHER":
-                    pos_other_val = st.text_input("Other position", key="aud_add_pos_other")
+                    pos_other_val = st.text_input("Specify position", key="aud_add_pos_other", placeholder="Specify position…")
 
                 # -------- Other fields --------
                 pot_val = st.text_input("Potentiality", key="aud_add_pot")
@@ -921,16 +1009,48 @@ def page_admin_import():
                                         },
                                     )
                                 st.success("Target audience added ✅")
+                                st.rerun()
                         except Exception as e:
                             st.error("Could not add target audience.")
                             st.caption(str(e))
 
-            # -------- Bulk upload (same as before) --------
-            st.markdown("---")
-            st.markdown("### ⬆️ Bulk upload target audiences (Excel/CSV)")
-            st.write("Columns: **customer_name**, name, title, department, position, potentiality, loyalty, mobile, landline, external_number, email")
-
-            f2 = st.file_uploader("Upload Target Audiences", type=["xlsx", "csv"], key="aud_upload")
+            st.markdown(
+                '<div style="margin:1.5rem 0 1rem;padding:0.6rem 1rem;'
+                'border-left:3px solid var(--color-primary,#2563eb);'
+                'background:var(--color-surface-2,#f8fafc);border-radius:0 6px 6px 0;">'
+                '<span style="font-weight:600;font-size:0.9rem;color:var(--color-text);">'
+                'OR — Bulk Import from Excel / CSV</span></div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "- **customer_name** *(required)* — must exactly match an existing customer account name\n"
+                "- **name** *(required)* — contact / audience full name\n"
+                "- **title** / **department** / **position** *(optional)* — contact role fields\n"
+                "- **potentiality** / **loyalty** *(optional)* — classification labels\n"
+                "- **mobile** / **landline** / **external_number** / **email** *(optional)* — contact details\n\n"
+                "> **Important:** Rows with an unrecognized `customer_name` are skipped. "
+                "Make sure customer names match exactly (case-insensitive)."
+            )
+            _step1, _step2 = st.columns(2)
+            with _step1:
+                st.markdown("**Step 1 — Download Template**")
+                st.download_button(
+                    "Download Template",
+                    data=_make_template(
+                        ["customer_name", "name", "title", "department", "position",
+                         "potentiality", "loyalty", "mobile", "landline", "external_number", "email"],
+                        example_rows=[["Acme Hospital", "Dr. Sara Al-Rashid", "Dr.", "Pharmacy", "Head of Procurement", "High", "Loyal", "+966501234567", "", "", "sara@acme.com"]],
+                    ),
+                    file_name="target_audiences_template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="aud_tmpl_dl",
+                )
+            with _step2:
+                st.markdown("**Step 2 — Upload your file**")
+                f2 = st.file_uploader(
+                    "Upload Target Audiences", type=["xlsx", "csv"], key="aud_upload",
+                    label_visibility="collapsed",
+                )
             if f2 is not None:
                 _validate_upload(f2)
                 df = _read_df_upload(f2)
@@ -939,161 +1059,176 @@ def page_admin_import():
                     st.error("Missing required columns: customer_name, name")
                 else:
                     total = len(df)
-                    if not _preview_and_confirm(df, ["customer_name", "name"], "aud"):
-                        st.stop()
-                    inserted = 0
-                    skipped = 0
-                    sts, pb, ln, has_status = _mk_status("Importing Target Audiences…")
+                    if _preview_and_confirm(df, ["customer_name", "name"], "aud"):
+                        inserted = 0
+                        skipped = 0
+                        unknown_customers: list = []
+                        sts, pb, ln, has_status = _mk_status("Importing Target Audiences…")
 
-                    try:
-                        with engine.begin() as conn:
-                            cdf = pd.read_sql_query(
-                                text("SELECT customer_id, account_name FROM customers"),
-                                conn,
-                            )
-                            cmap = {
-                                str(r.account_name).strip().lower(): int(r.customer_id)
-                                for r in cdf.itertuples(index=False)
-                            }
+                        try:
+                            with engine.begin() as conn:
+                                cdf = pd.read_sql_query(
+                                    text("SELECT customer_id, account_name FROM customers"),
+                                    conn,
+                                )
+                                cmap = {
+                                    str(r.account_name).strip().lower(): int(r.customer_id)
+                                    for r in cdf.itertuples(index=False)
+                                }
 
-                            for i, r in enumerate(df.itertuples(index=False), start=1):
-                                cname = str(getattr(r, "customer_name", "")).strip()
-                                aname = str(getattr(r, "name", "")).strip()
-                                if not (cname and aname):
-                                    skipped += 1
-                                    continue
+                                for i, r in enumerate(df.itertuples(index=False), start=1):
+                                    cname = str(getattr(r, "customer_name", "")).strip()
+                                    aname = str(getattr(r, "name", "")).strip()
+                                    if not (cname and aname):
+                                        skipped += 1
+                                        continue
 
-                                cid = cmap.get(cname.lower())
-                                if not cid:
-                                    skipped += 1
-                                    continue
+                                    cid = cmap.get(cname.lower())
+                                    if not cid:
+                                        skipped += 1
+                                        if cname not in unknown_customers:
+                                            unknown_customers.append(cname)
+                                        continue
 
-                                title_v = (
-                                    str(getattr(r, "title")).strip()
-                                    if hasattr(r, "title") and pd.notna(getattr(r, "title"))
-                                    else None
-                                )
-                                dept_v = (
-                                    str(getattr(r, "department")).strip()
-                                    if hasattr(r, "department") and pd.notna(getattr(r, "department"))
-                                    else None
-                                )
-                                pos_v = (
-                                    str(getattr(r, "position")).strip()
-                                    if hasattr(r, "position") and pd.notna(getattr(r, "position"))
-                                    else None
-                                )
-                                pot_v = (
-                                    str(getattr(r, "potentiality")).strip()
-                                    if hasattr(r, "potentiality") and pd.notna(getattr(r, "potentiality"))
-                                    else None
-                                )
-                                loy_v = (
-                                    str(getattr(r, "loyalty")).strip()
-                                    if hasattr(r, "loyalty") and pd.notna(getattr(r, "loyalty"))
-                                    else None
-                                )
-                                mob_v = (
-                                    str(getattr(r, "mobile")).strip()
-                                    if hasattr(r, "mobile") and pd.notna(getattr(r, "mobile"))
-                                    else None
-                                )
-                                land_v = (
-                                    str(getattr(r, "landline")).strip()
-                                    if hasattr(r, "landline") and pd.notna(getattr(r, "landline"))
-                                    else None
-                                )
-                                extn_v = (
-                                    str(getattr(r, "external_number")).strip()
-                                    if hasattr(r, "external_number") and pd.notna(getattr(r, "external_number"))
-                                    else None
-                                )
-                                email_v = (
-                                    str(getattr(r, "email")).strip()
-                                    if hasattr(r, "email") and pd.notna(getattr(r, "email"))
-                                    else None
-                                )
-
-                                dup = conn.execute(
-                                    text(
-                                        """
-                                        SELECT 1
-                                        FROM target_audiences
-                                        WHERE customer_id = :cid
-                                          AND lower(coalesce(name, '')) = lower(:name)
-                                          AND lower(coalesce(department, '')) = lower(coalesce(:dept, ''))
-                                          AND lower(coalesce(position, '')) = lower(coalesce(:pos, ''))
-                                        LIMIT 1
-                                        """
-                                    ),
-                                    {"cid": cid, "name": aname, "dept": (dept_v or ""), "pos": (pos_v or "")},
-                                ).fetchone()
-
-                                if dup:
-                                    skipped += 1
-                                    continue
-
-                                conn.execute(
-                                    text(
-                                        """
-                                        INSERT INTO target_audiences(
-                                            customer_id, title, name, department, position,
-                                            potentiality, loyalty,
-                                            mobile, landline, external_number, email, is_active
-                                        )
-                                        VALUES (
-                                            :cid, :title, :name, :dept, :pos,
-                                            :pot, :loy,
-                                            :mob, :land, :extn, :email, TRUE
-                                        )
-                                        """
-                                    ),
-                                    {
-                                        "cid": cid,
-                                        "title": title_v,
-                                        "name": aname,
-                                        "dept": dept_v,
-                                        "pos": pos_v,
-                                        "pot": pot_v,
-                                        "loy": loy_v,
-                                        "mob": mob_v,
-                                        "land": land_v,
-                                        "extn": extn_v,
-                                        "email": email_v,
-                                    },
-                                )
-                                inserted += 1
-
-                                if i % 200 == 0 or i == total:
-                                    _update_progress(
-                                        pb, ln, i, total, inserted, 0, skipped, label_prefix="Audiences"
+                                    title_v = (
+                                        str(getattr(r, "title")).strip()
+                                        if hasattr(r, "title") and pd.notna(getattr(r, "title"))
+                                        else None
                                     )
-                                    time.sleep(0.001)
+                                    dept_v = (
+                                        str(getattr(r, "department")).strip()
+                                        if hasattr(r, "department") and pd.notna(getattr(r, "department"))
+                                        else None
+                                    )
+                                    pos_v = (
+                                        str(getattr(r, "position")).strip()
+                                        if hasattr(r, "position") and pd.notna(getattr(r, "position"))
+                                        else None
+                                    )
+                                    pot_v = (
+                                        str(getattr(r, "potentiality")).strip()
+                                        if hasattr(r, "potentiality") and pd.notna(getattr(r, "potentiality"))
+                                        else None
+                                    )
+                                    loy_v = (
+                                        str(getattr(r, "loyalty")).strip()
+                                        if hasattr(r, "loyalty") and pd.notna(getattr(r, "loyalty"))
+                                        else None
+                                    )
+                                    mob_v = (
+                                        str(getattr(r, "mobile")).strip()
+                                        if hasattr(r, "mobile") and pd.notna(getattr(r, "mobile"))
+                                        else None
+                                    )
+                                    land_v = (
+                                        str(getattr(r, "landline")).strip()
+                                        if hasattr(r, "landline") and pd.notna(getattr(r, "landline"))
+                                        else None
+                                    )
+                                    extn_v = (
+                                        str(getattr(r, "external_number")).strip()
+                                        if hasattr(r, "external_number") and pd.notna(getattr(r, "external_number"))
+                                        else None
+                                    )
+                                    email_v = (
+                                        str(getattr(r, "email")).strip()
+                                        if hasattr(r, "email") and pd.notna(getattr(r, "email"))
+                                        else None
+                                    )
 
-                        _finish_status(
-                            sts,
-                            has_status,
-                            f"✅ Target audiences import done. Inserted: {inserted} | Skipped: {skipped}",
-                            ok=True,
-                        )
-                    except Exception as e:
-                        _finish_status(sts, has_status, "❌ Target audiences import failed.", ok=False)
-                        st.caption(str(e))
+                                    dup = conn.execute(
+                                        text(
+                                            """
+                                            SELECT 1
+                                            FROM target_audiences
+                                            WHERE customer_id = :cid
+                                              AND lower(coalesce(name, '')) = lower(:name)
+                                              AND lower(coalesce(department, '')) = lower(coalesce(:dept, ''))
+                                              AND lower(coalesce(position, '')) = lower(coalesce(:pos, ''))
+                                            LIMIT 1
+                                            """
+                                        ),
+                                        {"cid": cid, "name": aname, "dept": (dept_v or ""), "pos": (pos_v or "")},
+                                    ).fetchone()
+
+                                    if dup:
+                                        skipped += 1
+                                        continue
+
+                                    conn.execute(
+                                        text(
+                                            """
+                                            INSERT INTO target_audiences(
+                                                customer_id, title, name, department, position,
+                                                potentiality, loyalty,
+                                                mobile, landline, external_number, email, is_active
+                                            )
+                                            VALUES (
+                                                :cid, :title, :name, :dept, :pos,
+                                                :pot, :loy,
+                                                :mob, :land, :extn, :email, TRUE
+                                            )
+                                            """
+                                        ),
+                                        {
+                                            "cid": cid,
+                                            "title": title_v,
+                                            "name": aname,
+                                            "dept": dept_v,
+                                            "pos": pos_v,
+                                            "pot": pot_v,
+                                            "loy": loy_v,
+                                            "mob": mob_v,
+                                            "land": land_v,
+                                            "extn": extn_v,
+                                            "email": email_v,
+                                        },
+                                    )
+                                    inserted += 1
+
+                                    if i % 200 == 0 or i == total:
+                                        _update_progress(
+                                            pb, ln, i, total, inserted, 0, skipped, label_prefix="Audiences"
+                                        )
+                                        time.sleep(0.001)
+
+                            _finish_status(
+                                sts,
+                                has_status,
+                                f"✅ Target audiences import done. Inserted: {inserted} | Skipped: {skipped}",
+                                ok=True,
+                            )
+                            st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{skipped}** skipped.")
+                            if unknown_customers:
+                                st.warning(
+                                    f"**{len(unknown_customers)} unrecognized customer name(s)** caused row skips: "
+                                    + ", ".join(f"`{c}`" for c in unknown_customers[:20])
+                                    + (" …" if len(unknown_customers) > 20 else "")
+                                )
+                        except Exception as e:
+                            _finish_status(sts, has_status, "❌ Target audiences import failed.", ok=False)
+                            st.caption(str(e))
 
         # ==============================================================
         # MODE 2: Manage Target Audiences
         # ==============================================================
-        else:  # mode == "📝 Manage"
-            st.markdown("### 📝 Manage target audiences")
+        else:  # mode == "Edit or delete existing records"
+            st.markdown("### Manage target audiences")
 
             if cust_df.empty:
                 st.info("No customers yet.")
             else:
                 # First select customer (same style as Customers tab)
                 cust_labels = [""] + [_fmt_cust_label(r) for r in cust_df.itertuples(index=False)]
+                aud_cust_search = st.text_input(
+                    "Search customers",
+                    placeholder="Type name, region, or city…",
+                    key="mg_aud_cust_search",
+                )
+                filtered_aud_custs = [o for o in cust_labels if aud_cust_search.lower() in o.lower()] if aud_cust_search else cust_labels
                 cust_choice = st.selectbox(
                     "Select customer",
-                    cust_labels,
+                    filtered_aud_custs,
                     index=0,
                     key="mg_aud_cust_sel",
                 )
@@ -1103,6 +1238,7 @@ def page_admin_import():
                 else:
                     cust_row = cust_df.iloc[cust_labels.index(cust_choice) - 1]
                     cid = int(cust_row["customer_id"])
+
 
                     # Load audiences for this customer
                     adf = query_df(
@@ -1131,12 +1267,11 @@ def page_admin_import():
                         st.info("No target audiences for this customer yet.")
                     else:
                         def _fmt_aud_label(r):
-                            # ID first, then (title + name), department, position – without customer name
                             title_name = (
                                 ((str(r.title).strip() + " ") if r.title else "")
                                 + (str(r.name).strip() if r.name else "")
                             ).strip()
-                            parts = [str(r.audience_id), title_name]
+                            parts = [title_name]
                             if r.department and str(r.department).strip():
                                 parts.append(str(r.department).strip())
                             if r.position and str(r.position).strip():
@@ -1145,9 +1280,15 @@ def page_admin_import():
                             return base + f" ({'active' if bool(r.is_active) else 'inactive'})"
 
                         aud_labels = [""] + [_fmt_aud_label(r) for r in adf.itertuples(index=False)]
+                        aud_search = st.text_input(
+                            "Search audiences",
+                            placeholder="Type name, department, or position…",
+                            key="mg_aud_search",
+                        )
+                        filtered_auds = [o for o in aud_labels if aud_search.lower() in o.lower()] if aud_search else aud_labels
                         aud_choice = st.selectbox(
                             "Select target audience",
-                            aud_labels,
+                            filtered_auds,
                             index=0,
                             key="mg_aud_sel",
                         )
@@ -1156,19 +1297,28 @@ def page_admin_import():
                             st.info("Please select a target audience.")
                         else:
                             row = adf.iloc[aud_labels.index(aud_choice) - 1]
+
                             aid = int(row["audience_id"])
 
-                            # --- Refs & status ---
-                            colA, colB = st.columns([1, 1])
-                            with colA:
-                                v_cnt = _refcount(
-                                    "SELECT COUNT(*) FROM visits WHERE audience_id=:aid",
-                                    {"aid": aid},
-                                )
-                                st.caption(f"Refs → Visits: **{v_cnt}**")
-                            with colB:
-                                st.caption("Status")
-                                st.write("✅ Active" if bool(row["is_active"]) else "🚫 Inactive")
+                            v_cnt = _refcount(
+                                "SELECT COUNT(*) FROM visits WHERE audience_id=:aid",
+                                {"aid": aid},
+                            )
+                            _badge = (
+                                '<span style="background:#dcfce7;color:#15803d;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Active</span>'
+                                if bool(row["is_active"]) else
+                                '<span style="background:#fee2e2;color:#dc2626;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Inactive</span>'
+                            )
+                            st.markdown(
+                                f'<div style="display:flex;align-items:center;gap:16px;margin:0.5rem 0 1rem;'
+                                f'padding:0.6rem 1rem;background:var(--color-surface-2,#f8fafc);border-radius:8px;">'
+                                f'<span style="font-size:0.875rem;color:var(--color-text-muted);">'
+                                f'Visits: <strong style="color:var(--color-text);">{v_cnt}</strong></span>'
+                                f'<span style="color:var(--color-border,#e2e8f0);">·</span>'
+                                f'{_badge}'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
 
                             st.markdown("---")
                             st.markdown("#### Edit target audience")
@@ -1203,9 +1353,10 @@ def page_admin_import():
                             title_other_edit = ""
                             if title_sel == "Other":
                                 title_other_edit = st.text_input(
-                                    "Other title",
+                                    "Specify title",
                                     value=title_default_other,
                                     key=f"{base_key}_title_other",
+                                    placeholder="Specify title…",
                                 )
 
                             # ----- Department dropdown -----
@@ -1229,9 +1380,10 @@ def page_admin_import():
                             dept_other_edit = ""
                             if dept_sel == "OTHER":
                                 dept_other_edit = st.text_input(
-                                    "Other department",
+                                    "Specify department",
                                     value=dept_default_other,
                                     key=f"{base_key}_dept_other",
+                                    placeholder="Specify department…",
                                 )
 
                             # ----- Position dropdown -----
@@ -1255,9 +1407,10 @@ def page_admin_import():
                             pos_other_edit = ""
                             if pos_sel == "OTHER":
                                 pos_other_edit = st.text_input(
-                                    "Other position",
+                                    "Specify position",
                                     value=pos_default_other,
                                     key=f"{base_key}_pos_other",
+                                    placeholder="Specify position…",
                                 )
 
                             # ----- Other fields -----
@@ -1393,37 +1546,39 @@ def page_admin_import():
                                             st.caption(str(e))
 
                             st.markdown("---")
-                            st.markdown("#### 🔴 Danger Zone")
-                            st.write("Delete this target audience permanently (only if not referenced by visits).")
-
-                            del_conf_key = f"{base_key}_del_conf"
-                            del_confirm = st.checkbox(
-                                "I understand this cannot be undone.",
-                                key=del_conf_key,
-                            )
-
-                            if st.button(
-                                "Delete Target Audience",
-                                type="primary",
-                                disabled=not del_confirm,
-                                key=f"{base_key}_del",
-                            ):
-                                if v_cnt > 0:
-                                    st.error(
-                                        "Cannot delete: this target audience is referenced by visits. Deactivate instead."
+                            with st.container(border=True):
+                                st.markdown(
+                                    '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;'
+                                    'letter-spacing:0.07em;color:#dc2626;margin:0 0 0.25rem 0;">Danger Zone</p>'
+                                    '<p style="font-size:0.875rem;color:#6b7280;margin:0 0 0.5rem 0;">'
+                                    'Permanently deletes this record. Cannot be undone.</p>',
+                                    unsafe_allow_html=True,
+                                )
+                                del_conf_key = f"{base_key}_del_conf"
+                                _del_blocked = v_cnt > 0
+                                if _del_blocked:
+                                    st.warning(
+                                        f"This target audience has **{v_cnt} visit(s)** linked. "
+                                        "Deletion is blocked — deactivate using the Active checkbox above."
                                     )
-                                else:
+                                del_confirm = st.checkbox(
+                                    "I understand this action is permanent and cannot be undone.",
+                                    key=del_conf_key,
+                                    disabled=_del_blocked,
+                                )
+                                if st.button(
+                                    "Delete Target Audience",
+                                    type="secondary",
+                                    disabled=not del_confirm or _del_blocked,
+                                    key=f"{base_key}_del",
+                                ):
                                     try:
                                         exec_sql(
                                             "DELETE FROM target_audiences WHERE audience_id=:id",
                                             {"id": aid},
                                         )
-                                        st.success("Target audience deleted ✅")
-                                        # reset the selection by removing the widget state
-                                        for key in ("mg_aud_sel",):
-                                            st.session_state.pop(key, None)
-
-                                        # optional but nice: force UI refresh
+                                        st.success("Target audience deleted.")
+                                        st.session_state.pop("mg_aud_sel", None)
                                         st.rerun()
                                     except Exception as e:
                                         st.error("Delete failed.")
@@ -1433,11 +1588,19 @@ def page_admin_import():
     # 3) BUSINESS UNITS
     # =====================================================================
     with main_tabs[2]:
-        st.subheader("Business Units")
+        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM business_units")
+        _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
+        st.markdown(
+            f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
+            f'<strong style="color:var(--color-text);">{_t}</strong> total records &nbsp;·&nbsp; '
+            f'<strong style="color:var(--status-success-text,#16a34a);">{_a}</strong> active'
+            f'</p>',
+            unsafe_allow_html=True,
+        )
 
         bu_mode = st.radio(
-            "Mode",
-            ["➕ Add / Import", "📝 Manage"],
+            "What do you want to do?",
+            ["Add records or bulk import", "Edit or delete existing records"],
             index=0,
             key="bu_mode",
             horizontal=True,
@@ -1446,8 +1609,8 @@ def page_admin_import():
         # -------------------------
         # MODE 1: Add / Import
         # -------------------------
-        if bu_mode == "➕ Add / Import":
-            st.markdown("### ➕ Add single business unit")
+        if bu_mode == "Add records or bulk import":
+            st.markdown("### Add single business unit")
             st.caption("Required field: **Business Unit Name**.")
 
             st.session_state.setdefault("bu_add_name", "")
@@ -1475,24 +1638,45 @@ def page_admin_import():
                                 {"name": nm},
                             )
                         if (res.rowcount or 0) > 0:
-                            st.success("Business Unit added ✅")
-                            # reset widget state safely
                             st.session_state.pop("bu_add_name", None)
+                            st.success("Business Unit added ✅")
+                            st.rerun()
                         else:
                             st.info("That Business Unit already exists — nothing added.")
                     except Exception as e:
                         st.error("Could not add Business Unit.")
                         st.caption(str(e))
 
-            st.markdown("---")
-            st.markdown("### ⬆️ Bulk upload business units (Excel/CSV)")
-            st.write("Columns: **name**")
-
-            fbu = st.file_uploader(
-                "Upload Business Units file",
-                type=["xlsx", "csv"],
-                key="bu_upload",
+            st.markdown(
+                '<div style="margin:1.5rem 0 1rem;padding:0.6rem 1rem;'
+                'border-left:3px solid var(--color-primary,#2563eb);'
+                'background:var(--color-surface-2,#f8fafc);border-radius:0 6px 6px 0;">'
+                '<span style="font-weight:600;font-size:0.9rem;color:var(--color-text);">'
+                'OR — Bulk Import from Excel / CSV</span></div>',
+                unsafe_allow_html=True,
             )
+            st.markdown(
+                "- **name** *(required)* — business unit name\n\n"
+                "Duplicates (same `name`) are skipped automatically."
+            )
+            _step1, _step2 = st.columns(2)
+            with _step1:
+                st.markdown("**Step 1 — Download Template**")
+                st.download_button(
+                    "Download Template",
+                    data=_make_template(["name"], example_rows=[["North Region"]]),
+                    file_name="business_units_template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="bu_tmpl_dl",
+                )
+            with _step2:
+                st.markdown("**Step 2 — Upload your file**")
+                fbu = st.file_uploader(
+                    "Upload Business Units file",
+                    type=["xlsx", "csv"],
+                    key="bu_upload",
+                    label_visibility="collapsed",
+                )
             if fbu is not None:
                 _validate_upload(fbu)
                 df = _read_df_upload(fbu)
@@ -1500,68 +1684,68 @@ def page_admin_import():
                     st.error("Missing required column: name")
                 else:
                     total = len(df)
-                    if not _preview_and_confirm(df, ["name"], "bu"):
-                        st.stop()
-                    inserted = 0
-                    skipped = 0
-                    sts, pb, ln, has_status = _mk_status("Importing Business Units…")
+                    if _preview_and_confirm(df, ["name"], "bu"):
+                        inserted = 0
+                        skipped = 0
+                        sts, pb, ln, has_status = _mk_status("Importing Business Units…")
 
-                    try:
-                        with engine.begin() as conn:
-                            for i, r in enumerate(df.itertuples(index=False), start=1):
-                                nm_raw = getattr(r, "name", "")
-                                nm = str(nm_raw).strip() if pd.notna(nm_raw) else ""
-                                if not nm:
-                                    skipped += 1
-                                else:
-                                    res = conn.execute(
-                                        text(
-                                            """
-                                            INSERT INTO business_units(name, is_active)
-                                            VALUES (:name, TRUE)
-                                            ON CONFLICT (name) DO NOTHING
-                                            """
-                                        ),
-                                        {"name": nm},
-                                    )
-                                    if (res.rowcount or 0) > 0:
-                                        inserted += 1
-                                    else:
+                        try:
+                            with engine.begin() as conn:
+                                for i, r in enumerate(df.itertuples(index=False), start=1):
+                                    nm_raw = getattr(r, "name", "")
+                                    nm = str(nm_raw).strip() if pd.notna(nm_raw) else ""
+                                    if not nm:
                                         skipped += 1
+                                    else:
+                                        res = conn.execute(
+                                            text(
+                                                """
+                                                INSERT INTO business_units(name, is_active)
+                                                VALUES (:name, TRUE)
+                                                ON CONFLICT (name) DO NOTHING
+                                                """
+                                            ),
+                                            {"name": nm},
+                                        )
+                                        if (res.rowcount or 0) > 0:
+                                            inserted += 1
+                                        else:
+                                            skipped += 1
 
-                                if i % 200 == 0 or i == total:
-                                    _update_progress(
-                                        pb,
-                                        ln,
-                                        i,
-                                        total,
-                                        inserted,
-                                        0,
-                                        skipped,
-                                        label_prefix="Business Units",
-                                    )
-                                    time.sleep(0.001)
+                                    if i % 200 == 0 or i == total:
+                                        _update_progress(
+                                            pb,
+                                            ln,
+                                            i,
+                                            total,
+                                            inserted,
+                                            0,
+                                            skipped,
+                                            label_prefix="Business Units",
+                                        )
+                                        time.sleep(0.001)
 
-                        _finish_status(
-                            sts,
-                            has_status,
-                            f"Business Units import ✅ Inserted: {inserted} | Skipped: {skipped}",
-                            ok=True,
-                        )
-                    except Exception as e:
-                        _finish_status(
-                            sts,
-                            has_status,
-                            "Business Units import failed ❌",
-                            ok=False,
-                        )
-                        st.caption(str(e))
+                            _finish_status(
+                                sts,
+                                has_status,
+                                f"Business Units import ✅ Inserted: {inserted} | Skipped: {skipped}",
+                                ok=True,
+                            )
+                            st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{skipped}** skipped.")
+                        except Exception as e:
+                            _finish_status(
+                                sts,
+                                has_status,
+                                "Business Units import failed ❌",
+                                ok=False,
+                            )
+                            st.caption(str(e))
 
         # -------------------------
         # MODE 2: Manage
         # -------------------------
-        else:  # bu_mode == "📝 Manage"
-            st.markdown("### 📝 Manage business units")
+        else:  # bu_mode == "Edit or delete existing records"
+            st.markdown("### Manage business units")
 
             bdf = query_df(
                 """
@@ -1576,17 +1760,22 @@ def page_admin_import():
             if bdf.empty:
                 st.info("No business units yet.")
             else:
-                # show id + name + status
                 bu_options = [
-                    _parts_join(r.business_unit_id, r.name)
-                    + f" ({'active' if bool(r.is_active) else 'inactive'})"
+                    r.name + f" ({'active' if bool(r.is_active) else 'inactive'})"
                     for r in bdf.itertuples(index=False)
                 ]
                 bu_options = [""] + bu_options
 
+                bu_search = st.text_input(
+                    "Search business units",
+                    placeholder="Type name…",
+                    key="mg_bu_search",
+                )
+                filtered_bus = [o for o in bu_options if bu_search.lower() in o.lower()] if bu_search else bu_options
+
                 sel_bu_label = st.selectbox(
                     "Select business unit",
-                    bu_options,
+                    filtered_bus,
                     index=0,
                     key="mg_bu_sel",
                 )
@@ -1596,29 +1785,29 @@ def page_admin_import():
                 else:
                     idx = bu_options.index(sel_bu_label) - 1
                     row = bdf.iloc[idx]
+
                     buid = int(row["business_unit_id"])
 
-                    colA, colB = st.columns([1, 1])
-                    with colA:
-                        u_cnt = _refcount(
-                            "SELECT COUNT(*) FROM users WHERE business_unit_id=:id",
-                            {"id": buid},
-                        )
-                        bl_cnt = _refcount(
-                            "SELECT COUNT(*) FROM business_lines WHERE business_unit_id=:id",
-                            {"id": buid},
-                        )
-                        st.caption(
-                            f"Refs → Users: **{u_cnt}** · Business Lines: **{bl_cnt}**"
-                        )
-
-                    with colB:
-                        st.caption("Status")
-                        st.write(
-                            "✅ Active"
-                            if bool(row["is_active"])
-                            else "🚫 Inactive"
-                        )
+                    u_cnt = _refcount("SELECT COUNT(*) FROM users WHERE business_unit_id=:id", {"id": buid})
+                    bl_cnt = _refcount("SELECT COUNT(*) FROM business_lines WHERE business_unit_id=:id", {"id": buid})
+                    _badge = (
+                        '<span style="background:#dcfce7;color:#15803d;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Active</span>'
+                        if bool(row["is_active"]) else
+                        '<span style="background:#fee2e2;color:#dc2626;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Inactive</span>'
+                    )
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:16px;margin:0.5rem 0 1rem;'
+                        f'padding:0.6rem 1rem;background:var(--color-surface-2,#f8fafc);border-radius:8px;">'
+                        f'<span style="font-size:0.875rem;color:var(--color-text-muted);">'
+                        f'Users: <strong style="color:var(--color-text);">{u_cnt}</strong></span>'
+                        f'<span style="color:var(--color-border,#e2e8f0);">·</span>'
+                        f'<span style="font-size:0.875rem;color:var(--color-text-muted);">'
+                        f'Business Lines: <strong style="color:var(--color-text);">{bl_cnt}</strong></span>'
+                        f'<span style="color:var(--color-border,#e2e8f0);">·</span>'
+                        f'{_badge}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
                     st.markdown("---")
                     st.markdown("#### Edit business unit")
@@ -1677,55 +1866,58 @@ def page_admin_import():
                                     st.caption(str(e))
 
                     st.markdown("---")
-                    st.markdown("#### 🔴 Danger Zone")
-                    st.write(
-                        "Delete this business unit permanently (only if not referenced by users/business lines)."
-                    )
-
-                    del_conf_key = f"{base_key}_del_conf"
-                    del_confirm = st.checkbox(
-                        "I understand this cannot be undone.",
-                        key=del_conf_key,
-                    )
-
-                    if st.button(
-                        "Delete Business Unit",
-                        type="primary",
-                        disabled=not del_confirm,
-                        key=f"{base_key}_del",
-                    ):
-                        if u_cnt > 0 or bl_cnt > 0:
-                            st.error(
-                                "Cannot delete: this business unit is referenced by users and/or business lines. "
-                                "Deactivate instead."
+                    with st.container(border=True):
+                        st.markdown(
+                            '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;'
+                            'letter-spacing:0.07em;color:#dc2626;margin:0 0 0.25rem 0;">Danger Zone</p>'
+                            '<p style="font-size:0.875rem;color:#6b7280;margin:0 0 0.5rem 0;">'
+                            'Permanently deletes this record. Cannot be undone.</p>',
+                            unsafe_allow_html=True,
+                        )
+                        del_conf_key = f"{base_key}_del_conf"
+                        _del_blocked = u_cnt > 0 or bl_cnt > 0
+                        if _del_blocked:
+                            st.warning(
+                                f"This business unit has **{u_cnt} user(s)** and **{bl_cnt} business line(s)** linked. "
+                                "Deletion is blocked — deactivate using the Active checkbox above."
                             )
-                        else:
+                        del_confirm = st.checkbox(
+                            "I understand this action is permanent and cannot be undone.",
+                            key=del_conf_key,
+                            disabled=_del_blocked,
+                        )
+                        if st.button(
+                            "Delete Business Unit",
+                            type="secondary",
+                            disabled=not del_confirm or _del_blocked,
+                            key=f"{base_key}_del",
+                        ):
                             try:
-                                exec_sql(
-                                    "DELETE FROM business_units WHERE business_unit_id=:id",
-                                    {"id": buid},
-                                )
-                                st.success("Business Unit deleted ✅")
-
-                                # reset selection safely
+                                exec_sql("DELETE FROM business_units WHERE business_unit_id=:id", {"id": buid})
+                                st.success("Business Unit deleted.")
                                 st.session_state.pop("mg_bu_sel", None)
-
-                                # optional: refresh UI so deleted BU disappears immediately
                                 st.rerun()
-
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
 
     # =====================================================================
-    # 4) BUSINESS LINES
+    # 5) BUSINESS LINES
     # =====================================================================
-    with main_tabs[3]:
-        st.subheader("Business Lines")
+    with main_tabs[4]:
+        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM business_lines")
+        _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
+        st.markdown(
+            f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
+            f'<strong style="color:var(--color-text);">{_t}</strong> total records &nbsp;·&nbsp; '
+            f'<strong style="color:var(--status-success-text,#16a34a);">{_a}</strong> active'
+            f'</p>',
+            unsafe_allow_html=True,
+        )
 
         bl_mode = st.radio(
-            "Mode",
-            ["➕ Add / Import", "📝 Manage"],
+            "What do you want to do?",
+            ["Add records or bulk import", "Edit or delete existing records"],
             index=0,
             key="bl_mode",
             horizontal=True,
@@ -1770,8 +1962,8 @@ def page_admin_import():
         # -------------------------
         # MODE 1: Add / Import
         # -------------------------
-        if bl_mode == "➕ Add / Import":
-            st.markdown("### ➕ Add single business line")
+        if bl_mode == "Add records or bulk import":
+            st.markdown("### Add single business line")
 
             # ---- Business Units for selection ----
             bu_df_for_bl = query_df(
@@ -1790,15 +1982,14 @@ def page_admin_import():
 
                 # init add state
                 st.session_state.setdefault("bl_add_bu", "")
+                st.session_state.setdefault("bl_add_category_opt", "")
                 st.session_state.setdefault("bl_add_name", "")
                 st.session_state.setdefault("bl_add_supplier_opt", "")
                 st.session_state.setdefault("bl_add_supplier_other", "")
-                st.session_state.setdefault("bl_add_category_opt", "")
-                st.session_state.setdefault("bl_add_category_other", "")
                 st.session_state.setdefault("bl_add_pg_opt", "")
                 st.session_state.setdefault("bl_add_pg_other", "")
 
-                # ---- Business Unit ----
+                # ---- Step 1: Business Unit ----
                 if st.session_state["bl_add_bu"] not in bu_labels:
                     st.session_state["bl_add_bu"] = ""
                 bu_sel = st.selectbox(
@@ -1806,14 +1997,46 @@ def page_admin_import():
                     bu_labels,
                     key="bl_add_bu",
                 )
+                bu_id = bu_name_to_id.get(bu_sel) if bu_sel else None
 
-                # ---- Line Name ----
+                # ---- Step 2: Category (from product_categories, filtered by BU) ----
+                if bu_id:
+                    pc_add_df = query_df(
+                        """
+                        SELECT product_category_id, name
+                        FROM product_categories
+                        WHERE business_unit_id = :bid
+                          AND COALESCE(is_active, TRUE) IS TRUE
+                        ORDER BY name
+                        """,
+                        {"bid": bu_id},
+                    )
+                    pc_add_labels = [""] + pc_add_df["name"].tolist()
+                    pc_add_name_to_id = {
+                        str(r.name): int(r.product_category_id)
+                        for r in pc_add_df.itertuples(index=False)
+                    }
+                else:
+                    pc_add_labels = [""]
+                    pc_add_name_to_id = {}
+
+                if st.session_state["bl_add_category_opt"] not in pc_add_labels:
+                    st.session_state["bl_add_category_opt"] = ""
+                category_sel = st.selectbox(
+                    "Category *",
+                    pc_add_labels,
+                    key="bl_add_category_opt",
+                    help="Select a product category. Choose a Business Unit first to populate this list.",
+                )
+                pc_id_add = pc_add_name_to_id.get(category_sel) if category_sel else None
+
+                # ---- Step 3: Business Line Name ----
                 bl_name = st.text_input(
                     "Business Line Name *",
                     key="bl_add_name",
                 )
 
-                # ---- Supplier ----
+                # ---- Step 4: Supplier ----
                 if st.session_state["bl_add_supplier_opt"] not in supplier_options:
                     st.session_state["bl_add_supplier_opt"] = ""
                 sup_idx = supplier_options.index(st.session_state["bl_add_supplier_opt"])
@@ -1825,28 +2048,11 @@ def page_admin_import():
                     key="bl_add_supplier_opt",
                 )
                 if supplier_sel == "OTHER":
-                    supplier_other = st.text_input("Other supplier", key="bl_add_supplier_other")
+                    supplier_other = st.text_input("Specify supplier", key="bl_add_supplier_other", placeholder="Specify supplier…")
                 else:
                     supplier_other = st.session_state.get("bl_add_supplier_other", "")
 
-                # ---- Category (required) ----
-                if st.session_state["bl_add_category_opt"] not in category_options:
-                    st.session_state["bl_add_category_opt"] = ""
-                cat_idx = category_options.index(st.session_state["bl_add_category_opt"])
-
-                category_sel = st.selectbox(
-                    "Category *",
-                    category_options,
-                    index=cat_idx,
-                    key="bl_add_category_opt",
-                    help="Category is required.",
-                )
-                if category_sel == "OTHER":
-                    category_other = st.text_input("Other category", key="bl_add_category_other")
-                else:
-                    category_other = st.session_state.get("bl_add_category_other", "")
-
-                # ---- Product Group ----
+                # ---- Step 5: Product Group ----
                 if st.session_state["bl_add_pg_opt"] not in prod_group_options:
                     st.session_state["bl_add_pg_opt"] = ""
                 pg_idx = prod_group_options.index(st.session_state["bl_add_pg_opt"])
@@ -1858,7 +2064,7 @@ def page_admin_import():
                     key="bl_add_pg_opt",
                 )
                 if pg_sel == "OTHER":
-                    pg_other = st.text_input("Other product group", key="bl_add_pg_other")
+                    pg_other = st.text_input("Specify product group", key="bl_add_pg_other", placeholder="Specify product group…")
                 else:
                     pg_other = st.session_state.get("bl_add_pg_other", "")
 
@@ -1866,15 +2072,16 @@ def page_admin_import():
                 if st.button("Save Business Line", type="primary", key="bl_add_save"):
                     if not bu_sel:
                         st.error("Business Unit is required.")
+                    elif not category_sel:
+                        st.error("Category is required.")
                     elif not bl_name.strip():
                         st.error("Business Line Name is required.")
-                    elif category_sel == "" or (category_sel == "OTHER" and not (category_other or "").strip()):
-                        st.error("Category is required.")
                     else:
                         try:
-                            bu_id = bu_name_to_id.get(bu_sel)
                             if not bu_id:
                                 st.error("Selected Business Unit not found.")
+                            elif not pc_id_add:
+                                st.error("Selected Category not found.")
                             else:
                                 # resolve supplier
                                 if supplier_sel == "":
@@ -1883,14 +2090,6 @@ def page_admin_import():
                                     supplier_v = (supplier_other or "").strip() or None
                                 else:
                                     supplier_v = supplier_sel
-
-                                # resolve category
-                                if category_sel == "":
-                                    category_v = None  # covered by validation above
-                                elif category_sel == "OTHER":
-                                    category_v = (category_other or "").strip() or None
-                                else:
-                                    category_v = category_sel
 
                                 # resolve product group
                                 if pg_sel == "":
@@ -1905,17 +2104,18 @@ def page_admin_import():
                                         text(
                                             """
                                             INSERT INTO business_lines(
-                                                business_unit_id, name, supplier, category, product_group, is_active
+                                                business_unit_id, product_category_id, name, supplier, category, product_group, is_active
                                             )
-                                            VALUES (:bid, :name, :supplier, :category, :pg, TRUE)
+                                            VALUES (:bid, :pcid, :name, :supplier, :category, :pg, TRUE)
                                             ON CONFLICT (business_unit_id, name) DO NOTHING
                                             """
                                         ),
                                         {
                                             "bid": bu_id,
+                                            "pcid": pc_id_add,
                                             "name": bl_name.strip(),
                                             "supplier": supplier_v,
-                                            "category": category_v,
+                                            "category": category_sel,
                                             "pg": pg_v,
                                         },
                                     )
@@ -1924,123 +2124,167 @@ def page_admin_import():
                                     st.success("Business Line added ✅")
                                     for key in (
                                         "bl_add_bu",
+                                        "bl_add_category_opt",
                                         "bl_add_name",
                                         "bl_add_supplier_opt",
                                         "bl_add_supplier_other",
-                                        "bl_add_category_opt",
-                                        "bl_add_category_other",
                                         "bl_add_pg_opt",
                                         "bl_add_pg_other",
                                     ):
                                         st.session_state.pop(key, None)
-                                    st.rerun()     # optional but nice
+                                    st.rerun()
                                 else:
                                     st.info("That Business Unit + Business Line Name already exists — nothing added.")
                         except Exception as e:
                             st.error("Could not add Business Line.")
                             st.caption(str(e))
 
-            st.markdown("---")
-            st.markdown("### ⬆️ Bulk upload business lines (Excel/CSV)")
-            st.write("Columns: **business_unit**, **name**, **category**  (optional: supplier, product_group)")
-
-            fbl = st.file_uploader("Upload Business Lines file", type=["xlsx", "csv"], key="blines")
+            st.markdown(
+                '<div style="margin:1.5rem 0 1rem;padding:0.6rem 1rem;'
+                'border-left:3px solid var(--color-primary,#2563eb);'
+                'background:var(--color-surface-2,#f8fafc);border-radius:0 6px 6px 0;">'
+                '<span style="font-weight:600;font-size:0.9rem;color:var(--color-text);">'
+                'OR — Bulk Import from Excel / CSV</span></div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "- **business_unit** *(required)* — must exactly match an existing Business Unit name\n"
+                "- **category** *(required)* — must exactly match an existing Product Category name under that Business Unit\n"
+                "- **name** *(required)* — business line name\n"
+                "- **supplier** *(optional)* — supplier / vendor name\n"
+                "- **product_group** *(optional)* — product group label\n\n"
+                "Rows with an unrecognized `business_unit` or `category` are skipped."
+            )
+            _step1, _step2 = st.columns(2)
+            with _step1:
+                st.markdown("**Step 1 — Download Template**")
+                st.download_button(
+                    "Download Template",
+                    data=_make_template(["business_unit", "category", "name", "supplier", "product_group"], example_rows=[["North Region", "Medical Devices", "Cardiology Devices", "Philips", "Imaging"]]),
+                    file_name="business_lines_template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="bl_tmpl_dl",
+                )
+            with _step2:
+                st.markdown("**Step 2 — Upload your file**")
+                fbl = st.file_uploader(
+                    "Upload Business Lines file", type=["xlsx", "csv"], key="blines",
+                    label_visibility="collapsed",
+                )
             if fbl is not None:
                 _validate_upload(fbl)
                 df = _read_df_upload(fbl)
                 st.caption(f"Detected columns: {list(df.columns)}")
-                needed = {"business_unit", "name", "category"}
+                needed = {"business_unit", "category", "name"}
                 if not needed.issubset(set(df.columns)):
                     missing = sorted(list(needed - set(df.columns)))
                     st.error(f"Missing required columns: {', '.join(missing)}")
                 else:
                     total = len(df)
-                    if not _preview_and_confirm(df, ["business_unit", "name", "category"], "blines"):
-                        st.stop()
-                    inserted, skipped = 0, 0
-                    sts, pb, ln, has_status = _mk_status("Importing Business Lines…")
-                    try:
-                        with engine.begin() as conn:
-                            budf = pd.read_sql_query(text("SELECT business_unit_id, name FROM business_units"), conn)
-                            bumap = {str(r.name).strip().lower(): int(r.business_unit_id) for r in budf.itertuples(index=False)}
+                    if _preview_and_confirm(df, ["business_unit", "category", "name"], "blines"):
+                        inserted, skipped = 0, 0
+                        sts, pb, ln, has_status = _mk_status("Importing Business Lines…")
+                        try:
+                            with engine.begin() as conn:
+                                budf = pd.read_sql_query(text("SELECT business_unit_id, name FROM business_units"), conn)
+                                bumap = {str(r.name).strip().lower(): int(r.business_unit_id) for r in budf.itertuples(index=False)}
 
-                            for i, r in enumerate(df.itertuples(index=False), start=1):
-                                bu_name_raw = (
-                                    str(getattr(r, "business_unit")) if hasattr(r, "business_unit") and pd.notna(getattr(r, "business_unit")) else ""
-                                ).strip()
-                                bl_name_raw = (
-                                    str(getattr(r, "name")) if hasattr(r, "name") and pd.notna(getattr(r, "name")) else ""
-                                ).strip()
-                                cat_raw = (
-                                    str(getattr(r, "category")) if hasattr(r, "category") and pd.notna(getattr(r, "category")) else ""
-                                ).strip()
+                                pcdf_bl = pd.read_sql_query(
+                                    text("SELECT product_category_id, business_unit_id, name FROM product_categories"),
+                                    conn,
+                                )
+                                # key: (business_unit_id, category_name_lower) → product_category_id
+                                pcmap = {
+                                    (int(r.business_unit_id), str(r.name).strip().lower()): int(r.product_category_id)
+                                    for r in pcdf_bl.itertuples(index=False)
+                                }
 
-                                if not (bu_name_raw and bl_name_raw and cat_raw):
-                                    skipped += 1
+                                for i, r in enumerate(df.itertuples(index=False), start=1):
+                                    bu_name_raw = (
+                                        str(getattr(r, "business_unit")) if hasattr(r, "business_unit") and pd.notna(getattr(r, "business_unit")) else ""
+                                    ).strip()
+                                    cat_raw = (
+                                        str(getattr(r, "category")) if hasattr(r, "category") and pd.notna(getattr(r, "category")) else ""
+                                    ).strip()
+                                    bl_name_raw = (
+                                        str(getattr(r, "name")) if hasattr(r, "name") and pd.notna(getattr(r, "name")) else ""
+                                    ).strip()
+
+                                    if not (bu_name_raw and cat_raw and bl_name_raw):
+                                        skipped += 1
+                                        if i % 200 == 0 or i == total:
+                                            _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Business Lines")
+                                        continue
+
+                                    bu_id_tmp = bumap.get(bu_name_raw.lower())
+                                    if not bu_id_tmp:
+                                        skipped += 1
+                                        if i % 200 == 0 or i == total:
+                                            _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Business Lines")
+                                        continue
+
+                                    pc_id_tmp = pcmap.get((bu_id_tmp, cat_raw.lower()))
+                                    if not pc_id_tmp:
+                                        skipped += 1
+                                        if i % 200 == 0 or i == total:
+                                            _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Business Lines")
+                                        continue
+
+                                    supplier_v = (
+                                        str(getattr(r, "supplier")).strip()
+                                        if hasattr(r, "supplier") and pd.notna(getattr(r, "supplier"))
+                                        else None
+                                    )
+                                    prod_group_v = (
+                                        str(getattr(r, "product_group")).strip()
+                                        if hasattr(r, "product_group") and pd.notna(getattr(r, "product_group"))
+                                        else None
+                                    )
+
+                                    res = conn.execute(
+                                        text(
+                                            """
+                                            INSERT INTO business_lines(
+                                                business_unit_id, product_category_id, name, supplier, category, product_group, is_active
+                                            )
+                                            VALUES (:bid, :pcid, :name, :supplier, :category, :pg, TRUE)
+                                            ON CONFLICT (business_unit_id, name) DO NOTHING
+                                            """
+                                        ),
+                                        {
+                                            "bid": bu_id_tmp,
+                                            "pcid": pc_id_tmp,
+                                            "name": bl_name_raw,
+                                            "supplier": supplier_v,
+                                            "category": cat_raw,
+                                            "pg": prod_group_v,
+                                        },
+                                    )
+                                    if (res.rowcount or 0) > 0:
+                                        inserted += 1
+                                    else:
+                                        skipped += 1
+
                                     if i % 200 == 0 or i == total:
                                         _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Business Lines")
-                                    continue
+                                        time.sleep(0.001)
 
-                                bu_id_tmp = bumap.get(bu_name_raw.lower())
-                                if not bu_id_tmp:
-                                    skipped += 1
-                                    if i % 200 == 0 or i == total:
-                                        _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Business Lines")
-                                    continue
-
-                                supplier_v = (
-                                    str(getattr(r, "supplier")).strip()
-                                    if hasattr(r, "supplier") and pd.notna(getattr(r, "supplier"))
-                                    else None
-                                )
-                                prod_group_v = (
-                                    str(getattr(r, "product_group")).strip()
-                                    if hasattr(r, "product_group") and pd.notna(getattr(r, "product_group"))
-                                    else None
-                                )
-
-                                res = conn.execute(
-                                    text(
-                                        """
-                                        INSERT INTO business_lines(
-                                            business_unit_id, name, supplier, category, product_group, is_active
-                                        )
-                                        VALUES (:bid, :name, :supplier, :category, :pg, TRUE)
-                                        ON CONFLICT (business_unit_id, name) DO NOTHING
-                                        """
-                                    ),
-                                    {
-                                        "bid": bu_id_tmp,
-                                        "name": bl_name_raw,
-                                        "supplier": supplier_v,
-                                        "category": cat_raw,
-                                        "pg": prod_group_v,
-                                    },
-                                )
-                                if (res.rowcount or 0) > 0:
-                                    inserted += 1
-                                else:
-                                    skipped += 1
-
-                                if i % 200 == 0 or i == total:
-                                    _update_progress(pb, ln, i, total, inserted, 0, skipped, label_prefix="Business Lines")
-                                    time.sleep(0.001)
-
-                        _finish_status(
-                            sts,
-                            has_status,
-                            f"Business Lines import ✅ Inserted: {inserted} | Skipped: {skipped}",
-                            ok=True,
-                        )
-                    except Exception as e:
-                        _finish_status(sts, has_status, "Business Lines import failed ❌", ok=False)
-                        st.caption(str(e))
+                            _finish_status(
+                                sts,
+                                has_status,
+                                f"Business Lines import ✅ Inserted: {inserted} | Skipped: {skipped}",
+                                ok=True,
+                            )
+                            st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{skipped}** skipped.")
+                        except Exception as e:
+                            _finish_status(sts, has_status, "Business Lines import failed ❌", ok=False)
+                            st.caption(str(e))
 
         # -------------------------
         # MODE 2: Manage
         # -------------------------
-        else:  # bl_mode == "📝 Manage"
-            st.markdown("### 📝 Manage business lines")
+        else:  # bl_mode == "Edit or delete existing records"
+            st.markdown("### Manage business lines")
 
             bll = query_df(
                 """
@@ -2072,12 +2316,19 @@ def page_admin_import():
                     ).replace(" - None", "").replace("None", "").strip(" -")
 
                 options = [
-                    f"{r.business_line_id} - {_fmt_bl(r)}  ({'active' if bool(r.is_active) else 'inactive'})"
+                    f"{_fmt_bl(r)}  ({'active' if bool(r.is_active) else 'inactive'})"
                     for r in bll.itertuples(index=False)
                 ]
                 options = [""] + options
 
-                sel_label = st.selectbox("Select business line", options, index=0, key="mg_bl_sel")
+                bl_search = st.text_input(
+                    "Search business lines",
+                    placeholder="Type business unit, name, or category…",
+                    key="mg_bl_search",
+                )
+                filtered_bls = [o for o in options if bl_search.lower() in o.lower()] if bl_search else options
+
+                sel_label = st.selectbox("Select business line", filtered_bls, index=0, key="mg_bl_sel")
 
                 if sel_label == "":
                     st.info("Please select a business line.")
@@ -2086,15 +2337,27 @@ def page_admin_import():
                     row = bll.iloc[row_idx]
                     blid = int(row["business_line_id"])
 
-                    # quick refs / status
-                    colA, colB = st.columns([1, 1])
-                    with colA:
-                        i_cnt = _refcount("SELECT COUNT(*) FROM items WHERE business_line_id=:id", {"id": blid})
-                        v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE business_line_id=:id", {"id": blid})
-                        st.caption(f"Refs → Items: **{i_cnt}** · Visits: **{v_cnt}**")
-                    with colB:
-                        st.caption("Status")
-                        st.write("✅ Active" if bool(row["is_active"]) else "🚫 Inactive")
+
+                    i_cnt = _refcount("SELECT COUNT(*) FROM items WHERE business_line_id=:id", {"id": blid})
+                    v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE business_line_id=:id", {"id": blid})
+                    _badge = (
+                        '<span style="background:#dcfce7;color:#15803d;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Active</span>'
+                        if bool(row["is_active"]) else
+                        '<span style="background:#fee2e2;color:#dc2626;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Inactive</span>'
+                    )
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:16px;margin:0.5rem 0 1rem;'
+                        f'padding:0.6rem 1rem;background:var(--color-surface-2,#f8fafc);border-radius:8px;">'
+                        f'<span style="font-size:0.875rem;color:var(--color-text-muted);">'
+                        f'Items: <strong style="color:var(--color-text);">{i_cnt}</strong></span>'
+                        f'<span style="color:var(--color-border,#e2e8f0);">·</span>'
+                        f'<span style="font-size:0.875rem;color:var(--color-text-muted);">'
+                        f'Visits: <strong style="color:var(--color-text);">{v_cnt}</strong></span>'
+                        f'<span style="color:var(--color-border,#e2e8f0);">·</span>'
+                        f'{_badge}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
                     st.markdown("---")
                     st.markdown("#### Edit business line")
@@ -2168,7 +2431,7 @@ def page_admin_import():
                         key=sup_key,
                     )
                     if supplier_sel_edit == "OTHER":
-                        supplier_other_edit = st.text_input("Other supplier", key=sup_other_key)
+                        supplier_other_edit = st.text_input("Specify supplier", key=sup_other_key, placeholder="Specify supplier…")
                     else:
                         supplier_other_edit = st.session_state.get(sup_other_key, "")
 
@@ -2198,7 +2461,7 @@ def page_admin_import():
                         help="Category is required.",
                     )
                     if category_sel_edit == "OTHER":
-                        category_other_edit = st.text_input("Other category", key=cat_other_key)
+                        category_other_edit = st.text_input("Specify category", key=cat_other_key, placeholder="Specify category…")
                     else:
                         category_other_edit = st.session_state.get(cat_other_key, "")
 
@@ -2227,7 +2490,7 @@ def page_admin_import():
                         key=pg_key,
                     )
                     if pg_sel_edit == "OTHER":
-                        pg_other_edit = st.text_input("Other product group", key=pg_other_key)
+                        pg_other_edit = st.text_input("Specify product group", key=pg_other_key, placeholder="Specify product group…")
                     else:
                         pg_other_edit = st.session_state.get(pg_other_key, "")
 
@@ -2314,30 +2577,35 @@ def page_admin_import():
                                     st.caption(str(e))
 
                     st.markdown("---")
-                    st.markdown("#### 🔴 Danger Zone")
-                    st.write("Delete this business line permanently (only if not referenced by items/visits).")
-
-                    del_conf_key = f"{base_key}_del_conf"
-                    del_confirm = st.checkbox(
-                        "I understand this cannot be undone.",
-                        key=del_conf_key,
-                    )
-
-                    if st.button(
-                        "Delete Business Line",
-                        type="primary",
-                        disabled=not del_confirm,
-                        key=f"{base_key}_del",
-                    ):
-                        if i_cnt > 0 or v_cnt > 0:
-                            st.error(
-                                "Cannot delete: this business line is referenced by items and/or visits. "
-                                "Deactivate instead."
+                    with st.container(border=True):
+                        st.markdown(
+                            '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;'
+                            'letter-spacing:0.07em;color:#dc2626;margin:0 0 0.25rem 0;">Danger Zone</p>'
+                            '<p style="font-size:0.875rem;color:#6b7280;margin:0 0 0.5rem 0;">'
+                            'Permanently deletes this record. Cannot be undone.</p>',
+                            unsafe_allow_html=True,
+                        )
+                        del_conf_key = f"{base_key}_del_conf"
+                        _del_blocked = i_cnt > 0 or v_cnt > 0
+                        if _del_blocked:
+                            st.warning(
+                                f"This business line has **{i_cnt} item(s)** and **{v_cnt} visit(s)** linked. "
+                                "Deletion is blocked — deactivate using the Active checkbox above."
                             )
-                        else:
+                        del_confirm = st.checkbox(
+                            "I understand this action is permanent and cannot be undone.",
+                            key=del_conf_key,
+                            disabled=_del_blocked,
+                        )
+                        if st.button(
+                            "Delete Business Line",
+                            type="secondary",
+                            disabled=not del_confirm or _del_blocked,
+                            key=f"{base_key}_del",
+                        ):
                             try:
                                 exec_sql("DELETE FROM business_lines WHERE business_line_id=:id", {"id": blid})
-                                st.success("Business Line deleted ✅")
+                                st.success("Business Line deleted.")
                                 st.session_state.pop("mg_bl_sel", None)
                                 st.rerun()
                             except Exception as e:
@@ -2345,15 +2613,23 @@ def page_admin_import():
                                 st.caption(str(e))
 
     # =====================
-    # 5) Items (Products)
+    # 6) Items (Products)
     # =====================
-    with main_tabs[4]:
-        st.subheader("Items (Products)")
-        st.caption("Items are tied to Business Lines, which are tied to Business Units.")
+    with main_tabs[5]:
+        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM items")
+        _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
+        st.markdown(
+            f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.25rem;">'
+            f'<strong style="color:var(--color-text);">{_t}</strong> total records &nbsp;·&nbsp; '
+            f'<strong style="color:var(--status-success-text,#16a34a);">{_a}</strong> active'
+            f'</p>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Hierarchy: Business Unit → Product Category → Business Line → Item")
 
         item_mode = st.radio(
-            "Mode",
-            ["➕ Add / Import", "📝 Manage"],
+            "What do you want to do?",
+            ["Add records or bulk import", "Edit or delete existing records"],
             index=0,
             key="item_mode",
             horizontal=True,
@@ -2372,9 +2648,9 @@ def page_admin_import():
         # -------------------------
         # MODE 1: Add / Import
         # -------------------------
-        if item_mode == "➕ Add / Import":
-            st.markdown("### ➕ Add single item")
-            st.caption("Required fields: **Product ID**, **Article Number**, **Business Unit**, **Business Line**.")
+        if item_mode == "Add records or bulk import":
+            st.markdown("### Add single item")
+            st.caption("Required fields: **Product ID**, **Article Number**, **Business Unit**, **Product Category**, **Business Line**.")
 
             if bu_df_all.empty:
                 st.warning("No active Business Units found. Add one in the Business Units tab first.")
@@ -2392,8 +2668,48 @@ def page_admin_import():
                 )
                 selected_bu_id = bu_ids[bu_idx]
 
-                # ---- Business Line select (depends on BU) ----
+                # ---- Product Category select (depends on BU) ----
                 if selected_bu_id is not None:
+                    pc_df_item = query_df(
+                        """
+                        SELECT product_category_id, name
+                        FROM product_categories
+                        WHERE COALESCE(is_active, TRUE) IS TRUE
+                          AND business_unit_id = :bid
+                        ORDER BY name
+                        """,
+                        {"bid": int(selected_bu_id)},
+                    )
+                else:
+                    pc_df_item = pd.DataFrame(columns=["product_category_id", "name"])
+
+                pc_labels_item = [""] + (pc_df_item["name"].tolist() if not pc_df_item.empty else [])
+                pc_ids_item = [None] + (pc_df_item["product_category_id"].astype(int).tolist() if not pc_df_item.empty else [])
+
+                pc_idx_item = st.selectbox(
+                    "Product Category *",
+                    options=list(range(len(pc_labels_item))),
+                    format_func=lambda i: pc_labels_item[i],
+                    index=0,
+                    key="item_add_pc_idx",
+                    help="Pick a Business Unit first to see its categories.",
+                )
+                selected_pc_id = pc_ids_item[pc_idx_item]
+
+                # ---- Business Line select (depends on BU + Product Category) ----
+                if selected_bu_id is not None and selected_pc_id is not None:
+                    bl_df = query_df(
+                        """
+                        SELECT business_line_id, name
+                        FROM business_lines
+                        WHERE COALESCE(is_active, TRUE) IS TRUE
+                          AND business_unit_id = :bid
+                          AND product_category_id = :pcid
+                        ORDER BY name
+                        """,
+                        {"bid": int(selected_bu_id), "pcid": int(selected_pc_id)},
+                    )
+                elif selected_bu_id is not None:
                     bl_df = query_df(
                         """
                         SELECT business_line_id, name
@@ -2416,7 +2732,7 @@ def page_admin_import():
                     format_func=lambda i: bl_labels[i],
                     index=0,
                     key="item_add_bl_idx",
-                    help="Pick a Business Unit first to see its lines.",
+                    help="Pick a Business Unit and Product Category first to see its lines.",
                 )
                 selected_bl_id = bl_ids[bl_idx]
 
@@ -2430,8 +2746,12 @@ def page_admin_import():
                         st.error("Product ID is required.")
                     elif not article.strip():
                         st.error("Article Number is required.")
-                    elif selected_bu_id is None or selected_bl_id is None:
-                        st.error("Business Unit and Business Line are required.")
+                    elif selected_bu_id is None:
+                        st.error("Business Unit is required.")
+                    elif selected_pc_id is None:
+                        st.error("Product Category is required.")
+                    elif selected_bl_id is None:
+                        st.error("Business Line is required.")
                     else:
                         try:
                             with engine.begin() as conn:
@@ -2454,16 +2774,16 @@ def page_admin_import():
                                     },
                                 )
                             if (res.rowcount or 0) > 0:
-                                st.success("Item added ✅")
-                                # reset widget-backed keys by removing them from session_state
                                 for key in (
                                     "item_add_pid",
                                     "item_add_article",
                                     "item_add_desc",
                                     "item_add_bu_idx",
+                                    "item_add_pc_idx",
                                     "item_add_bl_idx",
                                 ):
                                     st.session_state.pop(key, None)
+                                st.success("Item added ✅")
                                 st.rerun()
                             else:
                                 st.error("That Product ID already exists.")
@@ -2471,141 +2791,180 @@ def page_admin_import():
                             st.error("Could not add item.")
                             st.caption(str(e))
 
-            st.markdown("---")
-            st.markdown("### ⬆️ Bulk upload items (Excel/CSV)")
-            st.write("Columns: **product_id**, **business_unit**, **business_line**, article_number, description")
-
-            # Build resolver map for BU + BL name → business_line_id
+            st.markdown(
+                '<div style="margin:1.5rem 0 1rem;padding:0.6rem 1rem;'
+                'border-left:3px solid var(--color-primary,#2563eb);'
+                'background:var(--color-surface-2,#f8fafc);border-radius:0 6px 6px 0;">'
+                '<span style="font-weight:600;font-size:0.9rem;color:var(--color-text);">'
+                'OR — Bulk Import from Excel / CSV</span></div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "- **product_id** *(required)* — unique item identifier\n"
+                "- **business_unit** *(required)* — must exactly match an existing Business Unit name\n"
+                "- **product_category** *(required)* — must exactly match an existing Product Category name\n"
+                "- **business_line** *(required)* — must exactly match an existing Business Line name\n"
+                "- **article_number** *(optional)* — internal article / SKU number\n"
+                "- **description** *(optional)* — item description\n\n"
+                "Rows with unrecognized `business_unit`, `product_category`, or `business_line` are skipped."
+            )
+            # Build resolver map: (bu_name, pc_name, bl_name) → business_line_id
             _bl_map_df = query_df(
                 """
-                SELECT bu.name AS bu_name,
-                       bl.name AS bl_name,
+                SELECT bu.name  AS bu_name,
+                       pc.name  AS pc_name,
+                       bl.name  AS bl_name,
                        bl.business_line_id AS bl_id
                 FROM business_lines bl
-                JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+                JOIN business_units     bu ON bu.business_unit_id     = bl.business_unit_id
+                LEFT JOIN product_categories pc ON pc.product_category_id = bl.product_category_id
                 WHERE COALESCE(bu.is_active, TRUE) IS TRUE
                   AND COALESCE(bl.is_active, TRUE) IS TRUE
-                ORDER BY bu.name, bl.name
+                ORDER BY bu.name, pc.name, bl.name
                 """
             )
-            bu_to_bls = {}
-            for r in _bl_map_df.itertuples(index=False):
-                bu_to_bls.setdefault(str(r.bu_name).strip(), []).append((str(r.bl_name).strip(), int(r.bl_id)))
-
-            f3 = st.file_uploader("Upload Items file", type=["xlsx", "csv"], key="items_upload")
+            # key: (bu_name_lower, pc_name_lower, bl_name_lower) → bl_id
+            _bl_lookup = {
+                (
+                    str(r.bu_name).strip().lower(),
+                    str(r.pc_name).strip().lower() if r.pc_name else "",
+                    str(r.bl_name).strip().lower(),
+                ): int(r.bl_id)
+                for r in _bl_map_df.itertuples(index=False)
+            }
+            _step1, _step2 = st.columns(2)
+            with _step1:
+                st.markdown("**Step 1 — Download Template**")
+                st.download_button(
+                    "Download Template",
+                    data=_make_template(["product_id", "article_number", "business_unit", "product_category", "business_line", "description"], example_rows=[["PROD-001", "ART-12345", "North Region", "Medical Devices", "Cardiology Devices", "Cardiac Monitor Pro 3000"]]),
+                    file_name="items_template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="item_tmpl_dl",
+                )
+            with _step2:
+                st.markdown("**Step 2 — Upload your file**")
+                f3 = st.file_uploader(
+                    "Upload Items file", type=["xlsx", "csv"], key="items_upload",
+                    label_visibility="collapsed",
+                )
             if f3 is not None:
                 _validate_upload(f3)
                 df = _read_df_upload(f3)
-                needed = {"product_id", "business_unit", "business_line"}
+                needed = {"product_id", "business_unit", "product_category", "business_line"}
                 if not needed.issubset(df.columns):
-                    st.error("Missing required columns: product_id, business_unit, business_line")
+                    st.error("Missing required columns: product_id, business_unit, product_category, business_line")
                 else:
                     total = len(df)
-                    if not _preview_and_confirm(df, ["product_id", "business_unit", "business_line"], "items"):
-                        st.stop()
-                    inserted = 0
-                    updated = 0
-                    skipped = 0
-                    sts, pb, ln, has_status = _mk_status("Importing Items…")
-                    try:
-                        with engine.begin() as conn:
-                            existing = set(
-                                pd.read_sql_query(text("SELECT product_id FROM items"), conn)[
-                                    "product_id"
-                                ].astype(str).tolist()
-                            )
-
-                            for i, r in enumerate(df.itertuples(index=False), start=1):
-                                pid_raw = getattr(r, "product_id", None)
-                                pid = (str(pid_raw).strip() if pd.notna(pid_raw) else "")
-
-                                bu_name_raw = (
-                                    str(getattr(r, "business_unit", "")).strip()
-                                    if hasattr(r, "business_unit")
-                                    else ""
-                                )
-                                bl_name_raw = (
-                                    str(getattr(r, "business_line", "")).strip()
-                                    if hasattr(r, "business_line")
-                                    else ""
+                    if _preview_and_confirm(df, ["product_id", "business_unit", "product_category", "business_line"], "items"):
+                        inserted = 0
+                        updated = 0
+                        skipped = 0
+                        sts, pb, ln, has_status = _mk_status("Importing Items…")
+                        try:
+                            with engine.begin() as conn:
+                                existing = set(
+                                    pd.read_sql_query(text("SELECT product_id FROM items"), conn)[
+                                        "product_id"
+                                    ].astype(str).tolist()
                                 )
 
-                                if not (pid and bu_name_raw and bl_name_raw):
-                                    skipped += 1
-                                    if i % 200 == 0 or i == total:
-                                        _update_progress(
-                                            pb, ln, i, total, inserted, updated, skipped, label_prefix="Items"
-                                        )
-                                    continue
+                                for i, r in enumerate(df.itertuples(index=False), start=1):
+                                    pid_raw = getattr(r, "product_id", None)
+                                    pid = (str(pid_raw).strip() if pd.notna(pid_raw) else "")
 
-                                # resolve BL from mapping
-                                bl_id = None
-                                if bu_name_raw in bu_to_bls:
-                                    for name, _id in bu_to_bls[bu_name_raw]:
-                                        if name == bl_name_raw:
-                                            bl_id = _id
-                                            break
-
-                                if not bl_id:
-                                    skipped += 1
-                                    if i % 200 == 0 or i == total:
-                                        _update_progress(
-                                            pb, ln, i, total, inserted, updated, skipped, label_prefix="Items"
-                                        )
-                                    continue
-
-                                article_v = (
-                                    str(getattr(r, "article_number")).strip()
-                                    if hasattr(r, "article_number") and pd.notna(getattr(r, "article_number"))
-                                    else None
-                                )
-                                desc_v = (
-                                    str(getattr(r, "description")).strip()
-                                    if hasattr(r, "description") and pd.notna(getattr(r, "description"))
-                                    else None
-                                )
-
-                                conn.execute(
-                                    text(
-                                        """
-                                        INSERT INTO items(product_id, article_number, description, business_line_id, is_active)
-                                        VALUES (:pid, :article, :desc, :blid, TRUE)
-                                        ON CONFLICT (product_id) DO UPDATE
-                                        SET article_number   = EXCLUDED.article_number,
-                                            description      = EXCLUDED.description,
-                                            business_line_id = EXCLUDED.business_line_id,
-                                            is_active        = TRUE
-                                        """
-                                    ),
-                                    {"pid": pid, "article": article_v, "desc": desc_v, "blid": int(bl_id)},
-                                )
-
-                                if pid in existing:
-                                    updated += 1
-                                else:
-                                    inserted += 1
-
-                                if i % 200 == 0 or i == total:
-                                    _update_progress(
-                                        pb, ln, i, total, inserted, updated, skipped, label_prefix="Items"
+                                    bu_name_raw = (
+                                        str(getattr(r, "business_unit", "")).strip()
+                                        if hasattr(r, "business_unit")
+                                        else ""
                                     )
-                                    time.sleep(0.001)
+                                    pc_name_raw = (
+                                        str(getattr(r, "product_category", "")).strip()
+                                        if hasattr(r, "product_category") and pd.notna(getattr(r, "product_category", None))
+                                        else ""
+                                    )
+                                    bl_name_raw = (
+                                        str(getattr(r, "business_line", "")).strip()
+                                        if hasattr(r, "business_line")
+                                        else ""
+                                    )
 
-                        _finish_status(
-                            sts,
-                            has_status,
-                            f"Items import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}",
-                            ok=True,
-                        )
-                    except Exception as e:
-                        _finish_status(sts, has_status, "Items import failed ❌", ok=False)
-                        st.caption(str(e))
+                                    if not (pid and bu_name_raw and bl_name_raw):
+                                        skipped += 1
+                                        if i % 200 == 0 or i == total:
+                                            _update_progress(
+                                                pb, ln, i, total, inserted, updated, skipped, label_prefix="Items"
+                                            )
+                                        continue
+
+                                    # resolve BL using (bu, pc, bl) tuple
+                                    bl_id = _bl_lookup.get((
+                                        bu_name_raw.lower(),
+                                        pc_name_raw.lower(),
+                                        bl_name_raw.lower(),
+                                    ))
+
+                                    if not bl_id:
+                                        skipped += 1
+                                        if i % 200 == 0 or i == total:
+                                            _update_progress(
+                                                pb, ln, i, total, inserted, updated, skipped, label_prefix="Items"
+                                            )
+                                        continue
+
+                                    article_v = (
+                                        str(getattr(r, "article_number")).strip()
+                                        if hasattr(r, "article_number") and pd.notna(getattr(r, "article_number"))
+                                        else None
+                                    )
+                                    desc_v = (
+                                        str(getattr(r, "description")).strip()
+                                        if hasattr(r, "description") and pd.notna(getattr(r, "description"))
+                                        else None
+                                    )
+
+                                    conn.execute(
+                                        text(
+                                            """
+                                            INSERT INTO items(product_id, article_number, description, business_line_id, is_active)
+                                            VALUES (:pid, :article, :desc, :blid, TRUE)
+                                            ON CONFLICT (product_id) DO UPDATE
+                                            SET article_number   = EXCLUDED.article_number,
+                                                description      = EXCLUDED.description,
+                                                business_line_id = EXCLUDED.business_line_id,
+                                                is_active        = TRUE
+                                            """
+                                        ),
+                                        {"pid": pid, "article": article_v, "desc": desc_v, "blid": int(bl_id)},
+                                    )
+
+                                    if pid in existing:
+                                        updated += 1
+                                    else:
+                                        inserted += 1
+
+                                    if i % 200 == 0 or i == total:
+                                        _update_progress(
+                                            pb, ln, i, total, inserted, updated, skipped, label_prefix="Items"
+                                        )
+                                        time.sleep(0.001)
+
+                            _finish_status(
+                                sts,
+                                has_status,
+                                f"Items import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}",
+                                ok=True,
+                            )
+                            st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{updated}** updated, **{skipped}** skipped.")
+                        except Exception as e:
+                            _finish_status(sts, has_status, "Items import failed ❌", ok=False)
+                            st.caption(str(e))
 
         # -------------------------
         # MODE 2: Manage
         # -------------------------
-        else:  # item_mode == "📝 Manage"
-            st.markdown("### 📝 Manage items")
+        else:  # item_mode == "Edit or delete existing records"
+            st.markdown("### Manage items")
 
             idf = query_df(
                 """
@@ -2615,11 +2974,13 @@ def page_admin_import():
                        COALESCE(i.is_active, TRUE) AS is_active,
                        bl.business_line_id,
                        bl.name AS business_line,
+                       pc.name AS product_category,
                        bu.name AS business_unit
                 FROM items i
-                JOIN business_lines bl ON bl.business_line_id = i.business_line_id
-                JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
-                ORDER BY COALESCE(i.article_number, i.product_id)
+                JOIN business_lines      bl ON bl.business_line_id     = i.business_line_id
+                JOIN business_units      bu ON bu.business_unit_id     = bl.business_unit_id
+                LEFT JOIN product_categories pc ON pc.product_category_id = bl.product_category_id
+                ORDER BY bu.name, pc.name, bl.name, COALESCE(i.article_number, i.product_id)
                 """
             )
 
@@ -2633,13 +2994,16 @@ def page_admin_import():
                     bu = (str(r.business_unit).strip()
                           if pd.notna(r.business_unit) and str(r.business_unit).strip()
                           else "")
+                    pc_name = (str(r.product_category).strip()
+                               if pd.notna(r.product_category) and str(r.product_category).strip()
+                               else "")
                     bl = (str(r.business_line).strip()
                           if pd.notna(r.business_line) and str(r.business_line).strip()
                           else "")
                     desc = (str(r.description).strip()
                             if pd.notna(r.description) and str(r.description).strip()
                             else "")
-                    base = " - ".join([p for p in [art, bu, bl, desc] if p])
+                    base = " - ".join([p for p in [art, bu, pc_name, bl, desc] if p])
                     return base or str(r.product_id)
 
                 options = [""] + [
@@ -2647,9 +3011,16 @@ def page_admin_import():
                     for r in idf.itertuples(index=False)
                 ]
 
+                item_search = st.text_input(
+                    "Search items",
+                    placeholder="Type article number, business unit, or description…",
+                    key="mg_item_search",
+                )
+                filtered_items = [o for o in options if item_search.lower() in o.lower()] if item_search else options
+
                 sel_label = st.selectbox(
                     "Select item",
-                    options,
+                    filtered_items,
                     index=0,
                     key="mg_item_sel",
                 )
@@ -2659,18 +3030,25 @@ def page_admin_import():
                 else:
                     row_idx = options.index(sel_label) - 1
                     row = idf.iloc[row_idx]
+
                     pid = str(row["product_id"])
 
-                    colA, colB = st.columns([1, 1])
-                    with colA:
-                        v_cnt = _refcount(
-                            "SELECT COUNT(*) FROM visits WHERE product_id=:pid",
-                            {"pid": pid},
-                        )
-                        st.caption(f"Refs → Visits: **{v_cnt}**")
-                    with colB:
-                        st.caption("Status")
-                        st.write("✅ Active" if bool(row["is_active"]) else "🚫 Inactive")
+                    v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE product_id=:pid", {"pid": pid})
+                    _badge = (
+                        '<span style="background:#dcfce7;color:#15803d;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Active</span>'
+                        if bool(row["is_active"]) else
+                        '<span style="background:#fee2e2;color:#dc2626;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Inactive</span>'
+                    )
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:16px;margin:0.5rem 0 1rem;'
+                        f'padding:0.6rem 1rem;background:var(--color-surface-2,#f8fafc);border-radius:8px;">'
+                        f'<span style="font-size:0.875rem;color:var(--color-text-muted);">'
+                        f'Visits: <strong style="color:var(--color-text);">{v_cnt}</strong></span>'
+                        f'<span style="color:var(--color-border,#e2e8f0);">·</span>'
+                        f'{_badge}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
                     st.markdown("---")
                     st.markdown("#### Edit item")
@@ -2818,45 +3196,57 @@ def page_admin_import():
                                 st.caption(str(e))
 
                     st.markdown("---")
-                    st.markdown("#### 🔴 Danger Zone")
-                    st.write("Delete this item permanently (only if not referenced by visits).")
-
-                    del_conf_key = f"{base_key}_del_conf"
-                    del_confirm = st.checkbox(
-                        "I understand this cannot be undone.",
-                        key=del_conf_key,
-                    )
-
-                    if st.button(
-                        "Delete Item",
-                        type="primary",
-                        disabled=not del_confirm,
-                        key=f"{base_key}_del",
-                    ):
-                        if v_cnt > 0:
-                            st.error(
-                                "Cannot delete: this item is referenced by visits. "
-                                "Deactivate instead."
+                    with st.container(border=True):
+                        st.markdown(
+                            '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;'
+                            'letter-spacing:0.07em;color:#dc2626;margin:0 0 0.25rem 0;">Danger Zone</p>'
+                            '<p style="font-size:0.875rem;color:#6b7280;margin:0 0 0.5rem 0;">'
+                            'Permanently deletes this record. Cannot be undone.</p>',
+                            unsafe_allow_html=True,
+                        )
+                        del_conf_key = f"{base_key}_del_conf"
+                        _del_blocked = v_cnt > 0
+                        if _del_blocked:
+                            st.warning(
+                                f"This item has **{v_cnt} visit(s)** linked. "
+                                "Deletion is blocked — deactivate using the Active checkbox above."
                             )
-                        else:
+                        del_confirm = st.checkbox(
+                            "I understand this action is permanent and cannot be undone.",
+                            key=del_conf_key,
+                            disabled=_del_blocked,
+                        )
+                        if st.button(
+                            "Delete Item",
+                            type="secondary",
+                            disabled=not del_confirm or _del_blocked,
+                            key=f"{base_key}_del",
+                        ):
                             try:
                                 exec_sql("DELETE FROM items WHERE product_id=:pid", {"pid": pid})
-                                st.success("Item deleted ✅")
+                                st.success("Item deleted.")
                                 st.session_state["mg_item_sel"] = ""
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
 
     # =====================================================================
-    # 6) OBJECTIVES
+    # 7) OBJECTIVES
     # =====================================================================
-    with main_tabs[5]:
-        st.subheader("Objectives")
+    with main_tabs[6]:
+        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM objectives")
+        _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
+        st.markdown(
+            f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
+            f'<strong style="color:var(--color-text);">{_t}</strong> total records &nbsp;·&nbsp; '
+            f'<strong style="color:var(--status-success-text,#16a34a);">{_a}</strong> active'
+            f'</p>',
+            unsafe_allow_html=True,
+        )
 
-        # Stable mode selector
         mode = st.radio(
-            "Mode",
-            ["➕ Add / Import", "📝 Manage"],
+            "What do you want to do?",
+            ["Add records or bulk import", "Edit or delete existing records"],
             index=0,
             key="obj_mode",
             horizontal=True
@@ -2880,8 +3270,8 @@ def page_admin_import():
         # ---------------------------------------------------
         _ALL_ROLES = ["rep", "maintenance", "supervisor", "sales manager", "biomedical manager"]
 
-        if mode == "➕ Add / Import":
-            st.markdown("### ➕ Add new Objective")
+        if mode == "Add records or bulk import":
+            st.markdown("### Add new Objective")
             st.caption("Required fields: **Name**. Category is optional. Admin always sees all objectives.")
 
             # init state
@@ -2977,12 +3367,35 @@ def page_admin_import():
                         st.error("Could not add objective.")
                         st.caption(str(e))
 
-            # Bulk import
-            st.markdown("---")
-            st.markdown("### ⬆️ Bulk upload objectives (Excel/CSV)")
-            st.write("Columns: **name**, category (optional)")
-
-            fobj = st.file_uploader("Upload file", type=["xlsx", "csv"], key="obj_file")
+            st.markdown(
+                '<div style="margin:1.5rem 0 1rem;padding:0.6rem 1rem;'
+                'border-left:3px solid var(--color-primary,#2563eb);'
+                'background:var(--color-surface-2,#f8fafc);border-radius:0 6px 6px 0;">'
+                '<span style="font-weight:600;font-size:0.9rem;color:var(--color-text);">'
+                'OR — Bulk Import from Excel / CSV</span></div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "- **name** *(required)* — objective name\n"
+                "- **category** *(optional)* — category label (text)\n\n"
+                "Duplicates (same `name`) are skipped automatically."
+            )
+            _step1, _step2 = st.columns(2)
+            with _step1:
+                st.markdown("**Step 1 — Download Template**")
+                st.download_button(
+                    "Download Template",
+                    data=_make_template(["name", "category"], example_rows=[["Increase Market Share", "Growth"]]),
+                    file_name="objectives_template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="obj_tmpl_dl",
+                )
+            with _step2:
+                st.markdown("**Step 2 — Upload your file**")
+                fobj = st.file_uploader(
+                    "Upload file", type=["xlsx", "csv"], key="obj_file",
+                    label_visibility="collapsed",
+                )
             if fobj is not None:
                 _validate_upload(fobj)
                 df = _read_df_upload(fobj)
@@ -2991,60 +3404,60 @@ def page_admin_import():
                     st.error("Missing required column: `name`")
                 else:
                     total = len(df)
-                    if not _preview_and_confirm(df, ["name"], "obj"):
-                        st.stop()
-                    inserted = 0
-                    skipped = 0
-                    sts, pb, ln, has_status = _mk_status("Importing Objectives…")
+                    if _preview_and_confirm(df, ["name"], "obj"):
+                        inserted = 0
+                        skipped = 0
+                        sts, pb, ln, has_status = _mk_status("Importing Objectives…")
 
-                    try:
-                        with engine.begin() as conn:
-                            for i, r in enumerate(df.itertuples(index=False), start=1):
-                                nm = str(getattr(r, "name", "")).strip()
-                                cat_raw = getattr(r, "category", None)
+                        try:
+                            with engine.begin() as conn:
+                                for i, r in enumerate(df.itertuples(index=False), start=1):
+                                    nm = str(getattr(r, "name", "")).strip()
+                                    cat_raw = getattr(r, "category", None)
 
-                                if not nm:
-                                    skipped += 1
-                                else:
-                                    cat_v = str(cat_raw).strip() if cat_raw and pd.notna(cat_raw) else None
-
-                                    res = conn.execute(
-                                        text("""
-                                            INSERT INTO objectives(name, category, is_active)
-                                            SELECT :n, :c, TRUE
-                                            WHERE NOT EXISTS (
-                                                SELECT 1 FROM objectives
-                                                WHERE lower(name)=lower(:n)
-                                                AND lower(coalesce(category,''))=lower(coalesce(:c,''))
-                                            )
-                                        """),
-                                        {"n": nm, "c": cat_v}
-                                    )
-                                    if (res.rowcount or 0) > 0:
-                                        inserted += 1
-                                    else:
+                                    if not nm:
                                         skipped += 1
+                                    else:
+                                        cat_v = str(cat_raw).strip() if cat_raw and pd.notna(cat_raw) else None
 
-                                if i % 200 == 0 or i == total:
-                                    _update_progress(pb, ln, i, total, inserted, 0, skipped, "Objectives")
-                                    time.sleep(0.001)
+                                        res = conn.execute(
+                                            text("""
+                                                INSERT INTO objectives(name, category, is_active)
+                                                SELECT :n, :c, TRUE
+                                                WHERE NOT EXISTS (
+                                                    SELECT 1 FROM objectives
+                                                    WHERE lower(name)=lower(:n)
+                                                    AND lower(coalesce(category,''))=lower(coalesce(:c,''))
+                                                )
+                                            """),
+                                            {"n": nm, "c": cat_v}
+                                        )
+                                        if (res.rowcount or 0) > 0:
+                                            inserted += 1
+                                        else:
+                                            skipped += 1
 
-                        _finish_status(
-                            sts,
-                            has_status,
-                            f"Objectives import ✅ Inserted: {inserted} | Skipped: {skipped}",
-                            True,
-                        )
+                                    if i % 200 == 0 or i == total:
+                                        _update_progress(pb, ln, i, total, inserted, 0, skipped, "Objectives")
+                                        time.sleep(0.001)
 
-                    except Exception as e:
-                        _finish_status(sts, has_status, "Objectives import failed ❌", False)
-                        st.caption(str(e))
+                            _finish_status(
+                                sts,
+                                has_status,
+                                f"Objectives import ✅ Inserted: {inserted} | Skipped: {skipped}",
+                                True,
+                            )
+                            st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{skipped}** skipped.")
+
+                        except Exception as e:
+                            _finish_status(sts, has_status, "Objectives import failed ❌", False)
+                            st.caption(str(e))
 
         # ---------------------------------------------------
         # MODE 2 — MANAGE
         # ---------------------------------------------------
         else:
-            st.markdown("### 📝 Manage Objectives")
+            st.markdown("### Manage Objectives")
 
             odf = query_df("""
                 SELECT objective_id,
@@ -3058,27 +3471,44 @@ def page_admin_import():
             if odf.empty:
                 st.info("No objectives yet.")
             else:
-                # display format: [ID] Name (status)
                 display = [""] + [
-                    f"[{r.objective_id}] {r.name} ({'active' if bool(r.is_active) else 'inactive'})"
+                    f"{r.name} ({'active' if bool(r.is_active) else 'inactive'})"
                     for r in odf.itertuples(index=False)
                 ]
 
-                sel = st.selectbox("Select objective", display, index=0, key="mg_obj_sel")
+                obj_search = st.text_input(
+                    "Search objectives",
+                    placeholder="Type name…",
+                    key="mg_obj_search",
+                )
+                filtered_objs = [o for o in display if obj_search.lower() in o.lower()] if obj_search else display
+
+                sel = st.selectbox("Select objective", filtered_objs, index=0, key="mg_obj_sel")
 
                 if sel == "":
                     st.info("Select an objective to edit or update.")
                 else:
                     row_idx = display.index(sel) - 1
                     row = odf.iloc[row_idx]
+
                     oid = int(row["objective_id"])
 
-                    # reference count
-                    v_cnt = _refcount(
-                        "SELECT COUNT(*) FROM visits WHERE objective_id=:id", {"id": oid}
+                    v_cnt = _refcount("SELECT COUNT(*) FROM visits WHERE objective_id=:id", {"id": oid})
+                    _badge = (
+                        '<span style="background:#dcfce7;color:#15803d;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Active</span>'
+                        if bool(row["is_active"]) else
+                        '<span style="background:#fee2e2;color:#dc2626;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Inactive</span>'
                     )
-
-                    st.caption(f"Referenced in visits: **{v_cnt}**")
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:16px;margin:0.5rem 0 1rem;'
+                        f'padding:0.6rem 1rem;background:var(--color-surface-2,#f8fafc);border-radius:8px;">'
+                        f'<span style="font-size:0.875rem;color:var(--color-text-muted);">'
+                        f'Visits: <strong style="color:var(--color-text);">{v_cnt}</strong></span>'
+                        f'<span style="color:var(--color-border,#e2e8f0);">·</span>'
+                        f'{_badge}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
                     st.markdown("---")
                     st.markdown("#### Edit Objective")
 
@@ -3217,20 +3647,29 @@ def page_admin_import():
                                     st.caption(str(e))
 
                     st.markdown("---")
-                    st.markdown("#### 🔴 Danger Zone")
-
-                    del_conf = st.checkbox(
-                        "I understand this cannot be undone.",
-                        key=f"{base_key}_del_conf"
-                    )
-
-                    if st.button("Delete Objective", type="primary", disabled=not del_conf, key=f"{base_key}_del"):
-                        if v_cnt > 0:
-                            st.error("Cannot delete: objective is referenced by visits.")
-                        else:
+                    with st.container(border=True):
+                        st.markdown(
+                            '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;'
+                            'letter-spacing:0.07em;color:#dc2626;margin:0 0 0.25rem 0;">Danger Zone</p>'
+                            '<p style="font-size:0.875rem;color:#6b7280;margin:0 0 0.5rem 0;">'
+                            'Permanently deletes this record. Cannot be undone.</p>',
+                            unsafe_allow_html=True,
+                        )
+                        _del_blocked = v_cnt > 0
+                        if _del_blocked:
+                            st.warning(
+                                f"This objective has **{v_cnt} visit(s)** linked. "
+                                "Deletion is blocked — deactivate using the Active checkbox above."
+                            )
+                        del_conf = st.checkbox(
+                            "I understand this action is permanent and cannot be undone.",
+                            key=f"{base_key}_del_conf",
+                            disabled=_del_blocked,
+                        )
+                        if st.button("Delete Objective", type="secondary", disabled=not del_conf or _del_blocked, key=f"{base_key}_del"):
                             try:
                                 exec_sql("DELETE FROM objectives WHERE objective_id=:id", {"id": oid})
-                                st.success("Objective deleted ✅")
+                                st.success("Objective deleted.")
                                 st.session_state.pop("mg_obj_sel", None)
                                 st.rerun()
                             except Exception as e:
@@ -3238,106 +3677,402 @@ def page_admin_import():
                                 st.caption(str(e))
 
     # =====================================================================
-    # 7) PRODUCT CATEGORIES
+    # 4) PRODUCT CATEGORIES
     # =====================================================================
-    with main_tabs[6]:
-        st.subheader("Product Categories")
-
-        st.markdown("**Upload Product Categories CSV/Excel**")
+    with main_tabs[3]:
+        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM product_categories")
+        _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
         st.markdown(
-            "Columns required: `business_unit_name` (TEXT), `category_name` (TEXT)\n\n"
-            "Rows with unknown business_unit_name are skipped."
+            f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
+            f'<strong style="color:var(--color-text);">{_t}</strong> total records &nbsp;·&nbsp; '
+            f'<strong style="color:var(--status-success-text,#16a34a);">{_a}</strong> active'
+            f'</p>',
+            unsafe_allow_html=True,
         )
-        pc_file = st.file_uploader("Choose file", type=["xlsx", "csv"], key="pc_upload")
 
-        if pc_file:
-            try:
-                if pc_file.name.endswith(".csv"):
-                    pc_df = pd.read_csv(pc_file)
+        pc_mode = st.radio(
+            "What do you want to do?",
+            ["Add records or bulk import", "Edit or delete existing records"],
+            index=0,
+            key="pc_mode",
+            horizontal=True,
+        )
+
+        # ---------------------------------------------------------------
+        # Common data: active business units
+        # ---------------------------------------------------------------
+        pc_bu_df = query_df(
+            """
+            SELECT business_unit_id, name
+            FROM business_units
+            WHERE COALESCE(is_active, TRUE) IS TRUE
+            ORDER BY name
+            """
+        )
+        pc_bu_labels = [""] + pc_bu_df["name"].tolist()
+        pc_bu_name_to_id = {
+            r.name.strip(): int(r.business_unit_id)
+            for r in pc_bu_df.itertuples(index=False)
+        }
+
+        # =====================================================================
+        # MODE 1: Add / Import
+        # =====================================================================
+        if pc_mode == "Add records or bulk import":
+            st.markdown("### Add single product category")
+            st.caption("Required fields: **Business Unit**, **Category Name**.")
+
+            if pc_bu_df.empty:
+                st.warning("No active Business Units found. Add one in the Business Units tab first.")
+            else:
+                # init state
+                st.session_state.setdefault("pc_add_bu", "")
+                st.session_state.setdefault("pc_add_name", "")
+
+                if st.session_state["pc_add_bu"] not in pc_bu_labels:
+                    st.session_state["pc_add_bu"] = ""
+
+                pc_bu_sel = st.selectbox(
+                    "Business Unit *",
+                    pc_bu_labels,
+                    key="pc_add_bu",
+                )
+                pc_name_val = st.text_input("Category Name *", key="pc_add_name")
+
+                if st.button("Save Product Category", type="primary", key="pc_add_save"):
+                    nm = pc_name_val.strip()
+                    if not pc_bu_sel:
+                        st.error("Business Unit is required.")
+                    elif not nm:
+                        st.error("Category Name is required.")
+                    else:
+                        buid = pc_bu_name_to_id[pc_bu_sel]
+                        try:
+                            with engine.begin() as conn:
+                                res = conn.execute(
+                                    text(
+                                        """
+                                        INSERT INTO product_categories (business_unit_id, name, is_active)
+                                        VALUES (:buid, :name, TRUE)
+                                        ON CONFLICT (business_unit_id, name) DO NOTHING
+                                        """
+                                    ),
+                                    {"buid": buid, "name": nm},
+                                )
+                            if (res.rowcount or 0) > 0:
+                                st.session_state.pop("pc_add_bu", None)
+                                st.session_state.pop("pc_add_name", None)
+                                st.success("Product Category added ✅")
+                                st.rerun()
+                            else:
+                                st.info("That Business Unit + Category Name already exists — nothing added.")
+                        except Exception as e:
+                            st.error("Could not add product category.")
+                            st.caption(str(e))
+
+            st.markdown(
+                '<div style="margin:1.5rem 0 1rem;padding:0.6rem 1rem;'
+                'border-left:3px solid var(--color-primary,#2563eb);'
+                'background:var(--color-surface-2,#f8fafc);border-radius:0 6px 6px 0;">'
+                '<span style="font-weight:600;font-size:0.9rem;color:var(--color-text);">'
+                'OR — Bulk Import from Excel / CSV</span></div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "- **business_unit** *(required)* — must exactly match an existing Business Unit name\n"
+                "- **name** *(required)* — product category name\n\n"
+                "Rows with an unrecognized `business_unit` are skipped."
+            )
+            _step1, _step2 = st.columns(2)
+            with _step1:
+                st.markdown("**Step 1 — Download Template**")
+                st.download_button(
+                    "Download Template",
+                    data=_make_template(["business_unit", "name"], example_rows=[["North Region", "Medical Devices"]]),
+                    file_name="product_categories_template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="pc_tmpl_dl",
+                )
+            with _step2:
+                st.markdown("**Step 2 — Upload your file**")
+                fpc = st.file_uploader(
+                    "Upload Product Categories file", type=["xlsx", "csv"], key="pc_upload",
+                    label_visibility="collapsed",
+                )
+            if fpc is not None:
+                _validate_upload(fpc)
+                df = _read_df_upload(fpc)
+                needed = {"business_unit", "name"}
+                if not needed.issubset(df.columns):
+                    st.error("Missing required columns: business_unit, name")
                 else:
-                    pc_df = pd.read_excel(pc_file)
-                pc_df.columns = [c.strip().lower() for c in pc_df.columns]
+                    total = len(df)
+                    if _preview_and_confirm(df, ["business_unit", "name"], "pc"):
+                        inserted = 0
+                        skipped = 0
+                        sts, pb, ln, has_status = _mk_status("Importing Product Categories…")
+                        try:
+                            with engine.begin() as conn:
+                                budf_pc = pd.read_sql_query(
+                                    text("SELECT business_unit_id, name FROM business_units"),
+                                    conn,
+                                )
+                                bumap_pc = {
+                                    str(r.name).strip().lower(): int(r.business_unit_id)
+                                    for r in budf_pc.itertuples(index=False)
+                                }
+                                for i, r in enumerate(df.itertuples(index=False), start=1):
+                                    bu_raw = str(getattr(r, "business_unit", "")).strip()
+                                    nm_raw = str(getattr(r, "name", "")).strip()
+                                    if not (bu_raw and nm_raw):
+                                        skipped += 1
+                                        if i % 200 == 0 or i == total:
+                                            _update_progress(pb, ln, i, total, inserted, 0, skipped, "Product Categories")
+                                        continue
+                                    buid_tmp = bumap_pc.get(bu_raw.lower())
+                                    if not buid_tmp:
+                                        skipped += 1
+                                        if i % 200 == 0 or i == total:
+                                            _update_progress(pb, ln, i, total, inserted, 0, skipped, "Product Categories")
+                                        continue
+                                    res = conn.execute(
+                                        text(
+                                            """
+                                            INSERT INTO product_categories (business_unit_id, name, is_active)
+                                            VALUES (:buid, :name, TRUE)
+                                            ON CONFLICT (business_unit_id, name) DO NOTHING
+                                            """
+                                        ),
+                                        {"buid": buid_tmp, "name": nm_raw},
+                                    )
+                                    if (res.rowcount or 0) > 0:
+                                        inserted += 1
+                                    else:
+                                        skipped += 1
+                                    if i % 200 == 0 or i == total:
+                                        _update_progress(pb, ln, i, total, inserted, 0, skipped, "Product Categories")
+                                        time.sleep(0.001)
+                            _finish_status(
+                                sts,
+                                has_status,
+                                f"Product Categories import ✅ Inserted: {inserted} | Skipped: {skipped}",
+                                ok=True,
+                            )
+                            st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{skipped}** skipped.")
+                        except Exception as e:
+                            _finish_status(sts, has_status, "Product Categories import failed ❌", ok=False)
+                            st.caption(str(e))
 
-                required = {"business_unit_name", "category_name"}
-                if not required.issubset(set(pc_df.columns)):
-                    st.error(f"Missing columns: {required - set(pc_df.columns)}")
+            st.markdown("---")
+            st.markdown("#### Migrate existing Business Line categories to Product Categories")
+            st.caption(
+                "One-time utility: reads `business_lines.category` and creates matching "
+                "`product_categories` rows, then links each business line."
+            )
+            if st.button("Run Category Migration", key="pc_migrate_btn"):
+                try:
+                    bl_df = query_df(
+                        """
+                        SELECT bl.business_line_id, bl.business_unit_id,
+                               LOWER(TRIM(bl.category)) AS cat_name
+                        FROM business_lines bl
+                        WHERE bl.category IS NOT NULL AND TRIM(bl.category) != ''
+                          AND bl.product_category_id IS NULL
+                        """
+                    )
+                    created = linked = 0
+                    for _, row in bl_df.iterrows():
+                        cat_name = str(row["cat_name"]).strip()
+                        if not cat_name:
+                            continue
+                        exec_sql(
+                            """
+                            INSERT INTO product_categories (business_unit_id, name)
+                            VALUES (:buid, :name)
+                            ON CONFLICT (business_unit_id, name) DO NOTHING
+                            """,
+                            {"buid": int(row["business_unit_id"]), "name": cat_name},
+                        )
+                        created += 1
+                        exec_sql(
+                            """
+                            UPDATE business_lines SET product_category_id = (
+                                SELECT product_category_id FROM product_categories
+                                WHERE business_unit_id = :buid AND name = :name
+                            )
+                            WHERE business_line_id = :blid
+                            """,
+                            {"buid": int(row["business_unit_id"]), "name": cat_name,
+                             "blid": int(row["business_line_id"])},
+                        )
+                        linked += 1
+                    st.success(f"Migration complete — {created} categories created, {linked} business lines linked.")
+                except Exception as e:
+                    st.error(f"Migration failed: {e}")
+                    st.caption(str(e))
+
+        # =====================================================================
+        # MODE 2: Manage
+        # =====================================================================
+        else:
+            st.markdown("### Manage product categories")
+
+            pcdf = query_df(
+                """
+                SELECT pc.product_category_id,
+                       pc.name,
+                       pc.business_unit_id,
+                       bu.name AS business_unit,
+                       COALESCE(pc.is_active, TRUE) AS is_active
+                FROM product_categories pc
+                JOIN business_units bu ON bu.business_unit_id = pc.business_unit_id
+                ORDER BY bu.name, pc.name
+                """
+            )
+
+            if pcdf.empty:
+                st.info("No product categories yet.")
+            else:
+
+                pc_options = [
+                    f"{r.business_unit} · {r.name}"
+                    + f" ({'active' if bool(r.is_active) else 'inactive'})"
+                    for r in pcdf.itertuples(index=False)
+                ]
+                pc_options = [""] + pc_options
+
+                pc_search = st.text_input(
+                    "Search product categories",
+                    placeholder="Type business unit or category name…",
+                    key="mg_pc_search",
+                )
+                filtered_pcs = [o for o in pc_options if pc_search.lower() in o.lower()] if pc_search else pc_options
+
+                sel_pc_label = st.selectbox(
+                    "Select product category", filtered_pcs, index=0, key="mg_pc_sel"
+                )
+
+                if sel_pc_label == "":
+                    st.info("Please select a product category.")
                 else:
-                    st.dataframe(pc_df.head(10))
-                    if st.button("Import Product Categories", type="primary", key="pc_import_btn"):
-                        inserted = skipped = 0
-                        bu_df = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active = TRUE")
-                        bu_map = {r.name.strip().lower(): int(r.business_unit_id) for r in bu_df.itertuples(index=False)}
+                    row_idx = pc_options.index(sel_pc_label) - 1
+                    row = pcdf.iloc[row_idx]
 
-                        for _, row in pc_df.iterrows():
-                            bu_name = str(row.get("business_unit_name", "")).strip().lower()
-                            cat_name = str(row.get("category_name", "")).strip()
-                            if not bu_name or not cat_name or bu_name not in bu_map:
-                                skipped += 1
-                                continue
+                    pcid = int(row["product_category_id"])
+
+                    bl_cnt = _refcount("SELECT COUNT(*) FROM business_lines WHERE product_category_id=:id", {"id": pcid})
+                    _badge = (
+                        '<span style="background:#dcfce7;color:#15803d;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Active</span>'
+                        if bool(row["is_active"]) else
+                        '<span style="background:#fee2e2;color:#dc2626;font-size:0.75rem;font-weight:600;padding:2px 8px;border-radius:6px;">Inactive</span>'
+                    )
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:16px;margin:0.5rem 0 1rem;'
+                        f'padding:0.6rem 1rem;background:var(--color-surface-2,#f8fafc);border-radius:8px;">'
+                        f'<span style="font-size:0.875rem;color:var(--color-text-muted);">'
+                        f'Business Lines: <strong style="color:var(--color-text);">{bl_cnt}</strong></span>'
+                        f'<span style="color:var(--color-border,#e2e8f0);">·</span>'
+                        f'{_badge}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    st.markdown("---")
+                    st.markdown("#### Edit product category")
+
+                    base_key = f"mg_pc_{pcid}"
+
+                    # Business Unit (read-only display)
+                    st.text_input(
+                        "Business Unit",
+                        value=str(row["business_unit"]),
+                        disabled=True,
+                        key=f"{base_key}_bu_disp",
+                    )
+
+                    # Category name
+                    name_edit = st.text_input(
+                        "Category Name *",
+                        value=str(row["name"]),
+                        key=f"{base_key}_name",
+                    )
+
+                    active_flag = st.checkbox(
+                        "Active",
+                        value=bool(row["is_active"]),
+                        key=f"{base_key}_active",
+                        help="Uncheck to deactivate this category.",
+                    )
+
+                    if st.button("Save changes", type="primary", key=f"{base_key}_save"):
+                        nm_clean = name_edit.strip()
+                        if not nm_clean:
+                            st.error("Category Name is required.")
+                        else:
+                            dup = query_df(
+                                """
+                                SELECT 1 FROM product_categories
+                                WHERE business_unit_id = :buid
+                                  AND lower(name) = lower(:n)
+                                  AND product_category_id <> :id
+                                """,
+                                {"buid": int(row["business_unit_id"]), "n": nm_clean, "id": pcid},
+                            )
+                            if not dup.empty:
+                                st.error("That Business Unit + Category Name already exists.")
+                            else:
+                                try:
+                                    exec_sql(
+                                        """
+                                        UPDATE product_categories
+                                        SET name=:n, is_active=:b
+                                        WHERE product_category_id=:id
+                                        """,
+                                        {"n": nm_clean, "b": bool(active_flag), "id": pcid},
+                                    )
+                                    st.success("Product Category updated ✅")
+                                except Exception as e:
+                                    st.error("Could not update product category.")
+                                    st.caption(str(e))
+
+                    st.markdown("---")
+                    with st.container(border=True):
+                        st.markdown(
+                            '<p style="font-size:0.75rem;font-weight:700;text-transform:uppercase;'
+                            'letter-spacing:0.07em;color:#dc2626;margin:0 0 0.25rem 0;">Danger Zone</p>'
+                            '<p style="font-size:0.875rem;color:#6b7280;margin:0 0 0.5rem 0;">'
+                            'Permanently deletes this record. Cannot be undone.</p>',
+                            unsafe_allow_html=True,
+                        )
+                        del_conf_key = f"{base_key}_del_conf"
+                        _del_blocked = bl_cnt > 0
+                        if _del_blocked:
+                            st.warning(
+                                f"This category has **{bl_cnt} business line(s)** linked. "
+                                "Deletion is blocked — deactivate using the Active checkbox above."
+                            )
+                        del_confirm = st.checkbox(
+                            "I understand this action is permanent and cannot be undone.",
+                            key=del_conf_key,
+                            disabled=_del_blocked,
+                        )
+                        if st.button(
+                            "Delete Product Category",
+                            type="secondary",
+                            disabled=not del_confirm or _del_blocked,
+                            key=f"{base_key}_del",
+                        ):
                             try:
                                 exec_sql(
-                                    """
-                                    INSERT INTO product_categories (business_unit_id, name)
-                                    VALUES (:buid, :name)
-                                    ON CONFLICT (business_unit_id, name) DO NOTHING
-                                    """,
-                                    {"buid": bu_map[bu_name], "name": cat_name},
+                                    "DELETE FROM product_categories WHERE product_category_id=:id",
+                                    {"id": pcid},
                                 )
-                                inserted += 1
-                            except Exception:
-                                skipped += 1
-
-                        st.success(f"Done — {inserted} inserted, {skipped} skipped.")
-            except Exception as e:
-                st.error(f"Could not read file: {e}")
-
-        st.markdown("---")
-        st.markdown("**Migrate existing Business Lines categories → Product Categories**")
-        st.markdown(
-            "This one-time migration reads `business_lines.category` and creates matching "
-            "`product_categories` rows, then links each business line."
-        )
-        if st.button("Run Category Migration", key="pc_migrate_btn"):
-            try:
-                bl_df = query_df(
-                    """
-                    SELECT bl.business_line_id, bl.business_unit_id,
-                           LOWER(TRIM(bl.category)) AS cat_name
-                    FROM business_lines bl
-                    WHERE bl.category IS NOT NULL AND TRIM(bl.category) != ''
-                      AND bl.product_category_id IS NULL
-                    """
-                )
-                created = linked = 0
-                for _, row in bl_df.iterrows():
-                    cat_name = str(row["cat_name"]).strip()
-                    if not cat_name:
-                        continue
-                    exec_sql(
-                        """
-                        INSERT INTO product_categories (business_unit_id, name)
-                        VALUES (:buid, :name)
-                        ON CONFLICT (business_unit_id, name) DO NOTHING
-                        """,
-                        {"buid": int(row["business_unit_id"]), "name": cat_name},
-                    )
-                    created += 1
-                    exec_sql(
-                        """
-                        UPDATE business_lines SET product_category_id = (
-                            SELECT product_category_id FROM product_categories
-                            WHERE business_unit_id = :buid AND name = :name
-                        )
-                        WHERE business_line_id = :blid
-                        """,
-                        {"buid": int(row["business_unit_id"]), "name": cat_name,
-                         "blid": int(row["business_line_id"])},
-                    )
-                    linked += 1
-                st.success(f"Migration complete — {created} categories created, {linked} business lines linked.")
-            except Exception as e:
-                st.error(f"Migration failed: {e}")
-                st.caption(str(e))
+                                st.session_state.pop("mg_pc_sel", None)
+                                st.success("Product Category deleted.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error("Delete failed.")
+                                st.caption(str(e))
 
 
 # =============================

@@ -78,6 +78,12 @@ html[data-theme] [data-testid="stAppViewContainer"] {
     '  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;',
     '  --shadow-card:     0 1px 2px rgba(15,23,42,0.04), 0 0 0 1px #e4e8ec;',
     '  --shadow-elevated: 0 4px 12px rgba(15,23,42,0.08);',
+    '  --fs-xs:   0.75rem;',
+    '  --fs-sm:   0.875rem;',
+    '  --fs-body: 1rem;',
+    '  --fs-lg:   1.25rem;',
+    '  --fs-xl:   2rem;',
+    '  --fs-page: 1.875rem;',
     '}',
 
     'html[data-theme="dark"] {',
@@ -104,6 +110,8 @@ html[data-theme] [data-testid="stAppViewContainer"] {
     '* { font-family: var(--font-body) !important; box-sizing: border-box; }',
     '[data-testid="stIconMaterial"] { font-family: "Material Symbols Rounded" !important; }',
     'h1,h2,h3,[data-testid="stHeading"] { font-family: var(--font-display) !important; color: var(--color-text) !important; }',
+
+    '.ascenda-visit-card:hover { border-color: var(--color-border-strong) !important; box-shadow: 0 2px 8px rgba(15,23,42,0.08) !important; }',
 
     'html[data-theme="dark"] [data-testid="stAppViewContainer"] { background: var(--color-bg) !important; }',
     'html[data-theme="dark"] .block-container { background: var(--color-bg) !important; }',

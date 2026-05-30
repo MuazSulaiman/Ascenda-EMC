@@ -95,7 +95,7 @@ def customer_quick_find_module(
     qf_msg_key: str,
     qf_msg_type_key: str,
     # --- optional UI text ---
-    title: str = "##### 🔎 Quick Find (Account ID)",
+    title: str = "Quick Find by Account ID",
     acct_placeholder: str = "e.g., C100XXX / P000XXX",
     acct_help: str = "Search by the Account ID used by the ERP.",
 ):
@@ -172,7 +172,13 @@ def customer_quick_find_module(
         else:
             st.error(st.session_state[qf_msg_key])
 
-    st.markdown(title)
+    st.markdown(
+        f'<div style="margin:0 0 0.625rem;padding:0.5rem 0.75rem;'
+        f'background:var(--color-surface-2);border-radius:10px;">'
+        f'<span style="font-size:0.875rem;font-weight:600;color:var(--color-text-muted);">{title}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
     # -------------------------
     # form UI
@@ -259,7 +265,7 @@ def customer_quick_find_module(
     customer_id = int(st.session_state.get(KEY_CUSTID)) if locked and st.session_state.get(KEY_CUSTID) else None
 
     if locked and customer_id:
-        st.caption(f"🔒 Filled by Account ID · Internal customer_id: **{customer_id}**")
+        st.caption(f"Locked · Account ID: {account_id_norm}")
 
     return {
         "locked": locked,
@@ -457,7 +463,7 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
     TIMEOUT_S = 15  # adjust if you want longer/shorter
     MAX_ACC_M = ACCURACY_METERS  # max allowed accuracy in meters
 
-    with st.expander("📍 Location (auto) — required for check-in", expanded=True):
+    with st.expander("Location (auto)", expanded=True):
         tried_key   = k("geo_try")
         start_key   = k("geo_start_ts")
         refresh_key = k("geo_autorefresh")
@@ -467,7 +473,7 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
         # Screen 1 — just the "Get location" button
         if not st.session_state[tried_key]:
             st.caption("Allow your browser to share location. We only capture it for this visit submission.")
-            if st.button("📍 Get location", key=k("btn_get_loc"), type="primary"):
+            if st.button("Capture location", key=k("btn_get_loc"), type="primary"):
                 st.session_state[tried_key] = True
                 st.session_state[start_key] = time.time()
                 st.rerun()
@@ -506,7 +512,7 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
                 "• Make sure you're on **HTTPS** and device location is **ON**.\n"
                 "• Then tap **Retry location**."
             )
-            if st.button("🔁 Retry location", key=k("btn_retry_after_timeout")):
+            if st.button("Retry", key=k("btn_retry_after_timeout")):
                 st.session_state.pop(tried_key, None)
                 st.session_state.pop(start_key, None)
                 st.rerun()
@@ -518,7 +524,7 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
             facc = float(acc) if acc is not None else None
         except Exception:
             st.warning("Location values looked invalid. Please try again.")
-            if st.button("🔁 Retry location", key=k("btn_retry_invalid")):
+            if st.button("Retry", key=k("btn_retry_invalid")):
                 st.session_state.pop(tried_key, None)
                 st.session_state.pop(start_key, None)
                 st.rerun()
@@ -531,7 +537,7 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
                 f"Location accuracy is **{shown_acc}**, which is above the allowed limit (**≤ {MAX_ACC_M:.0f}m**).\n\n"
                 "Please enable **Precise location**, move outdoors, or wait a few seconds then try again."
                 )
-            if st.button("🔁 Capture again", key=k("btn_retry_low_accuracy")):
+            if st.button("Capture again", key=k("btn_retry_low_accuracy")):
                 st.session_state.pop(tried_key, None)
                 st.session_state.pop(start_key, None)
                 st.rerun()
@@ -540,23 +546,21 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
         # Success UI — coordinate badge
         acc_label = f" · ±{facc:.0f}m" if facc is not None else ""
         st.markdown(
-            f"""
-            <div style="
-                display:flex;align-items:center;gap:10px;
-                padding:10px 14px;margin:6px 0 2px;
-                background:linear-gradient(135deg,#f0fdf4,#dcfce7);
-                border:1px solid #86efac;border-left:4px solid #16a34a;
-                border-radius:8px;
-            ">
-                <span style="font-size:18px">✅</span>
-                <div>
-                    <div style="font-size:10px;color:#15803d;font-weight:700;letter-spacing:.06em;text-transform:uppercase">Location Captured</div>
-                    <div style="font-size:13px;color:#166534;font-family:'Courier New',monospace;font-weight:500;margin-top:1px">
-                        {flat:.6f}°, {flon:.6f}°{acc_label}
-                    </div>
-                </div>
-            </div>
-            """,
+            f'<div style="display:flex;align-items:center;gap:10px;'
+            f'padding:10px 14px;margin:6px 0 2px;'
+            f'background:var(--status-success-bg);'
+            f'border:1px solid var(--status-success-text);'
+            f'border-radius:10px;">'
+            f'<svg width="16" height="16" fill="none" stroke="var(--status-success-text)" '
+            f'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" flex-shrink="0">'
+            f'<polyline points="20 6 9 17 4 12"/></svg>'
+            f'<div>'
+            f'<div style="font-size:10px;color:var(--status-success-text);font-weight:700;'
+            f'letter-spacing:.06em;text-transform:uppercase;">Location Captured</div>'
+            f'<div style="font-size:13px;color:var(--status-success-text);'
+            f'font-family:ui-monospace,monospace;font-weight:500;margin-top:1px;">'
+            f'{flat:.6f}°, {flon:.6f}°{acc_label}</div>'
+            f'</div></div>',
             unsafe_allow_html=True,
         )
 
@@ -635,9 +639,139 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
 
         st_folium(m, height=360, width="100%", key=k("geo_map"))
 
-        if st.button("🔁 Capture again", key=k("btn_retry_after_ok")):
+        if st.button("Capture again", key=k("btn_retry_after_ok")):
             st.session_state.pop(tried_key, None)
             st.session_state.pop(start_key, None)
             st.rerun()
 
         return (flat, flon, facc)
+
+
+# ── Nearby customer suggestions ─────────────────────────────────────────────
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
+    return R * 2 * math.asin(math.sqrt(a))
+
+
+@st.cache_data(ttl=300)
+def _fetch_customers_with_coords() -> list:
+    df = query_df(
+        """
+        SELECT customer_id, account_name, region, city, sector, latitude, longitude
+        FROM customers
+        WHERE is_active IS TRUE
+          AND latitude  IS NOT NULL
+          AND longitude IS NOT NULL
+        """
+    )
+    return df.to_dict("records")
+
+
+def nearby_customers_block(
+    user_lat: float,
+    user_lng: float,
+    KEY_REGION: str,
+    KEY_CITY: str,
+    KEY_SECTOR: str,
+    KEY_CUST: str,
+    threshold_km: float = 1.0,
+    limit: int = 3,
+) -> None:
+    """Show nearest customer suggestion chips after location is captured."""
+    customers = _fetch_customers_with_coords()
+    if not customers:
+        return
+
+    with_dist = []
+    for c in customers:
+        try:
+            d = _haversine_km(user_lat, user_lng, float(c["latitude"]), float(c["longitude"]))
+            with_dist.append({**c, "dist_km": d})
+        except Exception:
+            continue
+
+    if not with_dist:
+        return
+
+    with_dist.sort(key=lambda x: x["dist_km"])
+    nearby = [c for c in with_dist if c["dist_km"] <= threshold_km][:limit]
+
+    # When nothing is within threshold, fall back to the single nearest customer
+    # shown as a muted chip — user explicitly taps to use it, no silent pre-fill.
+    show_muted = not nearby
+    chips = nearby if nearby else with_dist[:1]
+
+    # ── Section header ────────────────────────────────────────────────────────
+    st.markdown(
+        '<div style="display:flex;align-items:center;gap:8px;margin:0.875rem 0 0.375rem;">'
+        '<span style="font-size:0.7rem;font-weight:700;color:var(--color-text-subtle);'
+        'text-transform:uppercase;letter-spacing:0.07em;">Nearby</span>'
+        '<div style="flex:1;height:1px;background:var(--color-border);"></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Scoped chip CSS ───────────────────────────────────────────────────────
+    # :has() is supported in Chrome 105+, Safari 15.4+, Firefox 121+.
+    # Targets only the button row immediately following our anchor div.
+    _primary_chip = (
+        "background:var(--color-primary-subtle) !important;"
+        "color:var(--color-primary) !important;"
+        "border:1px solid var(--color-border) !important;"
+    )
+    _muted_chip = (
+        "background:var(--color-surface-2) !important;"
+        "color:var(--color-text-muted) !important;"
+        "border:1px solid var(--color-border) !important;"
+    )
+    _chip_base = (
+        "border-radius:20px !important;"
+        "font-size:0.8rem !important;"
+        "font-weight:600 !important;"
+        "padding:6px 14px !important;"
+        "height:auto !important;"
+        "min-height:44px !important;"
+        "white-space:normal !important;"
+        "line-height:1.35 !important;"
+        "transition:background 150ms ease-out,color 150ms ease-out !important;"
+    )
+    _hover = (
+        "background:var(--color-primary) !important;"
+        "color:oklch(99% 0.005 270) !important;"
+        "border-color:var(--color-primary) !important;"
+    )
+    chip_style = _muted_chip if show_muted else _primary_chip
+    st.markdown(
+        f"<style>"
+        f"[data-testid='stVerticalBlockBorderWrapper']:has(#nearby-chip-anchor)"
+        f" + [data-testid='stVerticalBlockBorderWrapper']"
+        f" [data-testid='stButton'] button {{{chip_style}{_chip_base}}}"
+        f"[data-testid='stVerticalBlockBorderWrapper']:has(#nearby-chip-anchor)"
+        f" + [data-testid='stVerticalBlockBorderWrapper']"
+        f" [data-testid='stButton'] button:hover {{{_hover}}}"
+        f"</style>"
+        f'<div id="nearby-chip-anchor"></div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Chip buttons ──────────────────────────────────────────────────────────
+    cols = st.columns(len(chips))
+    for col, cust in zip(cols, chips):
+        dist_m = cust["dist_km"] * 1000
+        dist_str = f"{dist_m:.0f} m" if dist_m < 1000 else f"{cust['dist_km']:.1f} km"
+        sector = (cust.get("sector") or "").strip()
+        meta = f"{sector} · {dist_str}" if sector else dist_str
+        label = f"{cust['account_name']}\n{meta}"
+
+        def _fill(c=cust):
+            st.session_state[KEY_REGION] = (c["region"] or "")
+            st.session_state[KEY_CITY]   = (c["city"]   or "")
+            st.session_state[KEY_SECTOR] = (c["sector"] or "")
+            st.session_state[KEY_CUST]   = (c["account_name"] or "")
+
+        col.button(label, on_click=_fill, use_container_width=True)

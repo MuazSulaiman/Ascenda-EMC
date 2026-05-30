@@ -33,8 +33,8 @@ def _section_label(icon_svg: str, text: str):
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:7px;padding:1.1rem 0 0.45rem;">'
         f'<span style="display:flex;align-items:center;color:var(--color-text-subtle);">{icon_svg}</span>'
-        f'<span style="font-size:0.68rem;font-weight:700;color:var(--color-text-subtle);'
-        f'text-transform:uppercase;letter-spacing:0.09em;">{text}</span></div>',
+        f'<span style="font-size:0.75rem;font-weight:700;color:var(--color-text-subtle);'
+        f'text-transform:uppercase;letter-spacing:0.07em;">{text}</span></div>',
         unsafe_allow_html=True,
     )
 

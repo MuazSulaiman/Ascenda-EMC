@@ -22,13 +22,14 @@ from widgets import (
     customer_quick_find_module,
     customer_cascading_selectors,
     get_location_block,
+    nearby_customers_block,
     _on_customer_change,
     _on_bu_change,
     _on_line_change,
     _reset_geo_on_user_or_page_change,
     set_current_page,
 )
-from ui import section_header, required_legend
+from ui import section_header, required_legend, form_section, form_subsection
 
 try:
     from psycopg.errors import UniqueViolation
@@ -39,29 +40,16 @@ except Exception:
 def page_submit_visit():
     section_header("Submit Visit", "Log a new customer visit.")
 
-    # ---- tiny CSS for floating submit ----
-    st.markdown(
-        """
-        <style>
-          .sticky-submit-wrap{position:fixed; right:16px; bottom:16px; z-index:1000;}
-          @media (max-width:640px){
-            .sticky-submit-wrap{left:16px; right:16px;}
-            .sticky-submit-wrap button{width:100%;}
-          }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
     st.markdown(required_legend(), unsafe_allow_html=True)
 
     PAGE_NS = "submit_visit"
-    nonce_key        = f"_{PAGE_NS}_form_nonce"
-    saved_ok_key     = f"_{PAGE_NS}_saved_ok"
-    geo_nonce_key    = f"_{PAGE_NS}_geo_nonce"
-    geo_captured_key = f"_{PAGE_NS}_geo_captured"
-    busy_key         = f"_{PAGE_NS}_busy"
-    intent_key       = f"_{PAGE_NS}_submit_intent"
+    nonce_key           = f"_{PAGE_NS}_form_nonce"
+    saved_ok_key        = f"_{PAGE_NS}_saved_ok"
+    geo_nonce_key       = f"_{PAGE_NS}_geo_nonce"
+    geo_captured_key    = f"_{PAGE_NS}_geo_captured"
+    busy_key            = f"_{PAGE_NS}_busy"
+    intent_key          = f"_{PAGE_NS}_submit_intent"
+    pending_errors_key  = f"_{PAGE_NS}_pending_errors"
 
     TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
 
@@ -127,30 +115,23 @@ def page_submit_visit():
     _reset_geo_on_user_or_page_change(PAGE_NS, uid)
 
     if st.session_state.pop(saved_ok_key, False):
-        st.success("Saved ✅ — fields cleared, you can enter a new visit.")
-
-    # Focus first text box
-    #components.html(
-    #    """<script>
-    #    const wait=()=>{const el=window.parent.document.querySelector('input[type="search"], input[type="text"]');
-    #    if(!el){setTimeout(wait,250);return;} el.focus();}; wait();
-    #    </script>""",
-    #    height=0,
-    #)
+        st.success("Visit saved. Fields cleared — ready for the next entry.")
 
     # =====================================================
     # SECTION 1 — Visit Location (REQUIRED)
     # =====================================================
-    st.markdown("### 1️⃣ Visit Location")
+    st.markdown(form_section(1, "Visit Location", first=True), unsafe_allow_html=True)
     lat, lon, acc = get_location_block(k)
     if lat is None or lon is None:
-        st.info("📍 Location is required before you can submit.")
+        st.warning("Location is required before you can submit.")
         return
+
+    nearby_customers_block(lat, lon, KEY_REGION, KEY_CITY, KEY_SECTOR, KEY_CUST)
 
     # =====================================================
     # SECTION 2 — Customer & Target Audience
     # =====================================================
-    st.markdown("### 2️⃣ Customer & Target Audience")
+    st.markdown(form_section(2, "Customer & Target Audience"), unsafe_allow_html=True)
 
     # Quick Find (Account ID)
     _ = customer_quick_find_module(
@@ -197,7 +178,7 @@ def page_submit_visit():
     is_other_customer = bool(cust_choice and cust_choice.strip().lower() == "other")
 
     if is_other_customer:
-        st.markdown("##### ➕ New Customer Details")
+        st.markdown(form_subsection("New Customer Details"), unsafe_allow_html=True)
         other_customer_name = st.text_input(
             "Customer Name *",
             key=k("other_customer_name"),
@@ -267,7 +248,7 @@ def page_submit_visit():
             if pd.notna(row.position) and str(row.position).strip():
                 parts.append(str(row.position).strip())
             parts = [p for p in parts if p]
-            return " || ".join(parts) if parts else name
+            return " · ".join(parts) if parts else name
 
         for r in aud_df.itertuples(index=False):
             label = _fmt_audience(r)
@@ -297,7 +278,7 @@ def page_submit_visit():
                 break
 
     if customer_id and aud_choice_label == "Other":
-        st.markdown("##### ➕ New Target Audience Details")
+        st.markdown(form_subsection("New Target Audience Details"), unsafe_allow_html=True)
 
         other_ta_title = st.selectbox(
             "Title (optional)",
@@ -357,7 +338,7 @@ def page_submit_visit():
     # =====================================================
     # SECTION 3 — Product Details
     # =====================================================
-    st.markdown("### 3️⃣ Product Details")
+    st.markdown(form_section(3, "Product Details"), unsafe_allow_html=True)
 
     # ---- Business Unit ----
     bu_df = query_df(
@@ -474,7 +455,7 @@ def page_submit_visit():
         ]
 
     prod_choice = st.selectbox(
-        "Article Number/Product (optional)",
+        "Product / Article # (optional)",
         prod_labels,
         index=0,
         key=k("prod_sel"),
@@ -496,7 +477,7 @@ def page_submit_visit():
     # =====================================================
     # SECTION 4 — Visit Details & Outcome
     # =====================================================
-    st.markdown("### 4️⃣ Visit Details & Outcome")
+    st.markdown(form_section(4, "Visit Details & Outcome"), unsafe_allow_html=True)
 
     if role in {"admin"}:
         obj_df = query_df(
@@ -546,7 +527,7 @@ def page_submit_visit():
     shelf_df    = pd.DataFrame()
     shelf_editor = None
     if is_shelf_movement:
-        st.subheader("Shelf Movement — Quantities Checked")
+        st.markdown(form_subsection("Shelf Movement — Quantities Checked"), unsafe_allow_html=True)
         if not bu_id:
             st.info("Select a Business Unit to load items.")
         elif not cat_choice:
@@ -596,12 +577,23 @@ def page_submit_visit():
         if mins is not None and mins < DUP_MINUTES:
             st.info(f"You submitted for **{cust_choice}** {mins} minutes ago — potential duplicate.")
 
+    # ---------------- Validation errors (shown near submit so the user sees them) ----------------
+    pending_errors = st.session_state.get(pending_errors_key, [])
+    if pending_errors:
+        for msg in pending_errors:
+            st.error(msg)
+
     # ---------------- Submit button ----------------
+    st.markdown(
+        '<div style="margin-top:2rem;padding-top:1.25rem;border-top:1px solid var(--color-border);"></div>',
+        unsafe_allow_html=True,
+    )
     inline_click = st.button(
-        "Submit",
+        "Submit Visit",
         type="primary",
         key=k("submit_btn_inline"),
         disabled=st.session_state[busy_key],
+        use_container_width=True,
         help="Saves immediately. You'll see a spinner while saving.",
     )
 
@@ -744,11 +736,10 @@ def page_submit_visit():
                     )
 
         if errors:
-            for msg in errors:
-                st.error(msg)
-            st.session_state[busy_key]   = False
-            st.session_state[intent_key] = False
-            return
+            st.session_state[pending_errors_key] = errors
+            st.session_state[busy_key]            = False
+            st.session_state[intent_key]          = False
+            st.rerun()
 
         # ----- All validations passed → persist -----
         visit_row = {
@@ -846,6 +837,7 @@ def page_submit_visit():
             st.session_state[nonce_key]        += 1
             st.session_state[geo_nonce_key]    += 1
             st.session_state.pop(geo_captured_key, None)
+            st.session_state.pop(pending_errors_key, None)
             st.session_state[saved_ok_key]      = True
             st.session_state[intent_key]        = False
             st.session_state[busy_key]          = False

@@ -31,8 +31,8 @@ _CARD_WRAP  = (
 _CARD_CLOSE = '</div>'
 
 _SECTION_TITLE = (
-    '<div style="font-size:0.75rem;font-weight:600;color:var(--color-text-subtle);'
-    'text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.625rem;">'
+    '<div style="font-size:0.75rem;font-weight:700;color:var(--color-text-subtle);'
+    'text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.625rem;">'
     '{label}</div>'
 )
 

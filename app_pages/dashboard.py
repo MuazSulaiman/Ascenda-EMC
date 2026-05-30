@@ -8,59 +8,59 @@ import pandas as pd
 from auth import resolve_session_user
 from config import TIMEZONE
 from db_ops import query_df
-from ui import kpi_card_v2, section_header, status_badge
+from ui import kpi_card_v2, kpi_hero_block, section_header, subsection_label, status_badge, visit_card
 from widgets import set_current_page
 from utils import _local_now
 
 
-# SVG icons for KPI cards (inline, monochrome, stroked)
+# SVG icons for KPI cards (inline, currentColor — color set via icon_color param)
 _ICON_LOCATION = (
-    '<svg width="18" height="18" fill="none" stroke="#2667ff" stroke-width="2" '
+    '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" '
     'viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>'
     '<circle cx="12" cy="10" r="3"/></svg>'
 )
 _ICON_EDIT = (
-    '<svg width="18" height="18" fill="none" stroke="#b5651d" stroke-width="2" '
+    '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" '
     'viewBox="0 0 24 24">'
     '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>'
     '<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>'
     '</svg>'
 )
 _ICON_CHECK = (
-    '<svg width="18" height="18" fill="none" stroke="#0e8a4f" stroke-width="2" '
+    '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" '
     'viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>'
     '<polyline points="22 4 12 14.01 9 11.01"/></svg>'
 )
 _ICON_ALERT = (
-    '<svg width="18" height="18" fill="none" stroke="#c83333" stroke-width="2" '
+    '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" '
     'viewBox="0 0 24 24">'
     '<circle cx="12" cy="12" r="10"/>'
     '<line x1="12" y1="8" x2="12" y2="12"/>'
     '<line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
 )
 _ICON_STAR_POS = (
-    '<svg width="18" height="18" fill="none" stroke="#0e8a4f" stroke-width="2" '
+    '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" '
     'viewBox="0 0 24 24">'
     '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 '
     '12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'
     '</svg>'
 )
 _ICON_STAR_NEG = (
-    '<svg width="18" height="18" fill="none" stroke="#c83333" stroke-width="2" '
+    '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" '
     'viewBox="0 0 24 24">'
     '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 '
     '12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'
     '</svg>'
 )
 _ICON_USERS = (
-    '<svg width="18" height="18" fill="none" stroke="#2667ff" stroke-width="2" '
+    '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" '
     'viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>'
     '<circle cx="9" cy="7" r="4"/>'
     '<path d="M23 21v-2a4 4 0 0 0-3-3.87"/>'
     '<path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>'
 )
 _ICON_BUILDING = (
-    '<svg width="18" height="18" fill="none" stroke="#0e8a4f" stroke-width="2" '
+    '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" '
     'viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/>'
     '<path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>'
 )
@@ -98,7 +98,7 @@ def page_dashboard():
     except Exception:
         date_str = datetime.now().strftime("%A, %B %d")
 
-    section_header(f"Welcome back, {first_name}", f"Here's what's happening in the field, {date_str}.")
+    section_header(f"Welcome back, {first_name}", date_str)
 
     # ── Period filter ─────────────────────────────────────────────────────────
     period = st.radio(
@@ -160,36 +160,25 @@ def page_dashboard():
 
     # ── Render KPI cards ──────────────────────────────────────────────────────
     st.markdown(
-        kpi_card_v2(
-            label=f"Total Visits ({period})",
-            value=f"{period_total:,}",
-            delta=f"Across {customers_visited:,} customer{'s' if customers_visited != 1 else ''}",
-            delta_positive=True,
-            icon_svg=_ICON_CHECK,
-            icon_bg="var(--status-success-bg)",
-        ),
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        kpi_card_v2(
-            label="Open Change Requests",
-            value=f"{pending_cr:,}",
-            delta="Awaiting review" if pending_cr > 0 else "None pending",
-            delta_positive=pending_cr == 0,
-            icon_svg=_ICON_EDIT,
-            icon_bg="var(--status-warning-bg)",
-        ),
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        kpi_card_v2(
-            label="Positive Evaluation Rate",
-            value=f"{positive_rate}%" if period_total > 0 else "0%",
-            delta=f"{period_total:,} visits evaluated" if period_total > 0 else "No visits in this period",
-            delta_positive=positive_rate >= 60,
-            delta_neutral=period_total == 0,
-            icon_svg=_ICON_STAR_POS,
-            icon_bg="var(--color-surface-2)" if period_total == 0 else ("var(--status-danger-bg)" if positive_rate < 60 else "var(--status-success-bg)"),
+        kpi_hero_block(
+            primary_label=f"Total visits ({period.lower()})",
+            primary_value=f"{period_total:,}",
+            primary_delta=f"Across {customers_visited:,} customer{'s' if customers_visited != 1 else ''}",
+            primary_delta_positive=True,
+            primary_icon_svg=_ICON_CHECK,
+            primary_icon_color="var(--status-success-text)",
+            stat1_label="Open change requests",
+            stat1_value=f"{pending_cr:,}",
+            stat1_delta="Awaiting review" if pending_cr > 0 else "None pending",
+            stat1_delta_positive=pending_cr == 0,
+            stat1_icon_svg=_ICON_EDIT,
+            stat1_icon_color="var(--status-warning-text)",
+            stat2_label="Positive evaluation rate",
+            stat2_value=f"{positive_rate}%" if period_total > 0 else "—",
+            stat2_delta=f"{period_total:,} visits evaluated" if period_total > 0 else "No visits this period",
+            stat2_delta_positive=positive_rate >= 60,
+            stat2_icon_svg=_ICON_STAR_POS if (period_total == 0 or positive_rate >= 60) else _ICON_STAR_NEG,
+            stat2_icon_color="var(--color-text-subtle)" if period_total == 0 else ("var(--status-danger-text)" if positive_rate < 60 else "var(--status-success-text)"),
         ),
         unsafe_allow_html=True,
     )
@@ -205,7 +194,7 @@ def _render_admin_dashboard() -> None:
     except Exception:
         date_str = datetime.now().strftime("%A, %B %d")
 
-    section_header("Command Center", f"Field activity & pending reviews — {date_str}.")
+    section_header("Command Center", f"Field activity and pending reviews, {date_str}.")
 
     # ── Period filter ─────────────────────────────────────────────────────────
     period = st.radio(
@@ -232,7 +221,7 @@ def _render_admin_dashboard() -> None:
     }.get(period, "")
 
     # ── Field Activity KPIs ───────────────────────────────────────────────────
-    st.markdown("#### Field Activity")
+    subsection_label("Field Activity")
 
     total_visits = _safe_count(
         f"SELECT COUNT(*) FROM visits v WHERE COALESCE(v.is_deleted, FALSE) IS FALSE {period_filter}"
@@ -244,45 +233,29 @@ def _render_admin_dashboard() -> None:
         f"SELECT COUNT(DISTINCT v.user_id) FROM visits v WHERE COALESCE(v.is_deleted, FALSE) IS FALSE {period_filter}"
     )
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown(
-            kpi_card_v2(
-                label=f"Total Visits ({period})",
-                value=f"{total_visits:,}",
-                delta="All reps combined",
-                delta_positive=True,
-                icon_svg=_ICON_LOCATION,
-                icon_bg="var(--color-primary-subtle)",
-            ),
-            unsafe_allow_html=True,
-        )
-    with col2:
-        st.markdown(
-            kpi_card_v2(
-                label="Unique Customers",
-                value=f"{unique_customers:,}",
-                delta=f"In {period.lower() if period != 'Today' else 'today'}",
-                delta_positive=True,
-                icon_svg=_ICON_BUILDING,
-                icon_bg="var(--status-success-bg)",
-            ),
-            unsafe_allow_html=True,
-        )
-    with col3:
-        st.markdown(
-            kpi_card_v2(
-                label="Active Reps",
-                value=f"{active_reps:,}",
-                delta="Submitted visits",
-                delta_positive=True,
-                icon_svg=_ICON_USERS,
-                icon_bg="var(--color-primary-subtle)",
-            ),
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("---")
+    st.markdown(
+        kpi_hero_block(
+            primary_label=f"Total visits ({period.lower()})",
+            primary_value=f"{total_visits:,}",
+            primary_delta=f"{active_reps} rep{'s' if active_reps != 1 else ''} active",
+            primary_delta_positive=True,
+            primary_icon_svg=_ICON_LOCATION,
+            primary_icon_color="var(--color-primary)",
+            stat1_label="Unique customers",
+            stat1_value=f"{unique_customers:,}",
+            stat1_delta=f"{total_visits:,} total visit{'s' if total_visits != 1 else ''}",
+            stat1_delta_positive=True,
+            stat1_icon_svg=_ICON_BUILDING,
+            stat1_icon_color="var(--status-success-text)",
+            stat2_label="Active reps",
+            stat2_value=f"{active_reps:,}",
+            stat2_delta=f"{unique_customers:,} unique customer{'s' if unique_customers != 1 else ''}",
+            stat2_delta_positive=True,
+            stat2_icon_svg=_ICON_USERS,
+            stat2_icon_color="var(--color-primary)",
+        ),
+        unsafe_allow_html=True,
+    )
 
     # ── Pending Reviews ───────────────────────────────────────────────────────
     _render_admin_pending_reviews()
@@ -291,7 +264,7 @@ def _render_admin_dashboard() -> None:
 def _render_admin_pending_reviews() -> None:
     """Render the pending reviews section: summary badges + unified action list."""
 
-    st.markdown("#### Pending Reviews")
+    subsection_label("Pending Reviews")
 
     # ── Summary counts ────────────────────────────────────────────────────────
     cr_count = _safe_count(
@@ -317,13 +290,30 @@ def _render_admin_pending_reviews() -> None:
     active_filter = st.session_state.get("pr_filter", None)
 
     _FILTER_OPTS = [
-        (None,               f"All  {total_pending}",          "neutral"),
-        ("Change Request",   f"Change Requests  {cr_count}",   "warning"),
-        ("Target Audience",  f"Target Audiences  {ta_count}",  "info"),
-        ("Other Customer",   f"Other Customers  {oc_count}",   "primary"),
+        (None,               f"All ({total_pending})",          "neutral"),
+        ("Change Request",   f"Change Requests ({cr_count})",   "warning"),
+        ("Target Audience",  f"Target Audiences ({ta_count})",  "info"),
+        ("Other Customer",   f"Other Customers ({oc_count})",   "primary"),
     ]
 
-    fcols = st.columns(len(_FILTER_OPTS))
+    st.markdown("""
+<style>
+[data-testid="stMarkdownContainer"]:has(> #pr-chip-anchor)
+  ~ * [data-testid="stButton"] button,
+#pr-chip-anchor ~ * [data-testid="stButton"] button {
+    border-radius: 20px !important;
+    font-size: 0.8rem !important;
+    font-weight: 600 !important;
+    min-height: 36px !important;
+    height: auto !important;
+    line-height: 1.4 !important;
+    transition: background 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out !important;
+}
+</style>
+<div id="pr-chip-anchor" style="display:none;"></div>
+""", unsafe_allow_html=True)
+
+    fcols = st.columns(4)
     for col, (fval, flabel, fvariant) in zip(fcols, _FILTER_OPTS):
         is_active = active_filter == fval
         with col:
@@ -338,7 +328,14 @@ def _render_admin_pending_reviews() -> None:
                 st.rerun()
 
     if total_pending == 0:
-        st.success("No pending reviews — all clear.")
+        st.markdown(
+            '<div style="padding:1.25rem 1rem;border:1px solid var(--color-border);'
+            'border-radius:10px;background:var(--color-surface);">'
+            '<p style="margin:0;font-size:0.875rem;color:var(--status-success-text);font-weight:500;">'
+            'All clear. No pending reviews.</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
         return
 
     # ── Unified action list ───────────────────────────────────────────────────
@@ -392,7 +389,14 @@ def _render_admin_pending_reviews() -> None:
         return
 
     if items_df.empty:
-        st.info("Pending items could not be loaded.")
+        st.markdown(
+            '<div style="padding:1rem;border:1px solid var(--color-border);'
+            'border-radius:10px;background:var(--color-surface);">'
+            '<p style="margin:0;font-size:0.875rem;color:var(--color-text-muted);">'
+            'Pending items could not be loaded.</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
         return
 
     items_df["submitted_at"] = pd.to_datetime(items_df["submitted_at"], errors="coerce")
@@ -426,60 +430,54 @@ def _render_admin_pending_reviews() -> None:
             unsafe_allow_html=True,
         )
     else:
-        st.info("No items match the selected filter.")
+        st.markdown(
+            '<div style="padding:1rem;border:1px solid var(--color-border);'
+            'border-radius:10px;background:var(--color-surface);">'
+            '<p style="margin:0;font-size:0.875rem;color:var(--color-text-muted);">'
+            'No items match the selected filter.</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
         return
 
+    _nav_sid = st.session_state.get("_stored_sid", "")
+    cards_html = ""
     for _, row in page_df.iterrows():
-        date_str = (
-            row["submitted_at"].strftime("%d %b %Y")
-            if pd.notna(row["submitted_at"]) else "—"
+        variant  = _TYPE_VARIANT.get(str(row["type"]), "neutral")
+        target   = str(row["target_page"])
+        item_id  = int(row["item_id"])
+        href     = (
+            f"?page={target.replace(' ', '+')}&_sid={_nav_sid}&preselect={item_id}"
+            if _nav_sid else f"?page={target.replace(' ', '+')}&preselect={item_id}"
         )
-        variant    = _TYPE_VARIANT.get(str(row["type"]), "neutral")
-        badge      = status_badge(html.escape(str(row["type"])), variant)
-        target     = str(row["target_page"])
-        identifier = html.escape(str(row["identifier"]))
-        rep_name   = html.escape(str(row["rep_name"]))
-
-        col_info, col_btn = st.columns([5, 1])
-        with col_info:
-            st.markdown(
-                f'<div style="display:flex;align-items:center;gap:10px;'
-                f'padding:10px 0;border-bottom:1px solid var(--color-border);">'
-                f'{badge}'
-                f'<span style="font-weight:600;font-size:0.9rem;color:var(--color-text);">'
-                f'{identifier}</span>'
-                f'<span style="font-size:0.85rem;color:var(--color-text-muted);">'
-                f'{rep_name}</span>'
-                f'<span style="font-size:0.8rem;color:var(--color-text-subtle);">{date_str}</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-        with col_btn:
-            if st.button(
-                "Review →",
-                key=f"admin_review_{row['type']}_{int(row['item_id'])}",
-                use_container_width=True,
-            ):
-                st.session_state["_admin_preselect_id"] = int(row["item_id"])
-                st.query_params["page"] = target
-                st.rerun()
+        cards_html += visit_card(
+            visit_id=html.escape(str(row["identifier"])),
+            date_obj=row["submitted_at"],
+            customer=html.escape(str(row["rep_name"])),
+            subtitle=html.escape(str(row["type"])),
+            status=html.escape(str(row["type"])),
+            status_variant=variant,
+            href=href,
+        )
+    if cards_html:
+        st.markdown(cards_html, unsafe_allow_html=True)
 
     # ── Pagination controls ───────────────────────────────────────────────────
     if total_pages > 1:
-        col_prev, col_info, col_next = st.columns([1, 2, 1])
+        col_prev, col_info, col_next = st.columns([1, 4, 1])
         with col_prev:
-            if st.button("← Prev", key="pr_prev", disabled=(current_page == 0),
+            if st.button("←", key="pr_prev", disabled=(current_page == 0),
                          use_container_width=True):
                 st.session_state["pr_page"] = current_page - 1
                 st.rerun()
         with col_info:
             st.markdown(
-                f'<p style="text-align:center;font-size:0.85rem;color:var(--color-text-muted);'
-                f'padding-top:0.4rem;">Page {current_page + 1} of {total_pages}</p>',
+                f'<p style="text-align:center;font-size:0.8rem;color:var(--color-text-subtle);'
+                f'padding-top:0.45rem;margin:0;">{current_page + 1} of {total_pages}</p>',
                 unsafe_allow_html=True,
             )
         with col_next:
-            if st.button("Next →", key="pr_next", disabled=(current_page >= total_pages - 1),
+            if st.button("→", key="pr_next", disabled=(current_page >= total_pages - 1),
                          use_container_width=True):
                 st.session_state["pr_page"] = current_page + 1
                 st.rerun()

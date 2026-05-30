@@ -12,8 +12,8 @@ from auth import resolve_session_user
 from config import TIMEZONE, DUP_MINUTES
 from db_ops import query_df, exec_sql, insert_visit_atomic
 from utils import _utcnow_iso, _local_now_str, _client_ip, _utcnow
-from widgets import get_location_block, _reset_geo_on_user_or_page_change, set_current_page, customer_quick_find_module, customer_cascading_selectors
-from ui import section_header, required_legend
+from widgets import get_location_block, nearby_customers_block, _reset_geo_on_user_or_page_change, set_current_page, customer_quick_find_module, customer_cascading_selectors
+from ui import section_header, required_legend, form_section, form_subsection
 
 
 def page_check_in():
@@ -89,22 +89,24 @@ def page_check_in():
     display_region = u.get("region") or "—"
     display_role   = u.get("role") or "—"
     if st.session_state.pop(saved_ok_key, False):
-        st.success("Checked in ✅ — fields cleared.")
+        st.success("Checked in. Fields cleared — ready for the next entry.")
 
     # =====================================================
     # SECTION 1 — Location (REQUIRED)
     # =====================================================
-    st.markdown("### 1️⃣ Check-In Location")
+    st.markdown(form_section(1, "Check-In Location"), unsafe_allow_html=True)
     lat, lon, acc = get_location_block(k)
 
     if lat is None or lon is None:
-        st.info("📍 Location is required before you can check in.")
+        st.warning("Location is required before you can check in.")
         return
+
+    nearby_customers_block(lat, lon, KEY_REGION, KEY_CITY, KEY_SECTOR, KEY_CUST)
 
     # =====================================================
     # SECTION 2 — Customer
     # =====================================================
-    st.markdown("### 2️⃣ Customer")
+    st.markdown(form_section(2, "Customer"), unsafe_allow_html=True)
 
     # 2.1 Quick Find (fills + locks)
     _ = customer_quick_find_module(
@@ -152,7 +154,7 @@ def page_check_in():
     other_customer_name = None
 
     if is_other_customer:
-        st.markdown("##### ➕ New Customer Details")
+        st.markdown(form_subsection("New Customer Details"), unsafe_allow_html=True)
         other_customer_name = st.text_input(
             "Customer Name *",
             key=k("other_customer_name"),
@@ -162,7 +164,7 @@ def page_check_in():
     # =====================================================
     # SECTION 3 — Notes
     # =====================================================
-    st.markdown("### 3️⃣ Notes")
+    st.markdown(form_section(3, "Notes"), unsafe_allow_html=True)
     notes = st.text_area("Notes (optional)", key=k("notes"))
 
     # =====================================================
@@ -170,11 +172,17 @@ def page_check_in():
     # =====================================================
     CHECKIN_OBJECTIVE_ID = 620
 
+    st.markdown(
+        '<div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--color-border);"></div>',
+        unsafe_allow_html=True,
+    )
     click = st.button(
         "Check In",
         type="primary",
         key=k("checkin_btn"),
         disabled=st.session_state[busy_key],
+        use_container_width=True,
+        help="Saves immediately. You'll see a spinner while saving.",
     )
 
     if click and not st.session_state[busy_key]:
