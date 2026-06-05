@@ -287,7 +287,7 @@ CREATE TABLE IF NOT EXISTS visits (
     latitude DOUBLE PRECISION,
     longitude DOUBLE PRECISION,
     accuracy_m DOUBLE PRECISION,
-    customer_id INTEGER NOT NULL REFERENCES customers(customer_id),
+    customer_id INTEGER REFERENCES customers(customer_id),
     audience_id INTEGER REFERENCES target_audiences(audience_id),
     business_line_id INTEGER REFERENCES business_lines(business_line_id),
     product_id TEXT REFERENCES items(product_id),
@@ -305,6 +305,9 @@ CREATE TABLE IF NOT EXISTS visits (
     other_audience_phone TEXT,
     other_audience_email TEXT,
     other_customer_name TEXT,
+    is_other_customer   BOOLEAN NOT NULL DEFAULT FALSE,
+    other_resolved_by   INTEGER REFERENCES users(user_id),
+    other_resolved_at   TIMESTAMPTZ,
     is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
     deleted_at  TIMESTAMPTZ,
     deleted_by  INTEGER REFERENCES users(user_id),
@@ -514,6 +517,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_target_audience_customer_name_dept_pos_ci
     );
 
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE visits ALTER COLUMN customer_id DROP NOT NULL;
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS is_other_customer BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS other_resolved_by INTEGER REFERENCES users(user_id);
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS other_resolved_at TIMESTAMPTZ;
+-- Backfill: visits that were submitted against the old placeholder customer (id=807)
+-- and have never been resolved are still "other customer" visits.
+UPDATE visits SET is_other_customer = TRUE WHERE customer_id = 807 AND is_other_customer = FALSE;
+
+CREATE INDEX IF NOT EXISTS ix_visits_is_other_customer ON visits(is_other_customer) WHERE is_other_customer = TRUE;
+CREATE INDEX IF NOT EXISTS ix_visits_other_resolved_by ON visits(other_resolved_by);
 
 CREATE INDEX IF NOT EXISTS ix_app_sessions_active
     ON app_sessions(expires_at_utc)

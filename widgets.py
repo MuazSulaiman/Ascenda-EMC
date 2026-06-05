@@ -425,7 +425,11 @@ def customer_cascading_selectors(
             """,
             {"r": region_choice, "c": city_choice, "s": sector_choice},
         )
-        cust_names = [""] + _order_with_other_last(cust_df["account_name"].tolist())
+        cust_names = (
+            [""]
+            + [n for n in cust_df["account_name"].tolist() if str(n).strip().lower() != "other"]
+            + ["Other"]
+        )
 
     cust_choice = st.selectbox(
         "Customer *",
@@ -439,6 +443,9 @@ def customer_cascading_selectors(
     # Resolve customer_id
     if locked and st.session_state.get(KEY_CUSTID):
         return int(st.session_state.get(KEY_CUSTID))
+
+    if cust_choice and cust_choice.strip().lower() == "other":
+        return None  # "Other" is a synthetic option — no DB row should be resolved
 
     if cust_choice and not cust_df.empty:
         match = cust_df.loc[cust_df["account_name"] == cust_choice, "customer_id"]

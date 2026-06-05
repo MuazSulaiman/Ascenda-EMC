@@ -39,14 +39,14 @@ def _cached_region_choices() -> list:
 
 def page_review_other_customers():
     """
-    Admin / manager page to review visits where selected customer is the placeholder "Other" customer (customer_id=807).
-    - Shows ALL visits where v.customer_id = 807 (no other_customer_name filter).
+    Admin / manager page to review visits where the rep selected "Other" customer.
+    - Shows ALL visits where v.is_other_customer = TRUE.
     - Uses a resolved name for matching:
         resolved_other_name = other_customer_name if present else notes (legacy)
-    - Suggests closest matches from ALL active customers (excluding 807) using name similarity only.
+    - Suggests closest matches from ALL active customers using name similarity only.
     - Allows linking visit to an existing customer (updates visits.customer_id),
       or creating a new customer then linking the visit.
-    - Once linked, the visit disappears from this page because customer_id != 807.
+    - Once linked, is_other_customer is set to FALSE and the visit disappears from this page.
     """
     import html as _html
     import pandas as pd
@@ -54,8 +54,6 @@ def page_review_other_customers():
 
     PAGE_NS = "review_other_cust"
     set_current_page(PAGE_NS)
-
-    OTHER_CUSTOMER_ID = 807
 
     success_key = f"{PAGE_NS}_last_success"
     st.session_state.setdefault(success_key, "")
@@ -122,14 +120,13 @@ def page_review_other_customers():
         JOIN customers c ON c.customer_id = v.customer_id
         JOIN users u     ON u.user_id     = v.user_id
         LEFT JOIN business_units bu ON bu.business_unit_id = u.business_unit_id
-        WHERE v.customer_id = :other_id
+        WHERE v.is_other_customer = TRUE
         ORDER BY v.submitted_at_local DESC, v.visit_id DESC
-        """,
-        {"other_id": int(OTHER_CUSTOMER_ID)},
+        """
     )
 
     if unresolved_df.empty:
-        st.success(f"✅ No visits pending review for Other Customer (customer_id={OTHER_CUSTOMER_ID}).")
+        st.success("✅ No visits pending review for Other Customer.")
         return
 
     unresolved_df["submitted_at_local"] = pd.to_datetime(
@@ -153,7 +150,7 @@ def page_review_other_customers():
         f'font-size:0.78rem;font-weight:700;">{_pending_n} pending</span>'
         f'</div>'
         f'<p style="font-size:0.82rem;color:var(--color-text-subtle);margin:0 0 0.75rem;">'
-        f'These visits currently have customer_id = {OTHER_CUSTOMER_ID}. '
+        f'These visits were submitted with an unrecognised customer. '
         f'Once you link them, they disappear automatically.</p>',
         unsafe_allow_html=True,
     )
@@ -257,10 +254,8 @@ def page_review_other_customers():
         SELECT customer_id, account_name, sector, region, city, is_active, latitude, longitude, party_id, account_id
         FROM customers
         WHERE COALESCE(is_active, TRUE) IS TRUE
-          AND customer_id <> :other_id
         ORDER BY account_name
-        """,
-        {"other_id": int(OTHER_CUSTOMER_ID)},
+        """
     )
 
     # ------------- Suggested matches (NAME ONLY) -------------
@@ -338,10 +333,13 @@ def page_review_other_customers():
                         conn.execute(
                             text("""
                                 UPDATE visits
-                                SET customer_id = :cid
+                                SET customer_id       = :cid,
+                                    is_other_customer = FALSE,
+                                    other_resolved_by = :resolver_uid,
+                                    other_resolved_at = NOW()
                                 WHERE visit_id = :vid
                             """),
-                            {"cid": new_customer_id, "vid": selected_visit_id},
+                            {"cid": new_customer_id, "vid": selected_visit_id, "resolver_uid": uid},
                         )
 
                     st.session_state[success_key] = (
@@ -620,11 +618,14 @@ def page_review_other_customers():
                         text(
                             """
                             UPDATE visits
-                            SET customer_id = :cid
+                            SET customer_id       = :cid,
+                                is_other_customer = FALSE,
+                                other_resolved_by = :resolver_uid,
+                                other_resolved_at = NOW()
                             WHERE visit_id  = :vid
                             """
                         ),
-                        {"cid": new_cid, "vid": selected_visit_id},
+                        {"cid": new_cid, "vid": selected_visit_id, "resolver_uid": uid},
                     )
 
                 st.session_state[success_key] = (

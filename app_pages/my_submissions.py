@@ -1,9 +1,10 @@
 # pages/my_submissions.py  — "My Visits" card-list + detail view
+import base64
 import html
 import folium
 import pandas as pd
 import streamlit as st
-from streamlit_folium import st_folium
+import streamlit.components.v1 as components
 
 from auth import resolve_session_user, get_url_param, set_url_param
 from config import TIMEZONE
@@ -39,7 +40,7 @@ _SECTION_TITLE = (
 _ROW = (
     '<div style="display:flex;justify-content:space-between;align-items:baseline;'
     'padding:0.3rem 0;border-bottom:1px solid var(--color-border);">'
-    '<span style="font-size:0.85rem;color:var(--color-text-muted);min-width:120px;">{key}</span>'
+    '<span style="font-size:0.85rem;color:var(--color-text-subtle);min-width:120px;">{key}</span>'
     '<span style="font-size:0.875rem;color:var(--color-text);font-weight:500;text-align:right;">{val}</span>'
     '</div>'
 )
@@ -47,11 +48,12 @@ _ROW = (
 
 def _detail_card(title: str, rows: list[tuple]) -> str:
     """Build one info card with labelled rows. rows = [(key, value), ...]"""
-    html = _CARD_WRAP + _SECTION_TITLE.format(label=title)
+    import html as _html
+    out = _CARD_WRAP + _SECTION_TITLE.format(label=title)
     for key, val in rows:
-        html += _ROW.format(key=key, val=val or "—")
-    html += _CARD_CLOSE
-    return html
+        out += _ROW.format(key=key, val=_html.escape(str(val)) if val else "—")
+    out += _CARD_CLOSE
+    return out
 
 
 # ── Detail view ───────────────────────────────────────────────────────────────
@@ -100,7 +102,7 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
             v.is_deleted,
             del_rc.request_note AS deletion_note
         FROM visits v
-        JOIN customers c              ON v.customer_id = c.customer_id
+        LEFT JOIN customers c         ON v.customer_id = c.customer_id
         LEFT JOIN target_audiences ta ON v.audience_id = ta.audience_id
         LEFT JOIN items i             ON v.product_id = i.product_id
         LEFT JOIN business_lines bl   ON bl.business_line_id = v.business_line_id
@@ -153,14 +155,14 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
 
     # ── Customer card ─────────────────────────────────────────────────────────
     customer_rows = [
-        ("Name",       row.get("customer")),
+        ("Name",       row.get("customer") or row.get("other_customer_name") or "Other (unresolved)"),
         ("Account ID", row.get("account_id")),
         ("Region",     row.get("customer_region")),
         ("City",       row.get("customer_city")),
         ("Sector",     row.get("customer_sector")),
     ]
     if row.get("other_customer_name"):
-        customer_rows.append(("New Customer", row.get("other_customer_name")))
+        customer_rows.append(("Provided Name", row.get("other_customer_name")))
     st.markdown(_detail_card("Customer", customer_rows), unsafe_allow_html=True)
 
     # ── Audience card ─────────────────────────────────────────────────────────
@@ -245,112 +247,172 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
     lon = row.get("longitude")
     acc = row.get("accuracy_m")
     if lat and lon:
-        maps_url = f"https://www.google.com/maps/search/{lat},{lon}"
-        loc_rows = [
-            ("Coordinates", f"{float(lat):.6f}, {float(lon):.6f}"),
-            ("Accuracy",    f"{float(acc):.0f} m" if acc else "—"),
-        ]
-        rows_html = "".join(_ROW.format(key=k, val=v) for k, v in loc_rows)
+        flat, flon = float(lat), float(lon)
+        facc = float(acc) if acc else None
+        maps_url = f"https://www.google.com/maps/search/{flat},{flon}"
+        acc_label = f" · ±{facc:.0f}m" if facc is not None else ""
 
-        # Top portion of card — open bottom so the map stitches in seamlessly
-        st.markdown(
-            f"""
-            <style>
-            /* Seal gap: top-card → map */
-            [data-testid="element-container"]:has(.loc-top-card) {{
-                margin-bottom: 0 !important;
-            }}
-            [data-testid="element-container"]:has(.loc-top-card)
-              + [data-testid="element-container"] {{
-                margin-top: 0 !important;
-                padding-top: 0 !important;
-            }}
-            [data-testid="element-container"]:has(.loc-top-card)
-              + [data-testid="element-container"] iframe {{
-                border-radius: 0 !important;
-                box-shadow: none !important;
-                border-left: 1px solid var(--color-border) !important;
-                border-right: 1px solid var(--color-border) !important;
-                display: block;
-                margin: 0 !important;
-            }}
-            /* Seal gap: map → bottom cap */
-            [data-testid="element-container"]:has(.loc-bot-cap) {{
-                margin-top: 0 !important;
-                padding-top: 0 !important;
-            }}
-            </style>
-            <div class="loc-top-card" style="
-                background:var(--color-surface);
-                border:1px solid var(--color-border);
-                border-bottom:none;
-                border-radius:12px 12px 0 0;
-                padding:1rem 1.25rem 0.75rem;
-                margin-bottom:0;
-            ">
-                {_SECTION_TITLE.format(label="Location")}
-                {rows_html}
-                <div style="margin-top:0.625rem;">
-                    <a href="{maps_url}" target="_blank"
-                       style="font-size:0.85rem;color:var(--color-primary);font-weight:500;text-decoration:none;">
-                        Open in Google Maps →
-                    </a>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        # Static pin — slate, no animation (this is a recorded location, not live)
         _pin_html = """
-        <div style="
-            width:14px;height:14px;
-            background:#475569;
-            border:2.5px solid #fff;
-            border-radius:50%;
-            box-shadow:0 2px 6px rgba(0,0,0,.4);
-        "></div>
+        <div style="position:relative;width:20px;height:20px">
+            <div style="
+                position:absolute;top:50%;left:50%;
+                transform:translate(-50%,-50%);
+                width:14px;height:14px;
+                background:#1d4ed8;border:2.5px solid #fff;
+                border-radius:50%;z-index:2;
+                box-shadow:0 2px 8px rgba(0,0,0,.35);
+            "></div>
+        </div>
         """
 
-        flat, flon = float(lat), float(lon)
         m = folium.Map(
             location=[flat, flon],
             zoom_start=17,
             tiles="CartoDB positron",
             control_scale=True,
         )
-        if acc:
+        if facc is not None:
             folium.Circle(
                 location=[flat, flon],
-                radius=float(acc),
-                color="#64748b",
+                radius=facc,
+                color="#3b82f6",
                 weight=1.5,
                 fill=True,
-                fill_color="#64748b",
+                fill_color="#3b82f6",
                 fill_opacity=0.10,
-                tooltip=f"GPS accuracy: ±{float(acc):.0f} m",
+                tooltip=f"GPS accuracy: ±{facc:.0f} m",
             ).add_to(m)
         folium.Marker(
             [flat, flon],
             tooltip="Visit location",
             icon=folium.DivIcon(
                 html=_pin_html,
-                icon_size=(14, 14),
-                icon_anchor=(7, 7),
+                icon_size=(20, 20),
+                icon_anchor=(10, 10),
             ),
         ).add_to(m)
-        st_folium(m, height=300, width="100%", key=f"visit_map_{row.get('visit_id', flat)}")
 
-        # Bottom cap — closes the card visually
-        st.markdown(
-            '<div class="loc-bot-cap" style="'
-            "background:var(--color-surface);"
-            "border:1px solid var(--color-border);"
-            "border-top:none;"
-            "border-radius:0 0 12px 12px;"
-            "height:0.6rem;"
-            'margin-bottom:0.75rem;"></div>',
-            unsafe_allow_html=True,
+        map_b64 = base64.b64encode(m.get_root().render().encode("utf-8")).decode("ascii")
+
+        components.html(
+            f"""
+            <!DOCTYPE html><html><head>
+            <style>
+              * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+              body {{ background: transparent; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }}
+              .card {{
+                background: #ffffff;
+                border: 1px solid #e4e8ec;
+                border-radius: 12px;
+                padding: 1rem 1.25rem 1rem;
+              }}
+              .section-title {{
+                font-size: 0.75rem;
+                font-weight: 700;
+                color: #8b949e;
+                text-transform: uppercase;
+                letter-spacing: 0.07em;
+                margin-bottom: 0.625rem;
+              }}
+              .badge {{
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 8px 12px;
+                background: #fafbfc;
+                border: 1px solid #e4e8ec;
+                border-radius: 8px;
+                margin-bottom: 10px;
+              }}
+              .coords {{
+                font-size: 12.5px;
+                color: #0d1117;
+                font-family: ui-monospace, monospace;
+                font-weight: 500;
+              }}
+              .maps-link {{
+                margin-left: auto;
+                font-size: 0.8rem;
+                color: #2667ff;
+                font-weight: 500;
+                text-decoration: none;
+                white-space: nowrap;
+              }}
+              .map-frame {{
+                width: 100%;
+                height: 360px;
+                border: none;
+                border-radius: 8px;
+                overflow: hidden;
+                display: block;
+              }}
+            </style>
+            </head><body>
+            <div class="card" id="loc-card">
+              <div class="section-title">Location</div>
+              <div class="badge" id="loc-badge">
+                <svg width="15" height="15" fill="none" stroke="#8b949e" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" id="loc-icon">
+                  <circle cx="12" cy="10" r="3"/>
+                  <path d="M12 2a8 8 0 0 1 8 8c0 5.25-8 13-8 13S4 15.25 4 10a8 8 0 0 1 8-8z"/>
+                </svg>
+                <span class="coords" id="loc-coords">{flat:.6f}°, {flon:.6f}°{acc_label}</span>
+                <a href="{maps_url}" target="_blank" class="maps-link" id="loc-link">Open in Maps →</a>
+              </div>
+              <iframe src="data:text/html;base64,{map_b64}" class="map-frame" frameborder="0" allowfullscreen></iframe>
+            </div>
+            <script>
+            (function() {{
+              function g(v) {{
+                try {{
+                  return window.parent.getComputedStyle(
+                    window.parent.document.documentElement
+                  ).getPropertyValue(v).trim();
+                }} catch(e) {{ return ''; }}
+              }}
+              function applyTheme() {{
+                var surface  = g('--color-surface')       || '#ffffff';
+                var border   = g('--color-border')        || '#e4e8ec';
+                var bg       = g('--color-bg')            || '#fafbfc';
+                var text     = g('--color-text')          || '#0d1117';
+                var subtle   = g('--color-text-subtle')   || '#8b949e';
+                var primary  = g('--color-primary')       || '#2667ff';
+
+                var card  = document.getElementById('loc-card');
+                var badge = document.getElementById('loc-badge');
+                var icon  = document.getElementById('loc-icon');
+                var coords= document.getElementById('loc-coords');
+                var link  = document.getElementById('loc-link');
+
+                card.style.background   = surface;
+                card.style.borderColor  = border;
+                badge.style.background  = bg;
+                badge.style.borderColor = border;
+                icon.setAttribute('stroke', subtle);
+                coords.style.color = text;
+                link.style.color   = primary;
+
+                document.querySelectorAll('.section-title').forEach(function(el) {{
+                  el.style.color = subtle;
+                }});
+
+                try {{
+                  var parentFont = window.parent.getComputedStyle(
+                    window.parent.document.body
+                  ).fontFamily;
+                  if (parentFont) document.body.style.fontFamily = parentFont;
+                }} catch(e) {{}}
+              }}
+              if (document.readyState === 'loading') {{
+                document.addEventListener('DOMContentLoaded', applyTheme);
+              }} else {{
+                applyTheme();
+              }}
+            }})();
+            </script>
+            </body></html>
+            """,
+            height=500,
         )
 
 
@@ -381,7 +443,7 @@ def page_my_submissions():
         SELECT
             v.visit_id,
             v.submitted_at_local,
-            c.account_name   AS customer,
+            COALESCE(c.account_name, v.other_customer_name) AS customer,
             c.account_id     AS account_id,
             bu.name          AS business_unit,
             bl.name          AS business_line,
@@ -409,7 +471,7 @@ def page_my_submissions():
             v.is_deleted,
             del_rc.request_note AS deletion_note
         FROM visits v
-        JOIN customers c              ON v.customer_id = c.customer_id
+        LEFT JOIN customers c         ON v.customer_id = c.customer_id
         LEFT JOIN target_audiences ta ON v.audience_id = ta.audience_id
         LEFT JOIN items i             ON v.product_id = i.product_id
         LEFT JOIN business_lines bl   ON bl.business_line_id = v.business_line_id

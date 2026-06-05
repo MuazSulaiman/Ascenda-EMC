@@ -261,13 +261,17 @@ def page_submit_visit():
 
         aud_labels.append("Other")
 
+    elif is_other_customer:
+        # No real customer yet — only "Other" audience is available
+        aud_labels = ["", "Other"]
+
     aud_choice_label = st.selectbox(
         "Target Audience *",
         aud_labels,
         index=0,
         key=k("aud_sel"),
-        disabled=(customer_id is None),
-        help=None if customer_id else "Select a Customer first",
+        disabled=(customer_id is None and not is_other_customer),
+        help=None if (customer_id or is_other_customer) else "Select a Customer first",
     )
 
     if customer_id and aud_choice_label and aud_choice_label not in ("", "Other"):
@@ -277,7 +281,7 @@ def page_submit_visit():
                 aud_choice_name = raw_name
                 break
 
-    if customer_id and aud_choice_label == "Other":
+    if (customer_id or is_other_customer) and aud_choice_label == "Other":
         st.markdown(form_subsection("New Target Audience Details"), unsafe_allow_html=True)
 
         other_ta_title = st.selectbox(
@@ -615,7 +619,7 @@ def page_submit_visit():
             errors.append("Please choose a **City**.")
         if not sector_choice:
             errors.append("Please choose a **Sector**.")
-        if not customer_id:
+        if not customer_id and not is_other_customer:
             errors.append("Please choose a **Customer**.")
 
         # ✅ NEW: Other Customer validation
@@ -757,6 +761,7 @@ def page_submit_visit():
             "notes":               (notes.strip() if notes else None),
             "evaluation":          evaluation_val,
 
+            "is_other_customer":   is_other_customer,
             # ✅ NEW: store the typed name when customer is Other
             "other_customer_name": (other_customer_name.strip() if (is_other_customer and other_customer_name) else None),
 

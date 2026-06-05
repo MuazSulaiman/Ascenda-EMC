@@ -177,7 +177,7 @@ def page_review_target_audiences():
         LEFT JOIN business_units bu
             ON bu.business_unit_id = u.business_unit_id
         WHERE v.audience_id IS NULL
-        AND v.customer_id <> 807               -- ✅ exclude "Other Customer" placeholder
+        AND v.is_other_customer IS NOT TRUE     -- exclude visits still pending customer resolution
         AND v.other_audience_name IS NOT NULL
         AND trim(v.other_audience_name) <> ''
         ORDER BY v.submitted_at_local DESC, v.visit_id DESC
@@ -437,11 +437,13 @@ def page_review_target_audiences():
                             text(
                                 """
                                 UPDATE visits
-                                SET audience_id = :aid
+                                SET audience_id       = :aid,
+                                    other_resolved_by = :resolver_uid,
+                                    other_resolved_at = NOW()
                                 WHERE visit_id = :vid
                                 """
                             ),
-                            {"aid": audience_id, "vid": selected_visit_id},
+                            {"aid": audience_id, "vid": selected_visit_id, "resolver_uid": uid},
                         )
                     st.session_state[success_key] = (
                         f"Linked visit #{selected_visit_id} to existing Target Audience ID {audience_id} ✅"
@@ -653,11 +655,13 @@ def page_review_target_audiences():
                         text(
                             """
                             UPDATE visits
-                            SET audience_id = :aid
+                            SET audience_id       = :aid,
+                                other_resolved_by = :resolver_uid,
+                                other_resolved_at = NOW()
                             WHERE visit_id  = :vid
                             """
                         ),
-                        {"aid": new_aid, "vid": selected_visit_id},
+                        {"aid": new_aid, "vid": selected_visit_id, "resolver_uid": uid},
                     )
 
                 st.session_state[success_key] = (
