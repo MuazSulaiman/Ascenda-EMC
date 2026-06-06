@@ -753,7 +753,7 @@ def page_submit_visit():
             "latitude":            lat,
             "longitude":           lon,
             "accuracy_m":          acc,
-            "customer_id":         int(customer_id),
+            "customer_id":         int(customer_id) if customer_id is not None else None,
             "audience_id":         int(audience_id) if audience_id else None,
             "business_line_id":    int(business_line_id),
             "product_id":          (None if is_shelf_movement else product_id),

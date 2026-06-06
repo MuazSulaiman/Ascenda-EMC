@@ -117,8 +117,8 @@ def page_review_other_customers():
             c.sector,
             bu.name                     AS business_unit_name
         FROM visits v
-        JOIN customers c ON c.customer_id = v.customer_id
-        JOIN users u     ON u.user_id     = v.user_id
+        LEFT JOIN customers c ON c.customer_id = v.customer_id
+        JOIN users u          ON u.user_id     = v.user_id
         LEFT JOIN business_units bu ON bu.business_unit_id = u.business_unit_id
         WHERE v.is_other_customer = TRUE
         ORDER BY v.submitted_at_local DESC, v.visit_id DESC
