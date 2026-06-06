@@ -61,7 +61,10 @@
       "Bash(claude plugin *)",
       "Skill(impeccable:impeccable)",
       "Bash(Select-String -Path \"C:\\\\Users\\\\muazs\\\\OneDrive\\\\Desktop\\\\Streamlit11DD Claude\\\\app_pages\\\\submit_visit.py\" -Pattern \"form_section|form_subsection|1️⃣|2️⃣|3️⃣|4️⃣|➕|subheader|sticky-submit|sticky_submit|\\\\|\\\\||Article Number/Product|Saved ✅|#components\")",
-      "Bash(Select-Object LineNumber, Line)"
+      "Bash(Select-Object LineNumber, Line)",
+      "Bash(psql postgresql://postgres:61975432@localhost:5432/ascenda_dev -c ' *)",
+      "Bash(psql postgresql://postgres:61975432@localhost:5432/ascenda_dev -c \"SELECT typname, enum_range\\(NULL::public.asc_change_source\\), enum_range\\(NULL::public.asc_request_status\\) FROM pg_type WHERE typname IN \\('asc_change_source','asc_request_status'\\) LIMIT 1;\")",
+      "Bash(psql postgresql://postgres:61975432@localhost:5432/ascenda_dev -c \"SELECT n.nspname, t.typname, e.enumlabel FROM pg_type t JOIN pg_enum e ON t.oid = e.enumtypid JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = 'public' ORDER BY t.typname, e.enumsortorder;\")"
     ]
   }
 }
