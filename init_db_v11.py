@@ -214,7 +214,8 @@ CREATE TABLE IF NOT EXISTS users (
             'biomedical manager'
         )
     ),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    preferences JSONB NOT NULL DEFAULT '{"theme": "light", "language": "en"}'::jsonb
 );
 
 CREATE TABLE IF NOT EXISTS role_objectives (
