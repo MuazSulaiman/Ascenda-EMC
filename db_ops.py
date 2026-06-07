@@ -226,46 +226,55 @@ def _analytics_scope(user_id: int, role: str, date_from, date_to, filters: dict,
 
 def get_analytics_kpis(user_id: int, role: str, date_from, date_to, filters: dict, rep_ids=None) -> dict:
     joins, where, params = _analytics_scope(user_id, role, date_from, date_to, filters, rep_ids)
+    wd_params = dict(params)
+    wd_params["_wd"] = [0, 1, 2, 3, 4]
+
     row = query_df(f"""
-        WITH monthly AS (
+        WITH base AS (
             SELECT
-                DATE_TRUNC('month', v.submitted_at_local) AS month,
-                COUNT(DISTINCT v.customer_id)             AS mc,
-                COUNT(DISTINCT v.business_line_id)        AS mbl
+                v.customer_id,
+                v.audience_id,
+                v.business_line_id,
+                v.submitted_at_local,
+                EXTRACT(DOW FROM v.submitted_at_local)::int AS dow
             FROM visits v {joins} {where}
+        ),
+        monthly AS (
+            SELECT
+                DATE_TRUNC('month', submitted_at_local) AS month,
+                COUNT(DISTINCT customer_id)             AS mc,
+                COUNT(DISTINCT business_line_id)        AS mbl
+            FROM base
+            GROUP BY 1
+        ),
+        daily_wd AS (
+            SELECT DATE(submitted_at_local) AS d, COUNT(DISTINCT customer_id) AS dc
+            FROM base
+            WHERE dow = ANY(:_wd)
             GROUP BY 1
         )
         SELECT
-            (SELECT COUNT(*) FROM visits v {joins} {where})                           AS total_visits,
-            (SELECT COUNT(DISTINCT v.customer_id) FROM visits v {joins} {where})      AS total_customers,
-            (SELECT COUNT(DISTINCT v.audience_id) FROM visits v {joins} {where})      AS total_audiences,
-            AVG(mc)  AS avg_customers_per_month,
-            AVG(mbl) AS avg_bl_per_month
-        FROM monthly
-    """, params)
-    kpis = row.iloc[0].to_dict() if not row.empty else {}
-
-    # Customers per working day = AVG(daily distinct customers) on Sun–Thu (DOW 0–4)
-    wd_params = dict(params)
-    wd_params["_wd"] = [0, 1, 2, 3, 4]
-    wd = query_df(f"""
-        WITH daily AS (
-            SELECT DATE(v.submitted_at_local) AS d, COUNT(DISTINCT v.customer_id) AS dc
-            FROM visits v {joins} {where}
-              AND EXTRACT(DOW FROM v.submitted_at_local)::int = ANY(:_wd)
-            GROUP BY 1
-        )
-        SELECT AVG(dc) AS cpd FROM daily
+            (SELECT COUNT(*) FROM base)                       AS total_visits,
+            (SELECT COUNT(DISTINCT customer_id) FROM base)    AS total_customers,
+            (SELECT COUNT(DISTINCT audience_id) FROM base)    AS total_audiences,
+            AVG(m.mc)                                         AS avg_customers_per_month,
+            AVG(m.mbl)                                        AS avg_bl_per_month,
+            (SELECT AVG(dc) FROM daily_wd)                    AS customers_per_day
+        FROM monthly m
     """, wd_params)
-    kpis["customers_per_day"] = float(wd.iloc[0]["cpd"] or 0) if not wd.empty else 0.0
 
-    tv = kpis.get("total_visits") or 0
-    tc = kpis.get("total_customers") or 0
-    ta = kpis.get("total_audiences") or 0
-    kpis["visits_per_customer"]    = float(tv) / tc if tc else 0.0
-    kpis["audiences_per_customer"] = float(ta) / tc if tc else 0.0
+    kpis = row.iloc[0].to_dict() if not row.empty else {}
+    tv = float(kpis.get("total_visits") or 0)
+    tc = float(kpis.get("total_customers") or 0)
+    ta = float(kpis.get("total_audiences") or 0)
+    kpis["total_visits"]            = int(tv)
+    kpis["total_customers"]         = int(tc)
+    kpis["total_audiences"]         = int(ta)
+    kpis["visits_per_customer"]     = tv / tc if tc else 0.0
+    kpis["audiences_per_customer"]  = ta / tc if tc else 0.0
     kpis["avg_customers_per_month"] = float(kpis.get("avg_customers_per_month") or 0)
     kpis["avg_bl_per_month"]        = float(kpis.get("avg_bl_per_month") or 0)
+    kpis["customers_per_day"]       = float(kpis.get("customers_per_day") or 0)
     return kpis
 
 

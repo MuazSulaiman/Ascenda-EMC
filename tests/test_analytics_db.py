@@ -105,3 +105,16 @@ def test_visits_per_rep_sorted_descending(admin_uid):
     df = get_analytics_visits_per_rep(admin_uid, "admin", D_FROM, D_TO, FILT, REPS)
     if len(df) > 1:
         assert list(df["total_visits"]) == sorted(df["total_visits"].tolist(), reverse=True)
+
+
+def test_kpis_all_keys_present(admin_uid):
+    from db_ops import get_analytics_kpis
+    result = get_analytics_kpis(admin_uid, "admin", D_FROM, D_TO, {}, None)
+    for key in (
+        "total_visits", "total_customers", "total_audiences",
+        "visits_per_customer", "audiences_per_customer",
+        "customers_per_day", "avg_customers_per_month", "avg_bl_per_month",
+    ):
+        assert key in result, f"Missing key after refactor: {key}"
+    assert result["total_visits"] >= 0
+    assert result["total_customers"] >= 0
