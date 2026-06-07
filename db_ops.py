@@ -290,6 +290,24 @@ def get_analytics_kpis_previous_period(user_id: int, role: str, date_from, date_
     return get_analytics_kpis(user_id, role, prev_from, prev_to, filters, rep_ids)
 
 
+def get_analytics_coverage_rate(user_id: int, role: str, date_from, date_to,
+                                  filters: dict, rep_ids=None) -> dict:
+    """Returns visited_customers, total_active_customers, coverage_pct."""
+    joins, where, params = _analytics_scope(user_id, role, date_from, date_to, filters, rep_ids)
+    row = query_df(f"""
+        SELECT
+            COUNT(DISTINCT v.customer_id)                                AS visited,
+            (SELECT COUNT(*) FROM customers WHERE is_active IS TRUE)     AS total_active
+        FROM visits v {joins} {where}
+    """, params)
+    if row.empty:
+        return {"visited": 0, "total_active": 0, "coverage_pct": 0.0}
+    visited      = int(row.iloc[0]["visited"] or 0)
+    total_active = int(row.iloc[0]["total_active"] or 0)
+    pct          = round(visited / total_active * 100, 1) if total_active else 0.0
+    return {"visited": visited, "total_active": total_active, "coverage_pct": pct}
+
+
 def get_analytics_time_series(user_id: int, role: str, date_from, date_to,
                                granularity: str, filters: dict, rep_ids=None) -> pd.DataFrame:
     joins, where, params = _analytics_scope(user_id, role, date_from, date_to, filters, rep_ids)

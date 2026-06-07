@@ -118,3 +118,12 @@ def test_kpis_all_keys_present(admin_uid):
         assert key in result, f"Missing key after refactor: {key}"
     assert result["total_visits"] >= 0
     assert result["total_customers"] >= 0
+
+
+def test_coverage_rate_shape(admin_uid):
+    from db_ops import get_analytics_coverage_rate
+    result = get_analytics_coverage_rate(admin_uid, "admin", D_FROM, D_TO, {}, None)
+    assert "visited" in result
+    assert "total_active" in result
+    assert "coverage_pct" in result
+    assert 0.0 <= result["coverage_pct"] <= 100.0

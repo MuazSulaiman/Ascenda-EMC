@@ -13,6 +13,7 @@ from auth import resolve_session_user
 from db_ops import (
     get_all_reps,
     get_analytics_attendance,
+    get_analytics_coverage_rate,
     get_analytics_drilldown,
     get_analytics_kpis,
     get_analytics_kpis_per_rep,
@@ -201,6 +202,9 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
     acm = kpis.get("avg_customers_per_month", 0)
     blm = kpis.get("avg_bl_per_month", 0)
 
+    cov = get_analytics_coverage_rate(uid, role, date_from, date_to, filters, rep_ids)
+    cov_label = f"{cov['coverage_pct']}% ({cov['visited']:,}/{cov['total_active']:,})"
+
     # ── Hero KPI scorecard ────────────────────────────────────────────────────
     st.markdown(f"""
 <div style="display:grid;grid-template-columns:1.6fr 1fr 1fr;gap:12px;margin-bottom:10px;">
@@ -254,9 +258,25 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
         + _secondary_card("Aud / Cust",    f"{apc:.1f}")
         + _secondary_card("Cust / Month",  f"{acm:.1f}")
         + _secondary_card("BL / Month",    f"{blm:.1f}")
+        + _secondary_card("Coverage",      cov_label)
         + '</div>',
         unsafe_allow_html=True,
     )
+
+    # ── Engagement funnel ─────────────────────────────────────────────────────
+    subsection_label("Engagement Funnel")
+    funnel_df = pd.DataFrame({
+        "Stage": ["Total Visits", "Unique Customers", "Unique Audiences"],
+        "Count": [tv, tc, ta],
+    })
+    fig_funnel = px.funnel(funnel_df, x="Count", y="Stage",
+                            color_discrete_sequence=[BRAND])
+    fig_funnel.update_layout(
+        margin=dict(l=0, r=0, t=10, b=0), height=180,
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        yaxis_title="",
+    )
+    st.plotly_chart(fig_funnel, use_container_width=True, key="an_funnel")
 
     # ── Visits over time — area chart ─────────────────────────────────────────
     subsection_label("Visits Over Time")
