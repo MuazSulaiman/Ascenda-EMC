@@ -30,6 +30,17 @@ from db_ops import (
 from ui import html_table, section_header, subsection_label
 from utils import _local_now
 
+
+@st.cache_data(ttl=600)
+def _cached_customer_locations() -> pd.DataFrame:
+    return get_customer_locations_for_map()
+
+
+@st.cache_data(ttl=300)
+def _cached_all_reps() -> pd.DataFrame:
+    return get_all_reps()
+
+
 BRAND   = "#2667ff"
 PALETTE = px.colors.qualitative.Set2
 
@@ -554,7 +565,7 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
 
     with col_m1:
         subsection_label("Customer Locations")
-        cust_df = get_customer_locations_for_map()
+        cust_df = _cached_customer_locations()
         if not cust_df.empty:
             m1 = folium.Map(
                 location=[cust_df["latitude"].mean(), cust_df["longitude"].mean()],
@@ -827,7 +838,7 @@ def page_analytics():
     rep_ids = None
     if is_elevated:
         with c3:
-            reps_df = get_all_reps()
+            reps_df = _cached_all_reps()
             if not reps_df.empty:
                 rep_map = dict(zip(reps_df["name"], reps_df["user_id"]))
                 sel = st.multiselect("Filter by Rep", options=list(rep_map.keys()), key="an_reps")

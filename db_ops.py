@@ -5,8 +5,6 @@ from typing import List, Optional
 import pandas as pd
 from sqlalchemy import text
 
-import streamlit as st
-
 from db import engine
 
 VISIT_INSERT_COLUMNS = (
@@ -519,7 +517,6 @@ def get_analytics_attendance(user_id: int, role: str, date_from, date_to,
     """, params)
 
 
-@st.cache_data(ttl=600)
 def get_customer_locations_for_map() -> pd.DataFrame:
     return query_df("""
         SELECT account_name, latitude, longitude, region, city
@@ -544,7 +541,6 @@ def get_visit_locations_for_map(user_id: int, role: str, date_from, date_to,
     """, params)
 
 
-@st.cache_data(ttl=120)
 def get_all_reps() -> pd.DataFrame:
     return query_df("""
         SELECT user_id, name FROM users
