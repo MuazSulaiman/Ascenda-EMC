@@ -1,5 +1,6 @@
 # app_pages/analytics.py — Analytics Dashboard
 from datetime import date
+import html as _html
 
 import folium
 import pandas as pd
@@ -729,7 +730,6 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
     pivot_att.columns = [c.strftime("%d/%m") for c in pivot_att.columns]
     pivot_att = pivot_att.reset_index().rename(columns={"rep_name": "Rep"})
 
-    import html as _html
 
     cols_list = list(pivot_att.columns)
     th_style = (
