@@ -353,6 +353,37 @@ def get_analytics_new_vs_repeat(user_id: int, role: str, date_from, date_to,
     }
 
 
+def get_analytics_target_vs_actual(year: int, rep_ids=None) -> pd.DataFrame:
+    """Returns (rep, target_visits, actual_visits) for the given year.
+
+    Joins target_rep → target_breakdown (SUM of target_visits) with actual
+    visits for that year. Returns empty DataFrame if no target data exists.
+    """
+    params: dict = {"year": year}
+    rep_clause = ""
+    if rep_ids:
+        rep_clause = "AND tr.user_id = ANY(:rids)"
+        params["rids"] = list(rep_ids)
+
+    return query_df(f"""
+        SELECT
+            u.name                                       AS rep,
+            COALESCE(SUM(tb.target_visits), 0)           AS target_visits,
+            COUNT(DISTINCT v.visit_id)                   AS actual_visits
+        FROM target_rep tr
+        JOIN users u ON u.user_id = tr.user_id
+        LEFT JOIN target_breakdown tb
+            ON tb.target_rep_id = tr.id
+        LEFT JOIN visits v
+            ON v.user_id = tr.user_id
+           AND EXTRACT(YEAR FROM v.submitted_at_local) = tr.year
+           AND v.is_deleted IS NOT TRUE
+        WHERE tr.year = :year {rep_clause}
+        GROUP BY u.name
+        ORDER BY target_visits DESC
+    """, params)
+
+
 def get_analytics_time_series(user_id: int, role: str, date_from, date_to,
                                granularity: str, filters: dict, rep_ids=None) -> pd.DataFrame:
     joins, where, params = _analytics_scope(user_id, role, date_from, date_to, filters, rep_ids)

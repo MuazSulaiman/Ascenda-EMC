@@ -20,6 +20,7 @@ from db_ops import (
     get_analytics_kpis_previous_period,
     get_analytics_new_vs_repeat,
     get_analytics_objective_categories,
+    get_analytics_target_vs_actual,
     get_analytics_time_map,
     get_analytics_time_series,
     get_analytics_today,
@@ -451,6 +452,13 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
     visits_df = get_analytics_visits_per_rep(uid, role, date_from, date_to, filters, rep_ids)
     rep_data  = get_analytics_kpis_per_rep(uid, role, date_from, date_to, filters, rep_ids)
 
+    from datetime import timedelta as _td
+    _delta     = date_to - date_from
+    _prev_to   = date_from - _td(days=1)
+    _prev_from = _prev_to - _delta
+    prev_visits_df = get_analytics_visits_per_rep(uid, role, _prev_from, _prev_to, filters, rep_ids)
+    prev_map = dict(zip(prev_visits_df["rep"], prev_visits_df["total_visits"])) if not prev_visits_df.empty else {}
+
     # ── Rep leaderboard ───────────────────────────────────────────────────────
     subsection_label("Rep Leaderboard")
 
@@ -471,6 +479,13 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
         visits    = int(row["total_visits"])
         custs     = int(row["total_customers"])
         ratio     = float(row["ratio"])
+        prev_v = prev_map.get(name, 0)
+        if prev_v and visits > prev_v:
+            trend_html = '<span style="color:#0e8a4f;font-size:0.7rem;">&#9650;</span>'
+        elif prev_v and visits < prev_v:
+            trend_html = '<span style="color:#c83333;font-size:0.7rem;">&#9660;</span>'
+        else:
+            trend_html = '<span style="color:#999;font-size:0.7rem;">&#8211;</span>'
         initials  = _initials(name)
         is_leader = rank == 1
         row_bg    = "background:#f0f5ff;" if is_leader else ""
@@ -492,7 +507,7 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
             f'color:var(--color-text);">{_html.escape(name)}</span>'
             f'</div></td>'
             f'<td style="padding:9px 14px;font-size:0.78rem;font-weight:700;'
-            f'color:var(--color-text);text-align:right;">{visits:,}</td>'
+            f'color:var(--color-text);text-align:right;">{visits:,} {trend_html}</td>'
             f'<td style="padding:9px 14px;font-size:0.78rem;'
             f'color:var(--color-text-muted);text-align:right;">{custs:,}</td>'
             f'<td style="padding:9px 14px;font-size:0.78rem;'
@@ -538,6 +553,16 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
                 plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             )
             fig.update_xaxes(gridcolor="rgba(0,0,0,0.06)")
+            if not df.empty:
+                mean_ratio = df["ratio"].mean()
+                fig.add_vline(
+                    x=mean_ratio,
+                    line_dash="dash",
+                    line_color="rgba(100,100,100,0.5)",
+                    annotation_text=f"Avg {mean_ratio:.2f}",
+                    annotation_position="top right",
+                    annotation_font_size=10,
+                )
             st.plotly_chart(fig, use_container_width=True, key="an_kpi_apc")
 
     with col2:
@@ -555,7 +580,46 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
                 plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             )
             fig3.update_xaxes(gridcolor="rgba(0,0,0,0.06)")
+            if not df3.empty:
+                mean_monthly = df3["avg_monthly"].mean()
+                fig3.add_vline(
+                    x=mean_monthly,
+                    line_dash="dash",
+                    line_color="rgba(100,100,100,0.5)",
+                    annotation_text=f"Avg {mean_monthly:.1f}",
+                    annotation_position="top right",
+                    annotation_font_size=10,
+                )
             st.plotly_chart(fig3, use_container_width=True, key="an_kpi_acm")
+
+    # ── Target progress bars ──────────────────────────────────────────────────
+    import datetime as _dt
+    current_year = _dt.date.today().year
+    tgt_df = get_analytics_target_vs_actual(current_year, rep_ids)
+    if not tgt_df.empty and tgt_df["target_visits"].sum() > 0:
+        subsection_label(f"Visit Target Progress — {current_year}")
+        for _, trow in tgt_df.iterrows():
+            rep_name = str(trow["rep"])
+            target_v = int(trow["target_visits"])
+            actual_v = int(trow["actual_visits"])
+            if target_v == 0:
+                continue
+            pct    = min(actual_v / target_v, 1.0)
+            bar_w  = f"{pct * 100:.0f}%"
+            bar_clr = "#0e8a4f" if pct >= 1.0 else BRAND
+            label   = f"{actual_v:,} / {target_v:,}"
+            st.markdown(
+                f'<div style="margin-bottom:8px;">'
+                f'<div style="display:flex;justify-content:space-between;'
+                f'font-size:0.75rem;margin-bottom:3px;">'
+                f'<span style="font-weight:600;color:var(--color-text);">'
+                f'{_html.escape(rep_name)}</span>'
+                f'<span style="color:var(--color-text-muted);">{label}</span></div>'
+                f'<div style="background:var(--color-surface-2);border-radius:6px;height:8px;">'
+                f'<div style="background:{bar_clr};border-radius:6px;'
+                f'height:8px;width:{bar_w};"></div></div></div>',
+                unsafe_allow_html=True,
+            )
 
 
 @st.cache_data(ttl=300)

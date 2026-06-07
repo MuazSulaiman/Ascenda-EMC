@@ -136,3 +136,13 @@ def test_new_vs_repeat_shape(admin_uid):
     assert "repeat_visits" in result
     assert result["new_visits"] >= 0
     assert result["repeat_visits"] >= 0
+
+
+def test_target_vs_actual_returns_dataframe(admin_uid):
+    from db_ops import get_analytics_target_vs_actual
+    import datetime
+    df = get_analytics_target_vs_actual(datetime.date.today().year, None)
+    assert hasattr(df, "columns")
+    if not df.empty:
+        for col in ("rep", "target_visits", "actual_visits"):
+            assert col in df.columns
