@@ -1,5 +1,5 @@
 # db_ops.py
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import pandas as pd
@@ -268,7 +268,6 @@ def get_analytics_kpis(user_id: int, role: str, date_from, date_to, filters: dic
 def get_analytics_kpis_previous_period(user_id: int, role: str, date_from, date_to,
                                         filters: dict, rep_ids=None) -> dict:
     """Same KPIs as get_analytics_kpis() but for the preceding period of equal length."""
-    from datetime import timedelta
     delta     = date_to - date_from
     prev_to   = date_from - timedelta(days=1)
     prev_from = prev_to   - delta
