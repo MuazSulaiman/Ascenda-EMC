@@ -226,8 +226,6 @@ def _analytics_scope(user_id: int, role: str, date_from, date_to, filters: dict,
 
 def get_analytics_kpis(user_id: int, role: str, date_from, date_to, filters: dict, rep_ids=None) -> dict:
     joins, where, params = _analytics_scope(user_id, role, date_from, date_to, filters, rep_ids)
-    wd_params = dict(params)
-    wd_params["_wd"] = [0, 1, 2, 3, 4]
 
     row = query_df(f"""
         WITH base AS (
@@ -250,26 +248,31 @@ def get_analytics_kpis(user_id: int, role: str, date_from, date_to, filters: dic
         daily_wd AS (
             SELECT DATE(submitted_at_local) AS d, COUNT(DISTINCT customer_id) AS dc
             FROM base
-            WHERE dow = ANY(:_wd)
+            WHERE dow = ANY(ARRAY[0,1,2,3,4])
             GROUP BY 1
         )
         SELECT
-            (SELECT COUNT(*) FROM base)                       AS total_visits,
-            (SELECT COUNT(DISTINCT customer_id) FROM base)    AS total_customers,
-            (SELECT COUNT(DISTINCT audience_id) FROM base)    AS total_audiences,
-            AVG(m.mc)                                         AS avg_customers_per_month,
-            AVG(m.mbl)                                        AS avg_bl_per_month,
-            (SELECT AVG(dc) FROM daily_wd)                    AS customers_per_day
-        FROM monthly m
-    """, wd_params)
+            (SELECT COUNT(*)                        FROM base)     AS total_visits,
+            (SELECT COUNT(DISTINCT customer_id)     FROM base)     AS total_customers,
+            (SELECT COUNT(DISTINCT audience_id)     FROM base)     AS total_audiences,
+            (SELECT AVG(mc)                         FROM monthly)  AS avg_customers_per_month,
+            (SELECT AVG(mbl)                        FROM monthly)  AS avg_bl_per_month,
+            (SELECT AVG(dc)                         FROM daily_wd) AS customers_per_day
+    """, params)
 
-    kpis = row.iloc[0].to_dict() if not row.empty else {}
-    tv = float(kpis.get("total_visits") or 0)
-    tc = float(kpis.get("total_customers") or 0)
-    ta = float(kpis.get("total_audiences") or 0)
-    kpis["total_visits"]            = int(tv)
-    kpis["total_customers"]         = int(tc)
-    kpis["total_audiences"]         = int(ta)
+    _zero = {
+        "total_visits": 0, "total_customers": 0, "total_audiences": 0,
+        "visits_per_customer": 0.0, "audiences_per_customer": 0.0,
+        "avg_customers_per_month": 0.0, "avg_bl_per_month": 0.0,
+        "customers_per_day": 0.0,
+    }
+    kpis = row.iloc[0].to_dict() if not row.empty else dict(_zero)
+    tv = int(kpis.get("total_visits") or 0)
+    tc = int(kpis.get("total_customers") or 0)
+    ta = int(kpis.get("total_audiences") or 0)
+    kpis["total_visits"]            = tv
+    kpis["total_customers"]         = tc
+    kpis["total_audiences"]         = ta
     kpis["visits_per_customer"]     = tv / tc if tc else 0.0
     kpis["audiences_per_customer"]  = ta / tc if tc else 0.0
     kpis["avg_customers_per_month"] = float(kpis.get("avg_customers_per_month") or 0)
