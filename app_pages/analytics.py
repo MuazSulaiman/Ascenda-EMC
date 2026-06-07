@@ -600,21 +600,14 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
         st.info("No data for the selected period.")
         return
 
-    # ── Heatmap: Day × Hour ──────────────────────────────────────────────────
-    st.markdown("**Day × Hour Heatmap**  *(click a cell to cross-filter)*")
-    pivot = (
-        tm_df.groupby(["dow", "hour"])["visit_count"].sum()
-             .reset_index()
-    )
-    all_hours = list(range(24))
-    all_dows  = list(range(7))
-    heat_matrix = pd.DataFrame(0, index=all_dows, columns=all_hours)
+    # ── Heatmap: Day × Hour — brand blue ─────────────────────────────────────
+    subsection_label("Day × Hour Heatmap  ·  click a cell to cross-filter")
+    pivot = tm_df.groupby(["dow", "hour"])["visit_count"].sum().reset_index()
+    heat_matrix = pd.DataFrame(0, index=list(range(7)), columns=list(range(24)))
     for _, row in pivot.iterrows():
         heat_matrix.loc[int(row["dow"]), int(row["hour"])] = int(row["visit_count"])
-
     heat_matrix.index   = _DOW_NAMES
-    heat_matrix.columns = [str(h) for h in all_hours]
-    # Drop always-zero hour columns for readability
+    heat_matrix.columns = [str(h) for h in range(24)]
     active_cols = [c for c in heat_matrix.columns if heat_matrix[c].sum() > 0]
     heat_matrix = heat_matrix[active_cols]
 
@@ -622,7 +615,7 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
         z=heat_matrix.values.tolist(),
         x=active_cols,
         y=_DOW_NAMES,
-        colorscale=[[0, "#f0f4ff"], [0.5, "#6ea6ff"], [1, BRAND]],
+        colorscale=[[0, "#eef2ff"], [0.5, "#6ea6ff"], [1, "#2667ff"]],
         text=heat_matrix.values.tolist(),
         texttemplate="%{text}",
         showscale=True,
@@ -635,75 +628,153 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
         yaxis=dict(title="", autorange="reversed"),
         paper_bgcolor="rgba(0,0,0,0)",
     )
-    ev_heat = st.plotly_chart(fig_heat, use_container_width=True, on_select="rerun", key="an_heatmap")
+    ev_heat = st.plotly_chart(fig_heat, use_container_width=True,
+                               on_select="rerun", key="an_heatmap")
     _handle_heatmap_click(ev_heat)
 
-    st.markdown("---")
+    st.markdown("<div style='margin-bottom:1rem;'></div>", unsafe_allow_html=True)
+
+    # ── Bottom row: Today · Day bar · Hour bar ────────────────────────────────
     col_t, col_day, col_hr = st.columns([1, 2, 2])
 
-    # Today's visits table
     with col_t:
         today = _local_now().date()
-        st.markdown(f"**Today's Visits**  \n*{today.strftime('%d/%m/%Y')}*")
+        subsection_label(f"Today  ·  {today.strftime('%d/%m/%Y')}")
         today_df = get_analytics_today(uid, role, today, rep_ids)
         if not today_df.empty:
-            total_row = pd.DataFrame([{"Frontline Name": "**Total**", "Visits": today_df["Visits"].sum()}])
-            st.dataframe(pd.concat([today_df, total_row], ignore_index=True),
-                         hide_index=True, use_container_width=True)
+            total_row = pd.DataFrame([{
+                "Frontline Name": "Total",
+                "Visits": today_df["Visits"].sum(),
+            }])
+            display_df = pd.concat([today_df, total_row], ignore_index=True)
+            st.markdown(
+                html_table(display_df, max_rows=50, max_height=320),
+                unsafe_allow_html=True,
+            )
         else:
             st.caption("No visits today.")
 
-    # Stacked bar: by Day Name × BU
     with col_day:
-        st.markdown("**Visits by Day**")
-        day_bu = (
-            tm_df.groupby(["dow", "business_unit"])["visit_count"].sum()
-                 .reset_index()
-        )
+        subsection_label("Visits by Day")
+        day_bu = tm_df.groupby(["dow", "business_unit"])["visit_count"].sum().reset_index()
         day_bu["Day"] = day_bu["dow"].apply(lambda d: _DOW_NAMES[int(d)])
         day_bu = day_bu.sort_values("dow")
-        fig_day = px.bar(day_bu, x="Day", y="visit_count", color="business_unit",
-                         color_discrete_sequence=PALETTE,
-                         category_orders={"Day": _DOW_NAMES})
+        fig_day = px.bar(
+            day_bu, x="Day", y="visit_count", color="business_unit",
+            color_discrete_sequence=PALETTE,
+            category_orders={"Day": _DOW_NAMES},
+        )
         fig_day.update_layout(
             margin=dict(l=0, r=0, t=10, b=0), height=280,
             xaxis_title="", yaxis_title="Visits",
-            legend=dict(title="", orientation="h", y=-0.25),
+            legend=dict(title="", orientation="h", y=-0.3),
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         )
-        fig_day.update_yaxes(gridcolor="#f0f0f0")
-        ev_day = st.plotly_chart(fig_day, use_container_width=True, on_select="rerun", key="an_daybar")
+        fig_day.update_yaxes(gridcolor="rgba(0,0,0,0.06)")
+        ev_day = st.plotly_chart(fig_day, use_container_width=True,
+                                  on_select="rerun", key="an_daybar")
         if ev_day and getattr(ev_day, "selection", None):
-            pts = ev_day.selection.get("points", []) if isinstance(ev_day.selection, dict) else getattr(ev_day.selection, "points", [])
+            pts = (ev_day.selection.get("points", [])
+                   if isinstance(ev_day.selection, dict)
+                   else getattr(ev_day.selection, "points", []))
             if pts:
                 day_name = pts[0].get("x")
                 if day_name and day_name in _DOW_MAP:
                     _set_filter("dow", _DOW_MAP[day_name])
 
-    # Stacked bar: by Hour × BU
     with col_hr:
-        st.markdown("**Visits by Hour**")
-        hr_bu = (
-            tm_df.groupby(["hour", "business_unit"])["visit_count"].sum()
-                 .reset_index()
-        )
+        subsection_label("Visits by Hour")
+        hr_bu = tm_df.groupby(["hour", "business_unit"])["visit_count"].sum().reset_index()
         hr_bu["Hour"] = hr_bu["hour"].astype(str)
-        fig_hr = px.bar(hr_bu, x="Hour", y="visit_count", color="business_unit",
-                        color_discrete_sequence=PALETTE)
+        fig_hr = px.bar(
+            hr_bu, x="Hour", y="visit_count", color="business_unit",
+            color_discrete_sequence=PALETTE,
+        )
         fig_hr.update_layout(
             margin=dict(l=0, r=0, t=10, b=0), height=280,
             xaxis_title="Hour", yaxis_title="Visits",
-            legend=dict(title="", orientation="h", y=-0.25),
+            legend=dict(title="", orientation="h", y=-0.3),
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         )
-        fig_hr.update_yaxes(gridcolor="#f0f0f0")
-        ev_hr = st.plotly_chart(fig_hr, use_container_width=True, on_select="rerun", key="an_hrbar")
+        fig_hr.update_yaxes(gridcolor="rgba(0,0,0,0.06)")
+        ev_hr = st.plotly_chart(fig_hr, use_container_width=True,
+                                 on_select="rerun", key="an_hrbar")
         if ev_hr and getattr(ev_hr, "selection", None):
-            pts = ev_hr.selection.get("points", []) if isinstance(ev_hr.selection, dict) else getattr(ev_hr.selection, "points", [])
+            pts = (ev_hr.selection.get("points", [])
+                   if isinstance(ev_hr.selection, dict)
+                   else getattr(ev_hr.selection, "points", []))
             if pts:
                 h = pts[0].get("x")
                 if h is not None:
                     _set_filter("hour", int(h))
+
+    # ── Attendance pivot (elevated roles only) ────────────────────────────────
+    is_elevated = role in ("admin", "sales manager", "biomedical manager", "supervisor")
+    if not is_elevated:
+        return
+
+    st.markdown("<div style='margin-top:1.5rem;'></div>", unsafe_allow_html=True)
+    subsection_label("Rep Attendance Calendar")
+
+    att_df = get_analytics_attendance(uid, role, date_from, date_to, rep_ids)
+    if att_df.empty:
+        st.caption("No attendance data for the selected period.")
+        return
+
+    att_df["date"] = pd.to_datetime(att_df["date"])
+    pivot_att = att_df.pivot_table(
+        index="rep_name", columns="date", values="visit_count",
+        fill_value=0, aggfunc="sum",
+    )
+    pivot_att.columns = [c.strftime("%d/%m") for c in pivot_att.columns]
+    pivot_att = pivot_att.reset_index().rename(columns={"rep_name": "Rep"})
+
+    import html as _html
+
+    cols_list = list(pivot_att.columns)
+    th_style = (
+        "padding:6px 10px;font-size:0.65rem;font-weight:700;color:var(--color-text-muted);"
+        "text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;"
+        "position:sticky;top:0;z-index:1;"
+        "background:var(--color-surface-2);border-bottom:2px solid var(--color-border);"
+    )
+    header = "".join(
+        f'<th style="{th_style}text-align:{"left" if c == "Rep" else "center"};">'
+        f'{_html.escape(str(c))}</th>'
+        for c in cols_list
+    )
+
+    rows = ""
+    for i, (_, row) in enumerate(pivot_att.iterrows()):
+        bg = "background:var(--color-surface-2);" if i % 2 else ""
+        cells = ""
+        for c in cols_list:
+            v = row[c]
+            if c == "Rep":
+                cell_html = _html.escape(str(v))
+                align = "left"
+            else:
+                vi = int(v) if v else 0
+                if vi == 0:
+                    cell_html = '<span style="color:var(--color-text-subtle);">—</span>'
+                else:
+                    cell_html = f'<span style="color:#2667ff;font-weight:600;">{vi}</span>'
+                align = "center"
+            cells += (
+                f'<td style="padding:5px 10px;font-size:0.72rem;'
+                f'border-bottom:1px solid var(--color-border);'
+                f'text-align:{align};{bg}">{cell_html}</td>'
+            )
+        rows += f"<tr>{cells}</tr>"
+
+    st.markdown(
+        f'<div style="border:1px solid var(--color-border);border-radius:10px;'
+        f'overflow:auto;max-height:340px;margin-top:0.5rem;">'
+        f'<table style="width:100%;border-collapse:collapse;">'
+        f'<thead><tr>{header}</tr></thead>'
+        f'<tbody>{rows}</tbody></table></div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
