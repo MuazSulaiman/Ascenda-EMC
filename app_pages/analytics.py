@@ -480,14 +480,71 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
+    # ── Cascading region → city → sector filter ───────────────────────────────
+    subsection_label("Filter by Location")
+    col_reg, col_city, col_sec = st.columns(3)
+
+    try:
+        region_opts = query_df(
+            "SELECT DISTINCT region FROM customers WHERE region IS NOT NULL ORDER BY region"
+        )["region"].tolist()
+    except Exception:
+        region_opts = []
+
+    with col_reg:
+        sel_region = st.selectbox("Region", ["All"] + region_opts, key="vd_region")
+
+    try:
+        if sel_region != "All":
+            city_opts = query_df(
+                "SELECT DISTINCT city FROM customers WHERE region = :r AND city IS NOT NULL ORDER BY city",
+                {"r": sel_region},
+            )["city"].tolist()
+        else:
+            city_opts = query_df(
+                "SELECT DISTINCT city FROM customers WHERE city IS NOT NULL ORDER BY city"
+            )["city"].tolist()
+    except Exception:
+        city_opts = []
+
+    with col_city:
+        sel_city = st.selectbox("City", ["All"] + city_opts, key="vd_city")
+
+    try:
+        if sel_city != "All":
+            sector_opts = query_df(
+                "SELECT DISTINCT sector FROM customers WHERE city = :c AND sector IS NOT NULL ORDER BY sector",
+                {"c": sel_city},
+            )["sector"].tolist()
+        else:
+            sector_opts = query_df(
+                "SELECT DISTINCT sector FROM customers WHERE sector IS NOT NULL ORDER BY sector"
+            )["sector"].tolist()
+    except Exception:
+        sector_opts = []
+
+    with col_sec:
+        sel_sector = st.selectbox("Sector", ["All"] + sector_opts, key="vd_sector")
+
+    loc_filters = dict(filters)
+    if sel_region != "All":
+        loc_filters["region"] = sel_region
+    if sel_city != "All":
+        loc_filters["city"] = sel_city
+    if sel_sector != "All":
+        loc_filters["sector"] = sel_sector
+
+    # ── Maps ──────────────────────────────────────────────────────────────────
     col_m1, col_m2 = st.columns(2)
 
     with col_m1:
-        st.markdown("**Customer Locations**")
+        subsection_label("Customer Locations")
         cust_df = get_customer_locations_for_map()
         if not cust_df.empty:
-            m1 = folium.Map(location=[cust_df["latitude"].mean(), cust_df["longitude"].mean()],
-                            zoom_start=5, tiles="CartoDB positron")
+            m1 = folium.Map(
+                location=[cust_df["latitude"].mean(), cust_df["longitude"].mean()],
+                zoom_start=5, tiles="CartoDB positron",
+            )
             for _, row in cust_df.iterrows():
                 folium.CircleMarker(
                     location=[row["latitude"], row["longitude"]],
@@ -497,12 +554,15 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
             st_folium(m1, width="100%", height=280, returned_objects=[])
 
     with col_m2:
-        st.markdown("**Visit Locations**")
-        visit_loc_df = get_visit_locations_for_map(uid, role, date_from, date_to, filters, rep_ids)
+        subsection_label("Visit Locations")
+        visit_loc_df = get_visit_locations_for_map(
+            uid, role, date_from, date_to, loc_filters, rep_ids
+        )
         if not visit_loc_df.empty:
-            m2 = folium.Map(location=[visit_loc_df["latitude"].mean(),
-                                       visit_loc_df["longitude"].mean()],
-                             zoom_start=5, tiles="CartoDB positron")
+            m2 = folium.Map(
+                location=[visit_loc_df["latitude"].mean(), visit_loc_df["longitude"].mean()],
+                zoom_start=5, tiles="CartoDB positron",
+            )
             for _, row in visit_loc_df.iterrows():
                 folium.CircleMarker(
                     location=[row["latitude"], row["longitude"]],
@@ -513,12 +573,17 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
         else:
             st.info("No visits with location data in selected range.")
 
-    st.markdown("---")
-    st.markdown("**Visit Records**")
-    detail_df = get_analytics_visits_detail(uid, role, date_from, date_to, filters, rep_ids)
+    # ── Visit records table ───────────────────────────────────────────────────
+    subsection_label("Visit Records")
+    detail_df = get_analytics_visits_detail(uid, role, date_from, date_to, loc_filters, rep_ids)
     if not detail_df.empty:
-        detail_df["Date Local"] = pd.to_datetime(detail_df["Date Local"]).dt.strftime("%d/%m/%Y %I:%M %p")
-        st.dataframe(detail_df, use_container_width=True, hide_index=True)
+        detail_df["Date Local"] = pd.to_datetime(
+            detail_df["Date Local"], errors="coerce"
+        ).dt.strftime("%d/%m/%Y %I:%M %p")
+        st.markdown(
+            html_table(detail_df, max_rows=1000, max_height=480),
+            unsafe_allow_html=True,
+        )
         st.caption(f"{len(detail_df):,} records shown (max 1,000)")
     else:
         st.info("No visits match the current filters.")
