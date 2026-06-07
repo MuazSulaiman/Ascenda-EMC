@@ -380,7 +380,8 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
 
     def _initials(name: str) -> str:
         parts = (name or "?").split()
-        return "".join(p[0].upper() for p in parts[:2])
+        raw = "".join(p[0].upper() for p in parts[:2])
+        return _html.escape(raw)
 
     rows_html = ""
     for idx_r, row in leaderboard.iterrows():
@@ -407,7 +408,7 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
             f'font-size:0.58rem;font-weight:700;color:{av_fg};flex-shrink:0;">'
             f'{initials}</div>'
             f'<span style="font-size:0.78rem;font-weight:{weight};'
-            f'color:var(--color-text);">{name}</span>'
+            f'color:var(--color-text);">{_html.escape(name)}</span>'
             f'</div></td>'
             f'<td style="padding:9px 14px;font-size:0.78rem;font-weight:700;'
             f'color:var(--color-text);text-align:right;">{visits:,}</td>'
@@ -730,6 +731,11 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
     pivot_att.columns = [c.strftime("%d/%m") for c in pivot_att.columns]
     pivot_att = pivot_att.reset_index().rename(columns={"rep_name": "Rep"})
 
+    # cap at 31 most recent dates so the table stays usable
+    if pivot_att.shape[1] > 32:  # 1 "Rep" column + up to 31 date columns
+        pivot_att = pd.concat(
+            [pivot_att.iloc[:, :1], pivot_att.iloc[:, -31:]], axis=1
+        )
 
     cols_list = list(pivot_att.columns)
     th_style = (

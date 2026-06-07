@@ -195,14 +195,18 @@ def _analytics_scope(user_id: int, role: str, date_from, date_to, filters: dict,
 
     # Cross-filters
     if filters.get("region"):
-        clauses.append("u.region = :an_region")
+        clauses.append("c.region = :an_region")
         params["an_region"] = filters["region"]
     if filters.get("business_unit"):
         clauses.append("bu.name = :an_bu")
         params["an_bu"] = filters["business_unit"]
     if filters.get("objective"):
-        clauses.append("o.name = :an_obj")
-        params["an_obj"] = filters["objective"]
+        obj_val = filters["objective"]
+        if obj_val in ("(No Objective)", "(Uncategorised)"):
+            clauses.append("o.name IS NULL")
+        else:
+            clauses.append("o.name = :an_obj")
+            params["an_obj"] = obj_val
     if filters.get("dow") is not None:
         clauses.append("EXTRACT(DOW FROM v.submitted_at_local)::int = :an_dow")
         params["an_dow"] = int(filters["dow"])
