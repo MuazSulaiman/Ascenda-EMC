@@ -791,8 +791,6 @@ def page_analytics():
     role = (user.get("role") or "").lower().strip()
     is_elevated = role in ("admin", "sales manager", "biomedical manager", "supervisor")
 
-    st.markdown("## Analytics")
-
     filters = _get_filters()
 
     # ── Controls row ──────────────────────────────────────────────────────────
@@ -816,6 +814,11 @@ def page_analytics():
                 sel = st.multiselect("Filter by Rep", options=list(rep_map.keys()), key="an_reps")
                 if sel:
                     rep_ids = [rep_map[r] for r in sel]
+
+    section_header(
+        "Analytics",
+        f"{date_from.strftime('%d %b %Y')} – {date_to.strftime('%d %b %Y')}",
+    )
 
     # ── Active filter chips ───────────────────────────────────────────────────
     _render_chips(filters)
