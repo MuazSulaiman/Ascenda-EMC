@@ -366,67 +366,113 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
-    rep_data = get_analytics_kpis_per_rep(uid, role, date_from, date_to, filters, rep_ids)
+    visits_df = get_analytics_visits_per_rep(uid, role, date_from, date_to, filters, rep_ids)
+    rep_data  = get_analytics_kpis_per_rep(uid, role, date_from, date_to, filters, rep_ids)
 
+    # ── Rep leaderboard ───────────────────────────────────────────────────────
+    subsection_label("Rep Leaderboard")
+
+    apc_df = rep_data["audience_per_customer"].copy()
+    apc_df["ratio"] = apc_df["ratio"].round(2)
+    leaderboard = visits_df.merge(apc_df[["rep", "ratio"]], on="rep", how="left")
+    leaderboard["ratio"] = leaderboard["ratio"].fillna(0).round(2)
+
+    def _initials(name: str) -> str:
+        parts = (name or "?").split()
+        return "".join(p[0].upper() for p in parts[:2])
+
+    rows_html = ""
+    for idx_r, row in leaderboard.iterrows():
+        rank      = idx_r + 1
+        name      = str(row["rep"])
+        visits    = int(row["total_visits"])
+        custs     = int(row["total_customers"])
+        ratio     = float(row["ratio"])
+        initials  = _initials(name)
+        is_leader = rank == 1
+        row_bg    = "background:#f0f5ff;" if is_leader else ""
+        av_bg     = "#2667ff"            if is_leader else "var(--color-surface-2)"
+        av_fg     = "#ffffff"            if is_leader else "var(--color-text-subtle)"
+        rank_fg   = "#2667ff"            if is_leader else "var(--color-text-subtle)"
+        weight    = "600"                if is_leader else "500"
+        rows_html += (
+            f'<tr style="{row_bg}">'
+            f'<td style="padding:9px 14px;font-size:0.72rem;font-weight:800;'
+            f'color:{rank_fg};">{rank}</td>'
+            f'<td style="padding:9px 14px;">'
+            f'<div style="display:flex;align-items:center;gap:8px;">'
+            f'<div style="width:28px;height:28px;border-radius:50%;background:{av_bg};'
+            f'display:flex;align-items:center;justify-content:center;'
+            f'font-size:0.58rem;font-weight:700;color:{av_fg};flex-shrink:0;">'
+            f'{initials}</div>'
+            f'<span style="font-size:0.78rem;font-weight:{weight};'
+            f'color:var(--color-text);">{name}</span>'
+            f'</div></td>'
+            f'<td style="padding:9px 14px;font-size:0.78rem;font-weight:700;'
+            f'color:var(--color-text);text-align:right;">{visits:,}</td>'
+            f'<td style="padding:9px 14px;font-size:0.78rem;'
+            f'color:var(--color-text-muted);text-align:right;">{custs:,}</td>'
+            f'<td style="padding:9px 14px;font-size:0.78rem;'
+            f'color:var(--color-text-muted);text-align:right;">{ratio:.2f}</td>'
+            f'</tr>'
+        )
+
+    th_style = (
+        "padding:8px 14px;font-size:0.6rem;font-weight:700;color:var(--color-text-muted);"
+        "text-transform:uppercase;letter-spacing:.05em;"
+    )
+    st.markdown(
+        f'<div style="background:var(--color-surface);border:1px solid var(--color-border);'
+        f'border-radius:14px;overflow:hidden;margin-bottom:1.25rem;">'
+        f'<table style="width:100%;border-collapse:collapse;">'
+        f'<thead><tr style="background:var(--color-surface-2);'
+        f'border-bottom:2px solid var(--color-border);">'
+        f'<th style="{th_style}text-align:left;">#</th>'
+        f'<th style="{th_style}text-align:left;">Rep</th>'
+        f'<th style="{th_style}text-align:right;">Visits</th>'
+        f'<th style="{th_style}text-align:right;">Customers</th>'
+        f'<th style="{th_style}text-align:right;">Aud / Cust</th>'
+        f'</tr></thead>'
+        f'<tbody>{rows_html}</tbody></table></div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Supporting bar charts ─────────────────────────────────────────────────
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("**Audiences Visited per Rep**")
-        df = rep_data["audience_count"]
+        subsection_label("Audiences / Customer by Rep")
+        df = rep_data["audience_per_customer"].copy()
         if not df.empty:
-            fig = px.bar(df, y="rep", x="count", orientation="h",
+            df["ratio"] = df["ratio"].round(2)
+            fig = px.bar(df, y="rep", x="ratio", orientation="h",
                          color_discrete_sequence=[BRAND])
-            fig.update_layout(margin=dict(l=0, r=0, t=10, b=0),
-                               height=max(220, len(df) * 30),
-                               yaxis=dict(autorange="reversed", title=""),
-                               xaxis_title="Audiences",
-                               plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-            fig.update_xaxes(gridcolor="#f0f0f0")
-            st.plotly_chart(fig, use_container_width=True, key="an_kpi_aud")
+            fig.update_layout(
+                margin=dict(l=0, r=0, t=10, b=0),
+                height=max(220, len(df) * 32),
+                yaxis=dict(autorange="reversed", title=""),
+                xaxis_title="Ratio",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            )
+            fig.update_xaxes(gridcolor="rgba(0,0,0,0.06)")
+            st.plotly_chart(fig, use_container_width=True, key="an_kpi_apc")
 
     with col2:
-        st.markdown("**Audience / Customer by Rep**")
-        df2 = rep_data["audience_per_customer"]
-        if not df2.empty:
-            df2["ratio"] = df2["ratio"].round(1)
-            fig2 = px.bar(df2, y="rep", x="ratio", orientation="h",
-                          color_discrete_sequence=["#6366f1"])
-            fig2.update_layout(margin=dict(l=0, r=0, t=10, b=0),
-                                height=max(220, len(df2) * 30),
-                                yaxis=dict(autorange="reversed", title=""),
-                                xaxis_title="Ratio",
-                                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-            fig2.update_xaxes(gridcolor="#f0f0f0")
-            st.plotly_chart(fig2, use_container_width=True, key="an_kpi_apc")
-
-    col3, col4 = st.columns(2)
-
-    with col3:
-        st.markdown("**Avg Customers / Month per Rep**")
-        df3 = rep_data["avg_customers_per_month"]
+        subsection_label("Avg Customers / Month by Rep")
+        df3 = rep_data["avg_customers_per_month"].copy()
         if not df3.empty:
             df3["avg_monthly"] = df3["avg_monthly"].round(1)
             fig3 = px.bar(df3, y="rep", x="avg_monthly", orientation="h",
                           color_discrete_sequence=["#10b981"])
-            fig3.update_layout(margin=dict(l=0, r=0, t=10, b=0),
-                                height=max(220, len(df3) * 30),
-                                yaxis=dict(autorange="reversed", title=""),
-                                xaxis_title="Avg Customers/Month",
-                                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-            fig3.update_xaxes(gridcolor="#f0f0f0")
+            fig3.update_layout(
+                margin=dict(l=0, r=0, t=10, b=0),
+                height=max(220, len(df3) * 32),
+                yaxis=dict(autorange="reversed", title=""),
+                xaxis_title="Avg Customers/Month",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            )
+            fig3.update_xaxes(gridcolor="rgba(0,0,0,0.06)")
             st.plotly_chart(fig3, use_container_width=True, key="an_kpi_acm")
-
-    with col4:
-        st.markdown("**Visits by Region**")
-        df4 = rep_data["region"]
-        if not df4.empty:
-            fig4 = px.bar(df4, x="region", y="count",
-                          color_discrete_sequence=[BRAND])
-            fig4.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=260,
-                                xaxis_title="", yaxis_title="Visits",
-                                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-            fig4.update_yaxes(gridcolor="#f0f0f0")
-            st.plotly_chart(fig4, use_container_width=True, key="an_kpi_reg")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
