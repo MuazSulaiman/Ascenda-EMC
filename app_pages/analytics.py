@@ -170,105 +170,196 @@ def _render_chips(filters: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
-    kpis   = get_analytics_kpis(uid, role, date_from, date_to, filters, rep_ids)
-    breaks = get_analytics_breakdowns(uid, role, date_from, date_to, filters, rep_ids)
+    kpis      = get_analytics_kpis(uid, role, date_from, date_to, filters, rep_ids)
+    prev_kpis = get_analytics_kpis_previous_period(uid, role, date_from, date_to, filters, rep_ids)
 
-    # KPI cards
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Visits",        int(kpis.get("total_visits", 0)))
-    c2.metric("Customers",           int(kpis.get("total_customers", 0)))
-    c3.metric("Audiences",           int(kpis.get("total_audiences", 0)))
-    c4.metric("Audience / Customer", f"{kpis.get('audiences_per_customer', 0):.1f}")
-    c5, c6, c7, c8 = st.columns(4)
-    c5.metric("Customer / Day",      f"{kpis.get('customers_per_day', 0):.1f}")
-    c6.metric("Visits / Customer",   f"{kpis.get('visits_per_customer', 0):.1f}")
-    c7.metric("Customers / Month",   f"{kpis.get('avg_customers_per_month', 0):.1f}")
-    c8.metric("BL / Month",          f"{kpis.get('avg_bl_per_month', 0):.1f}")
+    tv  = int(kpis.get("total_visits", 0))
+    tc  = int(kpis.get("total_customers", 0))
+    ta  = int(kpis.get("total_audiences", 0))
+    ptv = int(prev_kpis.get("total_visits", 0))
+    ptc = int(prev_kpis.get("total_customers", 0))
+    pta = int(prev_kpis.get("total_audiences", 0))
 
-    st.markdown("---")
+    tv_badge = _delta_badge_hero(_pct_delta(tv, ptv))
+    tc_badge = _delta_badge_card(_pct_delta(tc, ptc))
+    ta_badge = _delta_badge_card(_pct_delta(ta, pta))
 
-    # Time series with drill-down
-    st.markdown("**Visits Over Time**")
-    gran = st.radio("Granularity", ["Year", "Month", "Week"], horizontal=True, key="an_gran",
-                    label_visibility="collapsed")
+    cpd = kpis.get("customers_per_day", 0)
+    vpc = kpis.get("visits_per_customer", 0)
+    apc = kpis.get("audiences_per_customer", 0)
+    acm = kpis.get("avg_customers_per_month", 0)
+    blm = kpis.get("avg_bl_per_month", 0)
+
+    # ── Hero KPI scorecard ────────────────────────────────────────────────────
+    st.markdown(f"""
+<div style="display:grid;grid-template-columns:1.6fr 1fr 1fr;gap:12px;margin-bottom:10px;">
+  <div style="background:linear-gradient(135deg,#2667ff 0%,#4d8ef0 100%);border-radius:14px;
+              padding:20px 22px;color:#fff;box-shadow:0 4px 14px rgba(38,103,255,.3);">
+    <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;
+                letter-spacing:.07em;opacity:.85;margin-bottom:8px;">Total Visits</div>
+    <div style="font-size:2.6rem;font-weight:700;letter-spacing:-.03em;line-height:1;">{tv:,}</div>
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:10px;">
+      {tv_badge}
+    </div>
+  </div>
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);
+              border-radius:14px;padding:18px 20px;box-shadow:var(--shadow-card);">
+    <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;
+                letter-spacing:.07em;color:var(--color-text-subtle);margin-bottom:6px;">Customers</div>
+    <div style="font-size:2rem;font-weight:700;color:var(--color-text);
+                letter-spacing:-.02em;line-height:1.1;">{tc:,}</div>
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;">
+      {tc_badge}
+    </div>
+  </div>
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);
+              border-radius:14px;padding:18px 20px;box-shadow:var(--shadow-card);">
+    <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;
+                letter-spacing:.07em;color:var(--color-text-subtle);margin-bottom:6px;">Audiences</div>
+    <div style="font-size:2rem;font-weight:700;color:var(--color-text);
+                letter-spacing:-.02em;line-height:1.1;">{ta:,}</div>
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;">
+      {ta_badge}
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    # ── Secondary metric strip ────────────────────────────────────────────────
+    def _secondary_card(label, val):
+        return (
+            f'<div style="flex:1;background:var(--color-surface);border:1px solid var(--color-border);'
+            f'border-radius:10px;padding:10px 12px;">'
+            f'<div style="font-size:0.6rem;font-weight:700;text-transform:uppercase;'
+            f'letter-spacing:.06em;color:var(--color-text-subtle);margin-bottom:4px;">{label}</div>'
+            f'<div style="font-size:1.2rem;font-weight:700;color:var(--color-text);">{val}</div>'
+            f'</div>'
+        )
+
+    st.markdown(
+        '<div style="display:flex;gap:8px;margin-bottom:16px;">'
+        + _secondary_card("Cust / Day",    f"{cpd:.1f}")
+        + _secondary_card("Visits / Cust", f"{vpc:.1f}")
+        + _secondary_card("Aud / Cust",    f"{apc:.1f}")
+        + _secondary_card("Cust / Month",  f"{acm:.1f}")
+        + _secondary_card("BL / Month",    f"{blm:.1f}")
+        + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Visits over time — area chart ─────────────────────────────────────────
+    subsection_label("Visits Over Time")
+    gran = st.radio("Granularity", ["Year", "Month", "Week"], horizontal=True,
+                    key="an_gran", label_visibility="collapsed")
     ts_df = get_analytics_time_series(uid, role, date_from, date_to, gran, filters, rep_ids)
     if not ts_df.empty:
-        # Reformat Month periods from "YYYY-MM" to "Mon YYYY" for display
         if gran == "Month":
             ts_df["period"] = pd.to_datetime(ts_df["period"], format="%Y-%m").dt.strftime("%b %Y")
-        fig_ts = px.line(ts_df, x="period", y="visit_count", markers=True,
+        fig_ts = px.area(ts_df, x="period", y="visit_count",
                          color_discrete_sequence=[BRAND])
-        fig_ts.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=220,
-                              xaxis_title="", yaxis_title="Visits",
-                              plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+        fig_ts.update_traces(line_color=BRAND, fillcolor="rgba(38,103,255,0.10)")
+        fig_ts.update_layout(
+            margin=dict(l=0, r=0, t=10, b=0), height=220,
+            xaxis_title="", yaxis_title="Visits",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        )
         fig_ts.update_xaxes(showgrid=False)
-        fig_ts.update_yaxes(gridcolor="#f0f0f0")
+        fig_ts.update_yaxes(gridcolor="rgba(0,0,0,0.06)")
         st.plotly_chart(fig_ts, use_container_width=True, key="an_ts")
     else:
         st.info("No visit data for the selected period.")
 
-    st.markdown("---")
+    # ── Treemap drill-downs ───────────────────────────────────────────────────
+    subsection_label("Breakdown by Region & Business Unit")
+    drill_df = get_analytics_drilldown(uid, role, date_from, date_to, filters, rep_ids)
 
-    # Breakdowns row
     col_r, col_bu = st.columns(2)
 
     with col_r:
-        st.markdown("**By Region**")
-        rdf = breaks["region"]
-        if not rdf.empty:
-            fig_r = px.pie(rdf, names="region", values="count", hole=0.4,
-                           color_discrete_sequence=PALETTE)
-            fig_r.update_traces(textposition="outside", textinfo="percent+label")
-            fig_r.update_layout(margin=dict(l=0, r=0, t=10, b=30), height=270,
-                                 showlegend=False,
-                                 paper_bgcolor="rgba(0,0,0,0)")
-            ev_r = st.plotly_chart(fig_r, use_container_width=True, on_select="rerun", key="an_region")
-            _handle_pie_click(ev_r, "region")
+        st.markdown(
+            "**By Region** "
+            '<span style="font-size:0.72rem;color:var(--color-text-subtle);">'
+            "· click tiles to drill down</span>",
+            unsafe_allow_html=True,
+        )
+        if not drill_df.empty:
+            fig_r = px.treemap(
+                drill_df,
+                path=["region", "city", "sector", "customer_name"],
+                values="visit_count",
+                color="visit_count",
+                color_continuous_scale=["#eef2ff", "#6ea6ff", "#2667ff"],
+            )
+            fig_r.update_traces(textinfo="label+value", root_color="rgba(0,0,0,0)")
+            fig_r.update_layout(
+                margin=dict(l=0, r=0, t=10, b=0), height=320,
+                coloraxis_showscale=False,
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+            ev_r = st.plotly_chart(fig_r, use_container_width=True,
+                                   on_select="rerun", key="an_region_tm")
+            if ev_r and getattr(ev_r, "selection", None):
+                pts = (ev_r.selection.get("points", [])
+                       if isinstance(ev_r.selection, dict)
+                       else getattr(ev_r.selection, "points", []))
+                if pts and pts[0].get("parent", "root") in ("", "root"):
+                    label = pts[0].get("label")
+                    if label and label != "(No Region)":
+                        _set_filter("region", label)
 
     with col_bu:
-        st.markdown("**By Business Unit**")
-        bdf = breaks["business_unit"]
-        if not bdf.empty:
-            fig_bu = px.pie(bdf, names="business_unit", values="count", hole=0.4,
-                            color_discrete_sequence=px.colors.qualitative.Pastel)
-            fig_bu.update_traces(textposition="outside", textinfo="percent+label")
-            fig_bu.update_layout(margin=dict(l=0, r=0, t=10, b=30), height=270,
-                                  showlegend=False,
-                                  paper_bgcolor="rgba(0,0,0,0)")
-            ev_bu = st.plotly_chart(fig_bu, use_container_width=True, on_select="rerun", key="an_bu")
-            _handle_pie_click(ev_bu, "business_unit")
+        st.markdown(
+            "**By Business Unit** "
+            '<span style="font-size:0.72rem;color:var(--color-text-subtle);">'
+            "· click tiles to drill down</span>",
+            unsafe_allow_html=True,
+        )
+        if not drill_df.empty:
+            fig_bu = px.treemap(
+                drill_df,
+                path=["business_unit", "product_category", "rep"],
+                values="visit_count",
+                color="visit_count",
+                color_continuous_scale=["#f0fdf4", "#6ee7b7", "#10b981"],
+            )
+            fig_bu.update_traces(textinfo="label+value", root_color="rgba(0,0,0,0)")
+            fig_bu.update_layout(
+                margin=dict(l=0, r=0, t=10, b=0), height=320,
+                coloraxis_showscale=False,
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+            ev_bu = st.plotly_chart(fig_bu, use_container_width=True,
+                                    on_select="rerun", key="an_bu_tm")
+            if ev_bu and getattr(ev_bu, "selection", None):
+                pts = (ev_bu.selection.get("points", [])
+                       if isinstance(ev_bu.selection, dict)
+                       else getattr(ev_bu.selection, "points", []))
+                if pts and pts[0].get("parent", "root") in ("", "root"):
+                    label = pts[0].get("label")
+                    if label and label != "(No BU)":
+                        _set_filter("business_unit", label)
 
-    # Objective funnel bar
-    st.markdown("**Visits by Objective**")
-    odf = breaks["objective"]
-    if not odf.empty:
-        fig_obj = px.bar(odf, y="objective", x="count", orientation="h",
-                         color_discrete_sequence=[BRAND])
+    # ── Objectives grouped bar ────────────────────────────────────────────────
+    subsection_label("Visits by Objective")
+    obj_df = get_analytics_objective_categories(uid, role, date_from, date_to, filters, rep_ids)
+    if not obj_df.empty:
+        fig_obj = px.bar(
+            obj_df, y="objective_name", x="count",
+            color="objective_category", orientation="h",
+            color_discrete_sequence=px.colors.qualitative.Set2,
+        )
         fig_obj.update_layout(
             margin=dict(l=0, r=0, t=10, b=0),
-            height=max(200, len(odf) * 30),
+            height=max(200, len(obj_df) * 28),
             yaxis=dict(autorange="reversed", title=""),
             xaxis_title="Visits",
+            legend=dict(title="Category", orientation="h", y=-0.25),
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         )
-        fig_obj.update_xaxes(gridcolor="#f0f0f0")
-        ev_obj = st.plotly_chart(fig_obj, use_container_width=True, on_select="rerun", key="an_obj")
+        fig_obj.update_xaxes(gridcolor="rgba(0,0,0,0.06)")
+        ev_obj = st.plotly_chart(fig_obj, use_container_width=True,
+                                 on_select="rerun", key="an_obj")
         _handle_hbar_click(ev_obj, "objective", axis="y")
-
-    # Customer locations map
-    st.markdown("**Customer Locations**")
-    cust_df = get_customer_locations_for_map()
-    if not cust_df.empty:
-        center_lat = cust_df["latitude"].mean()
-        center_lon = cust_df["longitude"].mean()
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=6, tiles="CartoDB positron")
-        for _, row in cust_df.iterrows():
-            folium.CircleMarker(
-                location=[row["latitude"], row["longitude"]],
-                radius=5, color=BRAND, fill=True, fill_opacity=0.7,
-                tooltip=f"{row['account_name']} ({row.get('city', '')})",
-            ).add_to(m)
-        st_folium(m, width="100%", height=350, returned_objects=[])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
