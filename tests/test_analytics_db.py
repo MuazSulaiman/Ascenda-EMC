@@ -146,3 +146,12 @@ def test_target_vs_actual_returns_dataframe(admin_uid):
     if not df.empty:
         for col in ("rep", "target_visits", "actual_visits"):
             assert col in df.columns
+
+
+def test_customer_health_columns(admin_uid):
+    from db_ops import get_analytics_customer_health
+    df = get_analytics_customer_health(admin_uid, "admin", None)
+    assert hasattr(df, "columns")
+    if not df.empty:
+        for col in ("customer_name", "region", "city", "last_visit_date", "days_since_visit"):
+            assert col in df.columns

@@ -21,6 +21,7 @@ from db_ops import (
     get_analytics_kpis_previous_period,
     get_analytics_new_vs_repeat,
     get_analytics_objective_categories,
+    get_analytics_customer_health,
     get_analytics_target_vs_actual,
     get_analytics_time_map,
     get_analytics_time_series,
@@ -976,6 +977,79 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Tab 5 – Customer Health
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _tab_customer_health(uid, role, rep_ids):
+    health_df = get_analytics_customer_health(uid, role, rep_ids)
+
+    if health_df.empty:
+        st.info("No customer data available.")
+        return
+
+    # ── Summary strip ─────────────────────────────────────────────────────────
+    total_active  = len(health_df["customer_name"].unique())
+    never_visited = int(health_df["last_visit_date"].isna().sum())
+    visited_30d   = int((health_df["days_since_visit"].fillna(9999) <= 30).sum())
+    stale_60d     = int(
+        ((health_df["days_since_visit"].fillna(9999) > 60) &
+         (health_df["last_visit_date"].notna())).sum()
+    )
+
+    def _hcard(label, val, color="#2667ff"):
+        return (
+            f'<div style="flex:1;min-width:120px;background:var(--color-surface);'
+            f'border:1px solid var(--color-border);'
+            f'border-radius:10px;padding:10px 14px;">'
+            f'<div style="font-size:0.6rem;font-weight:700;text-transform:uppercase;'
+            f'letter-spacing:.06em;color:var(--color-text-subtle);">{label}</div>'
+            f'<div style="font-size:1.4rem;font-weight:700;color:{color};">{val}</div>'
+            f'</div>'
+        )
+
+    st.markdown(
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">'
+        + _hcard("Active Customers",  f"{total_active:,}")
+        + _hcard("Visited ≤ 30 days", f"{visited_30d:,}",  "#0e8a4f")
+        + _hcard("Stale > 60 days",   f"{stale_60d:,}",   "#c83333")
+        + _hcard("Never Visited",     f"{never_visited:,}", "#888888")
+        + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Days-since-visit histogram ────────────────────────────────────────────
+    subsection_label("Days Since Last Visit Distribution")
+    hist_df = health_df.dropna(subset=["days_since_visit"]).copy()
+    if not hist_df.empty:
+        hist_df["days_since_visit"] = hist_df["days_since_visit"].astype(int)
+        fig_hist = px.histogram(
+            hist_df, x="days_since_visit", nbins=20,
+            color_discrete_sequence=[BRAND],
+        )
+        fig_hist.update_layout(
+            margin=dict(l=0, r=0, t=10, b=0), height=200,
+            xaxis_title="Days Since Last Visit", yaxis_title="Customers",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        )
+        fig_hist.update_yaxes(gridcolor="rgba(0,0,0,0.06)")
+        st.plotly_chart(fig_hist, use_container_width=True, key="an_ch_hist")
+
+    # ── Detail table ──────────────────────────────────────────────────────────
+    subsection_label("Customer List — Sorted by Days Inactive")
+    display_df = health_df.copy()
+    display_df["last_visit_date"] = display_df["last_visit_date"].fillna("Never").astype(str)
+    display_df["days_since_visit"] = display_df["days_since_visit"].fillna("—").astype(str)
+    display_df.columns = [
+        "Customer", "Region", "City", "Last Rep", "Last Visit", "Days Inactive"
+    ]
+    st.markdown(
+        html_table(display_df, max_rows=500, max_height=420),
+        unsafe_allow_html=True,
+    )
+    st.caption(f"{len(display_df):,} active customers shown")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1022,7 +1096,7 @@ def page_analytics():
     _render_chips(filters)
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs(["Overview", "KPIs", "Visits Detail", "Time Map"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "KPIs", "Visits Detail", "Time Map", "Customer Health"])
 
     with tab1:
         _tab_overview(uid, role, date_from, date_to, filters, rep_ids)
@@ -1032,3 +1106,5 @@ def page_analytics():
         _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids)
     with tab4:
         _tab_time_map(uid, role, date_from, date_to, filters, rep_ids)
+    with tab5:
+        _tab_customer_health(uid, role, rep_ids)

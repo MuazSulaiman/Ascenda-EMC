@@ -384,6 +384,52 @@ def get_analytics_target_vs_actual(year: int, rep_ids=None) -> pd.DataFrame:
     """, params)
 
 
+def get_analytics_customer_health(user_id: int, role: str, rep_ids=None) -> pd.DataFrame:
+    """Returns active customers with days since last visit.
+
+    Columns: customer_name, region, city, rep, last_visit_date, days_since_visit.
+    No date-range filter — always uses lifetime data.
+    Customers never visited show last_visit_date = None, days_since_visit = None.
+    """
+    clauses = ["c.is_active IS TRUE"]
+    params: dict = {}
+
+    if role in ("rep", "maintenance"):
+        clauses.append("(lv.user_id = :chuid OR lv.user_id IS NULL)")
+        params["chuid"] = user_id
+    elif rep_ids:
+        clauses.append("(lv.user_id = ANY(:chreps) OR lv.user_id IS NULL)")
+        params["chreps"] = list(rep_ids)
+
+    where = "WHERE " + " AND ".join(clauses)
+
+    return query_df(f"""
+        WITH last_v AS (
+            SELECT
+                v.customer_id,
+                v.user_id,
+                u.name                               AS rep,
+                MAX(DATE(v.submitted_at_local))      AS last_visit_date
+            FROM visits v
+            LEFT JOIN users u ON u.user_id = v.user_id
+            WHERE v.is_deleted IS NOT TRUE AND v.customer_id IS NOT NULL
+            GROUP BY v.customer_id, v.user_id, u.name
+        )
+        SELECT
+            COALESCE(c.account_name, '(Unknown)')  AS customer_name,
+            c.region,
+            c.city,
+            lv.rep,
+            lv.last_visit_date,
+            CURRENT_DATE - lv.last_visit_date      AS days_since_visit
+        FROM customers c
+        LEFT JOIN last_v lv ON lv.customer_id = c.customer_id
+        {where}
+        ORDER BY days_since_visit DESC NULLS FIRST
+        LIMIT 500
+    """, params)
+
+
 def get_analytics_time_series(user_id: int, role: str, date_from, date_to,
                                granularity: str, filters: dict, rep_ids=None) -> pd.DataFrame:
     joins, where, params = _analytics_scope(user_id, role, date_from, date_to, filters, rep_ids)
