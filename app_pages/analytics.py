@@ -1,6 +1,7 @@
 # app_pages/analytics.py — Analytics Dashboard
 from datetime import date
 import html as _html
+import io
 
 import folium
 import pandas as pd
@@ -705,12 +706,14 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
                 location=[cust_df["latitude"].mean(), cust_df["longitude"].mean()],
                 zoom_start=5, tiles="CartoDB positron",
             )
+            from folium.plugins import MarkerCluster as _MC
+            cluster1 = _MC().add_to(m1)
             for _, row in cust_df.iterrows():
                 folium.CircleMarker(
                     location=[row["latitude"], row["longitude"]],
                     radius=4, color="#0ea5e9", fill=True, fill_opacity=0.6,
                     tooltip=row["account_name"],
-                ).add_to(m1)
+                ).add_to(cluster1)
             st_folium(m1, width="100%", height=280, returned_objects=[])
 
     with col_m2:
@@ -723,12 +726,13 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
                 location=[visit_loc_df["latitude"].mean(), visit_loc_df["longitude"].mean()],
                 zoom_start=5, tiles="CartoDB positron",
             )
+            cluster2 = _MC().add_to(m2)
             for _, row in visit_loc_df.iterrows():
                 folium.CircleMarker(
                     location=[row["latitude"], row["longitude"]],
                     radius=3, color=BRAND, fill=True, fill_opacity=0.5,
                     tooltip=f"{row['customer']} — {row['rep']}",
-                ).add_to(m2)
+                ).add_to(cluster2)
             st_folium(m2, width="100%", height=280, returned_objects=[])
         else:
             st.info("No visits with location data in selected range.")
@@ -745,6 +749,15 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
             unsafe_allow_html=True,
         )
         st.caption(f"{len(detail_df):,} records shown (max 1,000)")
+        csv_buf = io.StringIO()
+        detail_df.to_csv(csv_buf, index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv_buf.getvalue().encode("utf-8"),
+            file_name=f"visits_{date_from}_{date_to}.csv",
+            mime="text/csv",
+            key="an_csv_download",
+        )
     else:
         st.info("No visits match the current filters.")
 
