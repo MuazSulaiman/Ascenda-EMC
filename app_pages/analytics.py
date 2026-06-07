@@ -477,6 +477,46 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
             st.plotly_chart(fig3, use_container_width=True, key="an_kpi_acm")
 
 
+@st.cache_data(ttl=300)
+def _get_region_opts() -> list:
+    try:
+        return query_df(
+            "SELECT DISTINCT region FROM customers WHERE region IS NOT NULL ORDER BY region"
+        )["region"].tolist()
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=300)
+def _get_city_opts(region: str) -> list:
+    try:
+        if region != "All":
+            return query_df(
+                "SELECT DISTINCT city FROM customers WHERE region = :r AND city IS NOT NULL ORDER BY city",
+                {"r": region},
+            )["city"].tolist()
+        return query_df(
+            "SELECT DISTINCT city FROM customers WHERE city IS NOT NULL ORDER BY city"
+        )["city"].tolist()
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=300)
+def _get_sector_opts(city: str) -> list:
+    try:
+        if city != "All":
+            return query_df(
+                "SELECT DISTINCT sector FROM customers WHERE city = :c AND sector IS NOT NULL ORDER BY sector",
+                {"c": city},
+            )["sector"].tolist()
+        return query_df(
+            "SELECT DISTINCT sector FROM customers WHERE sector IS NOT NULL ORDER BY sector"
+        )["sector"].tolist()
+    except Exception:
+        return []
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tab 3 – Visits Detail
 # ─────────────────────────────────────────────────────────────────────────────
@@ -486,44 +526,17 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
     subsection_label("Filter by Location")
     col_reg, col_city, col_sec = st.columns(3)
 
-    try:
-        region_opts = query_df(
-            "SELECT DISTINCT region FROM customers WHERE region IS NOT NULL ORDER BY region"
-        )["region"].tolist()
-    except Exception:
-        region_opts = []
+    region_opts = _get_region_opts()
 
     with col_reg:
         sel_region = st.selectbox("Region", ["All"] + region_opts, key="vd_region")
 
-    try:
-        if sel_region != "All":
-            city_opts = query_df(
-                "SELECT DISTINCT city FROM customers WHERE region = :r AND city IS NOT NULL ORDER BY city",
-                {"r": sel_region},
-            )["city"].tolist()
-        else:
-            city_opts = query_df(
-                "SELECT DISTINCT city FROM customers WHERE city IS NOT NULL ORDER BY city"
-            )["city"].tolist()
-    except Exception:
-        city_opts = []
+    city_opts = _get_city_opts(sel_region)
 
     with col_city:
         sel_city = st.selectbox("City", ["All"] + city_opts, key="vd_city")
 
-    try:
-        if sel_city != "All":
-            sector_opts = query_df(
-                "SELECT DISTINCT sector FROM customers WHERE city = :c AND sector IS NOT NULL ORDER BY sector",
-                {"c": sel_city},
-            )["sector"].tolist()
-        else:
-            sector_opts = query_df(
-                "SELECT DISTINCT sector FROM customers WHERE sector IS NOT NULL ORDER BY sector"
-            )["sector"].tolist()
-    except Exception:
-        sector_opts = []
+    sector_opts = _get_sector_opts(sel_city)
 
     with col_sec:
         sel_sector = st.selectbox("Sector", ["All"] + sector_opts, key="vd_sector")
