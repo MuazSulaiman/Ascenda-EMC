@@ -146,11 +146,26 @@ def _handle_heatmap_click(ev):
         else:
             filters["dow"] = dow
     if hour_val is not None:
-        h = int(hour_val)
-        if filters.get("hour") == h:
-            filters.pop("hour", None)
-        else:
-            filters["hour"] = h
+        import re as _re
+        try:
+            if isinstance(hour_val, str):
+                m = _re.match(r"(\d+)\s*(AM|PM)", str(hour_val), _re.IGNORECASE)
+                if m:
+                    h_num, period = int(m.group(1)), m.group(2).upper()
+                    if period == "AM":
+                        h = 0 if h_num == 12 else h_num
+                    else:
+                        h = 12 if h_num == 12 else h_num + 12
+                else:
+                    h = int(hour_val)
+            else:
+                h = int(hour_val)
+            if filters.get("hour") == h:
+                filters.pop("hour", None)
+            else:
+                filters["hour"] = h
+        except Exception:
+            pass
     st.rerun()
 
 
@@ -784,9 +799,18 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
     active_cols = [c for c in heat_matrix.columns if heat_matrix[c].sum() > 0]
     heat_matrix = heat_matrix[active_cols]
 
+    def _hour_label(h: str) -> str:
+        hi = int(h)
+        if hi == 0:    return "12 AM"
+        if hi < 12:    return f"{hi} AM"
+        if hi == 12:   return "12 PM"
+        return f"{hi - 12} PM"
+
+    labelled_cols = [_hour_label(c) for c in active_cols]
+
     fig_heat = go.Figure(go.Heatmap(
         z=heat_matrix.values.tolist(),
-        x=active_cols,
+        x=labelled_cols,
         y=_DOW_NAMES,
         colorscale=[[0, "#eef2ff"], [0.5, "#6ea6ff"], [1, "#2667ff"]],
         text=heat_matrix.values.tolist(),
@@ -797,10 +821,25 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
     ))
     fig_heat.update_layout(
         margin=dict(l=0, r=0, t=10, b=0), height=280,
-        xaxis=dict(title="Hour of Day", side="bottom"),
+        xaxis=dict(title="Hour of Day", side="bottom", tickfont=dict(size=10)),
         yaxis=dict(title="", autorange="reversed"),
         paper_bgcolor="rgba(0,0,0,0)",
     )
+    import numpy as _np
+    peak_val = _np.array(heat_matrix.values).max()
+    if peak_val > 0:
+        peak_arr = _np.array(heat_matrix.values)
+        peak_row, peak_col = _np.unravel_index(peak_arr.argmax(), peak_arr.shape)
+        fig_heat.add_annotation(
+            x=labelled_cols[peak_col],
+            y=_DOW_NAMES[peak_row],
+            text="★",
+            showarrow=False,
+            font=dict(size=14, color="#ffffff"),
+            xanchor="center",
+            yanchor="middle",
+        )
+
     ev_heat = st.plotly_chart(fig_heat, use_container_width=True,
                                on_select="rerun", key="an_heatmap")
     _handle_heatmap_click(ev_heat)
@@ -908,50 +947,32 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
             [pivot_att.iloc[:, :1], pivot_att.iloc[:, -31:]], axis=1
         )
 
-    cols_list = list(pivot_att.columns)
-    th_style = (
-        "padding:6px 10px;font-size:0.65rem;font-weight:700;color:var(--color-text-muted);"
-        "text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;"
-        "position:sticky;top:0;z-index:1;"
-        "background:var(--color-surface-2);border-bottom:2px solid var(--color-border);"
-    )
-    header = "".join(
-        f'<th style="{th_style}text-align:{"left" if c == "Rep" else "center"};">'
-        f'{_html.escape(str(c))}</th>'
-        for c in cols_list
-    )
+    heat_reps = sorted(pivot_att["Rep"].tolist())
+    date_cols = [c for c in pivot_att.columns if c != "Rep"]
 
-    rows = ""
-    for i, (_, row) in enumerate(pivot_att.iterrows()):
-        bg = "background:var(--color-surface-2);" if i % 2 else ""
-        cells = ""
-        for c in cols_list:
-            v = row[c]
-            if c == "Rep":
-                cell_html = _html.escape(str(v))
-                align = "left"
-            else:
-                vi = int(v) if v else 0
-                if vi == 0:
-                    cell_html = '<span style="color:var(--color-text-subtle);">—</span>'
-                else:
-                    cell_html = f'<span style="color:#2667ff;font-weight:600;">{vi}</span>'
-                align = "center"
-            cells += (
-                f'<td style="padding:5px 10px;font-size:0.72rem;'
-                f'border-bottom:1px solid var(--color-border);'
-                f'text-align:{align};{bg}">{cell_html}</td>'
-            )
-        rows += f"<tr>{cells}</tr>"
+    z_matrix = []
+    for rep in heat_reps:
+        row_data = pivot_att[pivot_att["Rep"] == rep].iloc[0]
+        z_matrix.append([int(row_data[d]) if (str(row_data.get(d, 0)) != "0" and row_data.get(d, 0)) else 0
+                          for d in date_cols])
 
-    st.markdown(
-        f'<div style="border:1px solid var(--color-border);border-radius:10px;'
-        f'overflow:auto;max-height:340px;margin-top:0.5rem;">'
-        f'<table style="width:100%;border-collapse:collapse;">'
-        f'<thead><tr>{header}</tr></thead>'
-        f'<tbody>{rows}</tbody></table></div>',
-        unsafe_allow_html=True,
+    fig_att = go.Figure(go.Heatmap(
+        z=z_matrix,
+        x=date_cols,
+        y=heat_reps,
+        colorscale=[[0, "#f0f0f0"], [0.01, "#bfdbfe"], [0.5, "#6ea6ff"], [1, "#2667ff"]],
+        showscale=False,
+        xgap=2, ygap=2,
+        hovertemplate="<b>%{y}</b><br>%{x}: %{z} visits<extra></extra>",
+    ))
+    fig_att.update_layout(
+        margin=dict(l=0, r=0, t=10, b=0),
+        height=max(200, len(heat_reps) * 26 + 60),
+        xaxis=dict(title="", tickfont=dict(size=9), tickangle=-45),
+        yaxis=dict(title="", tickfont=dict(size=10)),
+        paper_bgcolor="rgba(0,0,0,0)",
     )
+    st.plotly_chart(fig_att, use_container_width=True, key="an_att_cal")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
