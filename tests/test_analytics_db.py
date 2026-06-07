@@ -127,3 +127,12 @@ def test_coverage_rate_shape(admin_uid):
     assert "total_active" in result
     assert "coverage_pct" in result
     assert 0.0 <= result["coverage_pct"] <= 100.0
+
+
+def test_new_vs_repeat_shape(admin_uid):
+    from db_ops import get_analytics_new_vs_repeat
+    result = get_analytics_new_vs_repeat(admin_uid, "admin", D_FROM, D_TO, {}, None)
+    assert "new_visits" in result
+    assert "repeat_visits" in result
+    assert result["new_visits"] >= 0
+    assert result["repeat_visits"] >= 0

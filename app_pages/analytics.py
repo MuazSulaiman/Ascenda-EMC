@@ -18,6 +18,7 @@ from db_ops import (
     get_analytics_kpis,
     get_analytics_kpis_per_rep,
     get_analytics_kpis_previous_period,
+    get_analytics_new_vs_repeat,
     get_analytics_objective_categories,
     get_analytics_time_map,
     get_analytics_time_series,
@@ -205,6 +206,9 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
     cov = get_analytics_coverage_rate(uid, role, date_from, date_to, filters, rep_ids)
     cov_label = f"{cov['coverage_pct']}% ({cov['visited']:,}/{cov['total_active']:,})"
 
+    nvr    = get_analytics_new_vs_repeat(uid, role, date_from, date_to, filters, rep_ids)
+    obj_df = get_analytics_objective_categories(uid, role, date_from, date_to, filters, rep_ids)
+
     # ── Hero KPI scorecard ────────────────────────────────────────────────────
     st.markdown(f"""
 <div style="display:grid;grid-template-columns:1.6fr 1fr 1fr;gap:12px;margin-bottom:10px;">
@@ -301,9 +305,51 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
         )
         fig_ts.update_xaxes(showgrid=False)
         fig_ts.update_yaxes(gridcolor="rgba(0,0,0,0.06)")
+        fig_ts.update_traces(hovertemplate="%{y} visits<br>%{x}<extra></extra>")
         st.plotly_chart(fig_ts, use_container_width=True, key="an_ts")
     else:
         st.info("No visit data for the selected period.")
+
+    # ── New vs Repeat + Objective mix donuts ─────────────────────────────────────
+    col_nr, col_obj_donut = st.columns(2)
+
+    with col_nr:
+        subsection_label("New vs Repeat Visits")
+        if nvr["new_visits"] + nvr["repeat_visits"] > 0:
+            fig_nvr = px.pie(
+                names=["New", "Repeat"],
+                values=[nvr["new_visits"], nvr["repeat_visits"]],
+                color_discrete_sequence=[BRAND, "#e2e8f0"],
+                hole=0.55,
+            )
+            fig_nvr.update_traces(textinfo="percent+label")
+            fig_nvr.update_layout(
+                margin=dict(l=0, r=0, t=10, b=0), height=200,
+                paper_bgcolor="rgba(0,0,0,0)",
+                showlegend=False,
+            )
+            st.plotly_chart(fig_nvr, use_container_width=True, key="an_nvr")
+        else:
+            st.caption("No visit data.")
+
+    with col_obj_donut:
+        subsection_label("Objective Mix")
+        if not obj_df.empty:
+            cat_totals = obj_df.groupby("objective_category")["count"].sum().reset_index()
+            fig_od = px.pie(
+                cat_totals,
+                names="objective_category",
+                values="count",
+                color_discrete_sequence=px.colors.qualitative.Set2,
+                hole=0.5,
+            )
+            fig_od.update_traces(textinfo="percent+label")
+            fig_od.update_layout(
+                margin=dict(l=0, r=0, t=10, b=0), height=200,
+                paper_bgcolor="rgba(0,0,0,0)",
+                showlegend=False,
+            )
+            st.plotly_chart(fig_od, use_container_width=True, key="an_obj_donut")
 
     # ── Treemap drill-downs ───────────────────────────────────────────────────
     subsection_label("Breakdown by Region & Business Unit")
@@ -377,7 +423,6 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
 
     # ── Objectives grouped bar ────────────────────────────────────────────────
     subsection_label("Visits by Objective")
-    obj_df = get_analytics_objective_categories(uid, role, date_from, date_to, filters, rep_ids)
     if not obj_df.empty:
         fig_obj = px.bar(
             obj_df, y="objective_name", x="count",

@@ -322,6 +322,37 @@ def get_analytics_coverage_rate(user_id: int, role: str, date_from, date_to,
     return {"visited": visited, "total_active": total_active, "coverage_pct": pct}
 
 
+def get_analytics_new_vs_repeat(user_id: int, role: str, date_from, date_to,
+                                  filters: dict, rep_ids=None) -> dict:
+    """Count visits in period as 'New' (first-ever visit to a customer) vs 'Repeat'."""
+    joins, where, params = _analytics_scope(user_id, role, date_from, date_to, filters, rep_ids)
+    row = query_df(f"""
+        WITH first_visits AS (
+            SELECT user_id, customer_id, MIN(submitted_at_local) AS first_at
+            FROM visits
+            WHERE is_deleted IS NOT TRUE AND customer_id IS NOT NULL
+            GROUP BY user_id, customer_id
+        ),
+        in_period AS (
+            SELECT v.visit_id, v.submitted_at_local, fv.first_at
+            FROM visits v {joins}
+            LEFT JOIN first_visits fv
+                ON fv.user_id = v.user_id AND fv.customer_id = v.customer_id
+            {where}
+        )
+        SELECT
+            SUM(CASE WHEN DATE(submitted_at_local) = DATE(first_at) THEN 1 ELSE 0 END) AS new_visits,
+            SUM(CASE WHEN DATE(submitted_at_local) > DATE(first_at)  THEN 1 ELSE 0 END) AS repeat_visits
+        FROM in_period
+    """, params)
+    if row.empty:
+        return {"new_visits": 0, "repeat_visits": 0}
+    return {
+        "new_visits":    int(row.iloc[0]["new_visits"] or 0),
+        "repeat_visits": int(row.iloc[0]["repeat_visits"] or 0),
+    }
+
+
 def get_analytics_time_series(user_id: int, role: str, date_from, date_to,
                                granularity: str, filters: dict, rep_ids=None) -> pd.DataFrame:
     joins, where, params = _analytics_scope(user_id, role, date_from, date_to, filters, rep_ids)
