@@ -252,7 +252,7 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
         )
 
     st.markdown(
-        '<div style="display:flex;gap:8px;margin-bottom:16px;">'
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">'
         + _secondary_card("Cust / Day",    f"{cpd:.1f}")
         + _secondary_card("Visits / Cust", f"{vpc:.1f}")
         + _secondary_card("Aud / Cust",    f"{apc:.1f}")
@@ -269,7 +269,12 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
         "Stage": ["Total Visits", "Unique Customers", "Unique Audiences"],
         "Count": [tv, tc, ta],
     })
-    fig_funnel = px.funnel(funnel_df, x="Count", y="Stage",
+    funnel_df["Stage"] = pd.Categorical(
+        funnel_df["Stage"],
+        categories=["Total Visits", "Unique Customers", "Unique Audiences"],
+        ordered=True,
+    )
+    fig_funnel = px.funnel(funnel_df, x="Stage", y="Count",
                             color_discrete_sequence=[BRAND])
     fig_funnel.update_layout(
         margin=dict(l=0, r=0, t=10, b=0), height=180,

@@ -292,14 +292,28 @@ def get_analytics_kpis_previous_period(user_id: int, role: str, date_from, date_
 
 def get_analytics_coverage_rate(user_id: int, role: str, date_from, date_to,
                                   filters: dict, rep_ids=None) -> dict:
-    """Returns visited_customers, total_active_customers, coverage_pct."""
+    """Returns visited_customers, total_active_customers, coverage_pct.
+
+    total_active is scoped to region/city/sector filters when present.
+    """
     joins, where, params = _analytics_scope(user_id, role, date_from, date_to, filters, rep_ids)
+
+    active_clauses = ["c.is_active IS TRUE"]
+    if filters.get("region"):
+        active_clauses.append("c.region = :an_region")
+    if filters.get("city"):
+        active_clauses.append("c.city = :an_city")
+    if filters.get("sector"):
+        active_clauses.append("c.sector = :an_sector")
+    active_where = "WHERE " + " AND ".join(active_clauses)
+
     row = query_df(f"""
         SELECT
-            COUNT(DISTINCT v.customer_id)                                AS visited,
-            (SELECT COUNT(*) FROM customers WHERE is_active IS TRUE)     AS total_active
+            COUNT(DISTINCT v.customer_id)                          AS visited,
+            (SELECT COUNT(*) FROM customers c {active_where})      AS total_active
         FROM visits v {joins} {where}
     """, params)
+
     if row.empty:
         return {"visited": 0, "total_active": 0, "coverage_pct": 0.0}
     visited      = int(row.iloc[0]["visited"] or 0)
