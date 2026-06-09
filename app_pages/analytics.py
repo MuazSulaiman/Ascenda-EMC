@@ -47,10 +47,184 @@ def _cached_all_reps() -> pd.DataFrame:
 
 
 BRAND   = "#2667ff"
-PALETTE = px.colors.qualitative.Set2
+CHART_COLORS = [
+    "#2667ff",  # brand blue
+    "#10b981",  # emerald
+    "#f59e0b",  # amber
+    "#ef4444",  # red
+    "#8b5cf6",  # violet
+    "#06b6d4",  # cyan
+    "#f97316",  # orange
+    "#64748b",  # slate
+]
+PALETTE = CHART_COLORS  # backwards-compat alias
 
 _DOW_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 _DOW_MAP   = {name: i for i, name in enumerate(_DOW_NAMES)}
+
+# Heroicons outline SVGs for hero KPI cards
+_ICON_VISITS = (
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    ' stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>'
+    '<circle cx="12" cy="10" r="3"/></svg>'
+)
+_ICON_CUSTOMERS = (
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    ' stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>'
+    '<circle cx="9" cy="7" r="4"/>'
+    '<path d="M23 21v-2a4 4 0 0 0-3-3.87"/>'
+    '<path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>'
+)
+_ICON_AUDIENCES = (
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    ' stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">'
+    '<rect x="2" y="7" width="20" height="14" rx="2"/>'
+    '<path d="M16 3h-1a2 2 0 0 0-2 2v2H9V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v14"/>'
+    '<path d="M12 12v5"/><path d="M8 12v5"/><path d="M16 12v5"/></svg>'
+)
+
+# Left-border accent colors for the 6 secondary metric cards
+_MINI_ACCENTS = [
+    "var(--color-primary)",       # Cust / Day
+    "#0e8a4f",                    # Visits / Cust
+    "#f59e0b",                    # Aud / Cust
+    "var(--color-primary)",       # Cust / Month
+    "#0e8a4f",                    # BL / Month
+    "var(--color-border-strong)", # Coverage
+]
+
+
+def _analytics_css() -> None:
+    """Inject analytics-scoped CSS once at page load."""
+    st.markdown("""<style>
+/* ── Analytics section labels ── */
+.an-section-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 14px 0 8px;
+}
+.an-section-label-bar {
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--color-primary);
+    flex-shrink: 0;
+}
+.an-section-label-text {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--color-text-subtle);
+    white-space: nowrap;
+}
+.an-section-label-line {
+    flex: 1;
+    height: 1px;
+    background: var(--color-border);
+}
+/* ── Progress bars ── */
+.an-progress-wrap { margin-bottom: 10px; }
+.an-progress-track {
+    background: var(--color-surface-2);
+    border-radius: 6px;
+    height: 8px;
+    overflow: hidden;
+}
+.an-progress-fill {
+    height: 8px;
+    border-radius: 6px;
+    transition: width 0.3s ease;
+}
+/* ── Filter chip bar ── */
+.an-chip-bar-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+.an-chip-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-subtle);
+    white-space: nowrap;
+}
+/* ── Empty states ── */
+.an-empty-state {
+    text-align: center;
+    padding: 2rem 1rem;
+    background: var(--color-surface-2);
+    border: 1px dashed var(--color-border);
+    border-radius: 10px;
+    color: var(--color-text-subtle);
+    margin: 4px 0 8px;
+}
+.an-empty-state-icon {
+    display: block;
+    margin: 0 auto 8px;
+    opacity: 0.4;
+}
+.an-empty-state-msg {
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+/* ── Leaderboard rank tiers ── */
+.an-lb-row-1 { background: rgba(251,211,141,0.12); }
+.an-lb-rank-1 { color: #b7791f; font-weight: 800; }
+.an-lb-rank-2 { color: #71717a; font-weight: 700; }
+.an-lb-rank-3 { color: #9a3412; font-weight: 700; }
+</style>""", unsafe_allow_html=True)
+
+
+def _an_label(title: str) -> None:
+    """Analytics-local section label: left blue accent bar + uppercase text + divider."""
+    st.markdown(
+        f'<div class="an-section-label">'
+        f'<div class="an-section-label-bar"></div>'
+        f'<span class="an-section-label-text">{_html.escape(title)}</span>'
+        f'<div class="an-section-label-line"></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _an_empty(message: str) -> None:
+    """Render a styled empty state block."""
+    _info_icon = (
+        '<svg class="an-empty-state-icon" width="32" height="32" viewBox="0 0 24 24"'
+        ' fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"'
+        ' stroke-linejoin="round">'
+        '<circle cx="12" cy="12" r="10"/>'
+        '<line x1="12" y1="8" x2="12" y2="12"/>'
+        '<line x1="12" y1="16" x2="12.01" y2="16"/>'
+        '</svg>'
+    )
+    st.markdown(
+        f'<div class="an-empty-state">'
+        f'{_info_icon}'
+        f'<div class="an-empty-state-msg">{_html.escape(message)}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _chart_style(fig) -> None:
+    """Apply consistent Inter font, hover label, and axis styling to all analytics charts."""
+    fig.update_layout(
+        font=dict(family="Inter, system-ui, sans-serif", size=11.5, color="#57606a"),
+        hoverlabel=dict(
+            bgcolor="white",
+            bordercolor="#e4e8ec",
+            font=dict(family="Inter, sans-serif", size=12, color="#0d1117"),
+        ),
+    )
+    fig.update_xaxes(zeroline=False, tickfont=dict(size=11))
+    fig.update_yaxes(zeroline=False, tickfont=dict(size=11))
 
 
 def _pct_delta(current, previous) -> int | None:
@@ -182,6 +356,12 @@ def _render_chips(filters: dict):
         "dow":           lambda v: f"Day: {_DOW_NAMES[v]}",
         "hour":          lambda v: f"Hour: {v}:00",
     }
+    st.markdown(
+        '<div class="an-chip-bar-label">'
+        '<span class="an-chip-label">Active Filters</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
     keys = list(filters.keys())
     cols = st.columns(len(keys) + 1)
     for i, key in enumerate(keys):
@@ -232,8 +412,10 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
 <div style="display:grid;grid-template-columns:1.6fr 1fr 1fr;gap:12px;margin-bottom:10px;">
   <div style="background:linear-gradient(135deg,#2667ff 0%,#4d8ef0 100%);border-radius:14px;
               padding:20px 22px;color:#fff;box-shadow:0 4px 14px rgba(38,103,255,.3);">
-    <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;
-                letter-spacing:.07em;opacity:.85;margin-bottom:8px;">Total Visits</div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:0.65rem;font-weight:700;
+                text-transform:uppercase;letter-spacing:.07em;opacity:.85;margin-bottom:8px;">
+      {_ICON_VISITS}<span>Total Visits</span>
+    </div>
     <div style="font-size:2.6rem;font-weight:700;letter-spacing:-.03em;line-height:1;">{tv:,}</div>
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:10px;">
       {tv_badge}
@@ -241,8 +423,10 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
   </div>
   <div style="background:var(--color-surface);border:1px solid var(--color-border);
               border-radius:14px;padding:18px 20px;box-shadow:var(--shadow-card);">
-    <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;
-                letter-spacing:.07em;color:var(--color-text-subtle);margin-bottom:6px;">Customers</div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:0.65rem;font-weight:700;
+                text-transform:uppercase;letter-spacing:.07em;color:var(--color-text-subtle);margin-bottom:6px;">
+      {_ICON_CUSTOMERS}<span>Customers</span>
+    </div>
     <div style="font-size:2rem;font-weight:700;color:var(--color-text);
                 letter-spacing:-.02em;line-height:1.1;">{tc:,}</div>
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;">
@@ -251,8 +435,10 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
   </div>
   <div style="background:var(--color-surface);border:1px solid var(--color-border);
               border-radius:14px;padding:18px 20px;box-shadow:var(--shadow-card);">
-    <div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;
-                letter-spacing:.07em;color:var(--color-text-subtle);margin-bottom:6px;">Audiences</div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:0.65rem;font-weight:700;
+                text-transform:uppercase;letter-spacing:.07em;color:var(--color-text-subtle);margin-bottom:6px;">
+      {_ICON_AUDIENCES}<span>Audiences</span>
+    </div>
     <div style="font-size:2rem;font-weight:700;color:var(--color-text);
                 letter-spacing:-.02em;line-height:1.1;">{ta:,}</div>
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;">
@@ -263,9 +449,10 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
 """, unsafe_allow_html=True)
 
     # ── Secondary metric strip ────────────────────────────────────────────────
-    def _secondary_card(label, val):
+    def _secondary_card(label, val, border_color="var(--color-border)"):
         return (
             f'<div style="flex:1;background:var(--color-surface);border:1px solid var(--color-border);'
+            f'border-left:3px solid {border_color};'
             f'border-radius:10px;padding:10px 12px;">'
             f'<div style="font-size:0.6rem;font-weight:700;text-transform:uppercase;'
             f'letter-spacing:.06em;color:var(--color-text-subtle);margin-bottom:4px;">{label}</div>'
@@ -275,18 +462,18 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
 
     st.markdown(
         '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">'
-        + _secondary_card("Cust / Day",    f"{cpd:.1f}")
-        + _secondary_card("Visits / Cust", f"{vpc:.1f}")
-        + _secondary_card("Aud / Cust",    f"{apc:.1f}")
-        + _secondary_card("Cust / Month",  f"{acm:.1f}")
-        + _secondary_card("BL / Month",    f"{blm:.1f}")
-        + _secondary_card("Coverage",      cov_label)
+        + _secondary_card("Cust / Day",    f"{cpd:.1f}",  _MINI_ACCENTS[0])
+        + _secondary_card("Visits / Cust", f"{vpc:.1f}",  _MINI_ACCENTS[1])
+        + _secondary_card("Aud / Cust",    f"{apc:.1f}",  _MINI_ACCENTS[2])
+        + _secondary_card("Cust / Month",  f"{acm:.1f}",  _MINI_ACCENTS[3])
+        + _secondary_card("BL / Month",    f"{blm:.1f}",  _MINI_ACCENTS[4])
+        + _secondary_card("Coverage",      cov_label,     _MINI_ACCENTS[5])
         + '</div>',
         unsafe_allow_html=True,
     )
 
     # ── Engagement funnel ─────────────────────────────────────────────────────
-    subsection_label("Engagement Funnel")
+    _an_label("Engagement Funnel")
     funnel_df = pd.DataFrame({
         "Stage": ["Total Visits", "Unique Customers", "Unique Audiences"],
         "Count": [tv, tc, ta],
@@ -303,10 +490,13 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         yaxis_title="",
     )
+    fig_funnel.update_traces(hovertemplate="%{y}<br>%{x}<extra></extra>")
+    fig_funnel.update_layout(height=220)
+    _chart_style(fig_funnel)
     st.plotly_chart(fig_funnel, use_container_width=True, key="an_funnel")
 
     # ── Visits over time — area chart ─────────────────────────────────────────
-    subsection_label("Visits Over Time")
+    _an_label("Visits Over Time")
     gran = st.radio("Granularity", ["Year", "Month", "Week"], horizontal=True,
                     key="an_gran", label_visibility="collapsed")
     ts_df = get_analytics_time_series(uid, role, date_from, date_to, gran, filters, rep_ids)
@@ -323,16 +513,20 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
         )
         fig_ts.update_xaxes(showgrid=False)
         fig_ts.update_yaxes(gridcolor="rgba(0,0,0,0.06)")
-        fig_ts.update_traces(hovertemplate="%{y} visits<br>%{x}<extra></extra>")
+        fig_ts.update_traces(
+            hovertemplate="%{y} visits<br>%{x}<extra></extra>",
+            fillcolor="rgba(38,103,255,0.18)",
+        )
+        _chart_style(fig_ts)
         st.plotly_chart(fig_ts, use_container_width=True, key="an_ts")
     else:
-        st.info("No visit data for the selected period.")
+        _an_empty("No visit data for the selected period.")
 
     # ── New vs Repeat + Objective mix donuts ─────────────────────────────────────
     col_nr, col_obj_donut = st.columns(2)
 
     with col_nr:
-        subsection_label("New vs Repeat Visits")
+        _an_label("New vs Repeat Visits")
         if nvr["new_visits"] + nvr["repeat_visits"] > 0:
             fig_nvr = px.pie(
                 names=["New", "Repeat"],
@@ -340,37 +534,47 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
                 color_discrete_sequence=[BRAND, "#e2e8f0"],
                 hole=0.55,
             )
-            fig_nvr.update_traces(textinfo="percent+label")
+            fig_nvr.update_traces(
+                textinfo="percent+label",
+                hovertemplate="%{label}: %{value} (%{percent})<extra></extra>",
+                textfont=dict(family="Inter, sans-serif", size=11),
+            )
             fig_nvr.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0), height=200,
                 paper_bgcolor="rgba(0,0,0,0)",
                 showlegend=False,
             )
+            _chart_style(fig_nvr)
             st.plotly_chart(fig_nvr, use_container_width=True, key="an_nvr")
         else:
-            st.caption("No visit data.")
+            _an_empty("No visit data.")
 
     with col_obj_donut:
-        subsection_label("Objective Mix")
+        _an_label("Objective Mix")
         if not obj_df.empty:
             cat_totals = obj_df.groupby("objective_category")["count"].sum().reset_index()
             fig_od = px.pie(
                 cat_totals,
                 names="objective_category",
                 values="count",
-                color_discrete_sequence=px.colors.qualitative.Set2,
+                color_discrete_sequence=CHART_COLORS,
                 hole=0.5,
             )
-            fig_od.update_traces(textinfo="percent+label")
+            fig_od.update_traces(
+                textinfo="percent+label",
+                hovertemplate="%{label}: %{value} (%{percent})<extra></extra>",
+                textfont=dict(family="Inter, sans-serif", size=11),
+            )
             fig_od.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0), height=200,
                 paper_bgcolor="rgba(0,0,0,0)",
                 showlegend=False,
             )
+            _chart_style(fig_od)
             st.plotly_chart(fig_od, use_container_width=True, key="an_obj_donut")
 
     # ── Treemap drill-downs ───────────────────────────────────────────────────
-    subsection_label("Breakdown by Region & Business Unit")
+    _an_label("Breakdown by Region & Business Unit")
     drill_df = get_analytics_drilldown(uid, role, date_from, date_to, filters, rep_ids)
 
     col_r, col_bu = st.columns(2)
@@ -390,12 +594,17 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
                 color="visit_count",
                 color_continuous_scale=["#eef2ff", "#6ea6ff", "#2667ff"],
             )
-            fig_r.update_traces(textinfo="label+value", root_color="rgba(0,0,0,0)")
+            fig_r.update_traces(
+                textinfo="label+value",
+                root_color="rgba(0,0,0,0)",
+                hovertemplate="%{label}<br>Visits: %{value}<extra></extra>",
+            )
             fig_r.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0), height=320,
                 coloraxis_showscale=False,
                 paper_bgcolor="rgba(0,0,0,0)",
             )
+            _chart_style(fig_r)
             ev_r = st.plotly_chart(fig_r, use_container_width=True,
                                    on_select="rerun", key="an_region_tm")
             if ev_r and getattr(ev_r, "selection", None):
@@ -422,12 +631,17 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
                 color="visit_count",
                 color_continuous_scale=["#f0fdf4", "#6ee7b7", "#10b981"],
             )
-            fig_bu.update_traces(textinfo="label+value", root_color="rgba(0,0,0,0)")
+            fig_bu.update_traces(
+                textinfo="label+value",
+                root_color="rgba(0,0,0,0)",
+                hovertemplate="%{label}<br>Visits: %{value}<extra></extra>",
+            )
             fig_bu.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0), height=320,
                 coloraxis_showscale=False,
                 paper_bgcolor="rgba(0,0,0,0)",
             )
+            _chart_style(fig_bu)
             ev_bu = st.plotly_chart(fig_bu, use_container_width=True,
                                     on_select="rerun", key="an_bu_tm")
             if ev_bu and getattr(ev_bu, "selection", None):
@@ -440,12 +654,12 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
                         _set_filter("business_unit", label)
 
     # ── Objectives grouped bar ────────────────────────────────────────────────
-    subsection_label("Visits by Objective")
+    _an_label("Visits by Objective")
     if not obj_df.empty:
         fig_obj = px.bar(
             obj_df, y="objective_name", x="count",
             color="objective_category", orientation="h",
-            color_discrete_sequence=px.colors.qualitative.Set2,
+            color_discrete_sequence=CHART_COLORS,
         )
         fig_obj.update_layout(
             margin=dict(l=0, r=0, t=10, b=0),
@@ -456,6 +670,11 @@ def _tab_overview(uid, role, date_from, date_to, filters, rep_ids):
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         )
         fig_obj.update_xaxes(gridcolor="rgba(0,0,0,0.06)")
+        fig_obj.update_traces(
+            hovertemplate="%{y}<br>%{x} visits<extra></extra>",
+            marker_line_width=0,
+        )
+        _chart_style(fig_obj)
         ev_obj = st.plotly_chart(fig_obj, use_container_width=True,
                                  on_select="rerun", key="an_obj")
         _handle_hbar_click(ev_obj, "objective", axis="y")
@@ -477,7 +696,7 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
     prev_map = dict(zip(prev_visits_df["rep"], prev_visits_df["total_visits"])) if not prev_visits_df.empty else {}
 
     # ── Rep leaderboard ───────────────────────────────────────────────────────
-    subsection_label("Rep Leaderboard")
+    _an_label("Rep Leaderboard")
 
     apc_df = rep_data["audience_per_customer"].copy()
     apc_df["ratio"] = apc_df["ratio"].round(2)
@@ -503,17 +722,35 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
             trend_html = '<span style="color:#c83333;font-size:0.7rem;">&#9660;</span>'
         else:
             trend_html = '<span style="color:#999;font-size:0.7rem;">&#8211;</span>'
-        initials  = _initials(name)
-        is_leader = rank == 1
-        row_bg    = "background:#f0f5ff;" if is_leader else ""
-        av_bg     = "#2667ff"            if is_leader else "var(--color-surface-2)"
-        av_fg     = "#ffffff"            if is_leader else "var(--color-text-subtle)"
-        rank_fg   = "#2667ff"            if is_leader else "var(--color-text-subtle)"
-        weight    = "600"                if is_leader else "500"
+        initials = _initials(name)
+        if rank == 1:
+            row_cls  = "an-lb-row-1"
+            av_bg    = "#d97706"
+            av_fg    = "#ffffff"
+            rank_cls = "an-lb-rank-1"
+            weight   = "700"
+        elif rank == 2:
+            row_cls  = ""
+            av_bg    = "var(--color-surface-2)"
+            av_fg    = "#71717a"
+            rank_cls = "an-lb-rank-2"
+            weight   = "600"
+        elif rank == 3:
+            row_cls  = ""
+            av_bg    = "var(--color-surface-2)"
+            av_fg    = "#9a3412"
+            rank_cls = "an-lb-rank-3"
+            weight   = "600"
+        else:
+            row_cls  = ""
+            av_bg    = "var(--color-surface-2)"
+            av_fg    = "var(--color-text-subtle)"
+            rank_cls = ""
+            weight   = "500"
         rows_html += (
-            f'<tr style="{row_bg}">'
-            f'<td style="padding:9px 14px;font-size:0.72rem;font-weight:800;'
-            f'color:{rank_fg};">{rank}</td>'
+            f'<tr class="{row_cls}">'
+            f'<td style="padding:9px 14px;font-size:0.72rem;">'
+            f'<span class="{rank_cls}">{rank}</span></td>'
             f'<td style="padding:9px 14px;">'
             f'<div style="display:flex;align-items:center;gap:8px;">'
             f'<div style="width:28px;height:28px;border-radius:50%;background:{av_bg};'
@@ -556,7 +793,7 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
     col1, col2 = st.columns(2)
 
     with col1:
-        subsection_label("Audiences / Customer by Rep")
+        _an_label("Audiences / Customer by Rep")
         df = rep_data["audience_per_customer"].copy()
         if not df.empty:
             df["ratio"] = df["ratio"].round(2)
@@ -570,6 +807,10 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
                 plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             )
             fig.update_xaxes(gridcolor="rgba(0,0,0,0.06)")
+            fig.update_traces(
+                hovertemplate="%{y}<br>Ratio: %{x:.2f}<extra></extra>",
+                marker_line_width=0,
+            )
             if not df.empty:
                 mean_ratio = df["ratio"].mean()
                 fig.add_vline(
@@ -580,10 +821,11 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
                     annotation_position="top right",
                     annotation_font_size=10,
                 )
+            _chart_style(fig)
             st.plotly_chart(fig, use_container_width=True, key="an_kpi_apc")
 
     with col2:
-        subsection_label("Avg Customers / Month by Rep")
+        _an_label("Avg Customers / Month by Rep")
         df3 = rep_data["avg_customers_per_month"].copy()
         if not df3.empty:
             df3["avg_monthly"] = df3["avg_monthly"].round(1)
@@ -597,6 +839,10 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
                 plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             )
             fig3.update_xaxes(gridcolor="rgba(0,0,0,0.06)")
+            fig3.update_traces(
+                hovertemplate="%{y}<br>Avg/Month: %{x:.1f}<extra></extra>",
+                marker_line_width=0,
+            )
             if not df3.empty:
                 mean_monthly = df3["avg_monthly"].mean()
                 fig3.add_vline(
@@ -607,6 +853,7 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
                     annotation_position="top right",
                     annotation_font_size=10,
                 )
+            _chart_style(fig3)
             st.plotly_chart(fig3, use_container_width=True, key="an_kpi_acm")
 
     # ── Target progress bars ──────────────────────────────────────────────────
@@ -614,27 +861,44 @@ def _tab_kpis(uid, role, date_from, date_to, filters, rep_ids):
     current_year = _dt.date.today().year
     tgt_df = get_analytics_target_vs_actual(current_year, rep_ids)
     if not tgt_df.empty and tgt_df["target_visits"].sum() > 0:
-        subsection_label(f"Visit Target Progress — {current_year}")
+        _an_label(f"Visit Target Progress — {current_year}")
         for _, trow in tgt_df.iterrows():
             rep_name = str(trow["rep"])
             target_v = int(trow["target_visits"])
             actual_v = int(trow["actual_visits"])
             if target_v == 0:
                 continue
-            pct    = min(actual_v / target_v, 1.0)
-            bar_w  = f"{pct * 100:.0f}%"
-            bar_clr = "#0e8a4f" if pct >= 1.0 else BRAND
-            label   = f"{actual_v:,} / {target_v:,}"
+            pct_float = actual_v / target_v
+            pct_capped = min(pct_float, 1.0)
+            bar_w     = f"{pct_capped * 100:.0f}%"
+            pct_label = f"{pct_float * 100:.0f}%"
+            if pct_float >= 1.0:
+                bar_clr   = "var(--status-success-text)"
+                badge_bg  = "var(--status-success-bg)"
+                badge_fg  = "var(--status-success-text)"
+            elif pct_float >= 0.70:
+                bar_clr   = "#f59e0b"
+                badge_bg  = "var(--status-warning-bg)"
+                badge_fg  = "var(--status-warning-text)"
+            else:
+                bar_clr   = "var(--color-primary)"
+                badge_bg  = "var(--color-primary-subtle)"
+                badge_fg  = "var(--color-primary)"
+            count_label = f"{actual_v:,} / {target_v:,}"
             st.markdown(
-                f'<div style="margin-bottom:8px;">'
-                f'<div style="display:flex;justify-content:space-between;'
-                f'font-size:0.75rem;margin-bottom:3px;">'
+                f'<div class="an-progress-wrap">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                f'font-size:0.75rem;margin-bottom:4px;">'
                 f'<span style="font-weight:600;color:var(--color-text);">'
                 f'{_html.escape(rep_name)}</span>'
-                f'<span style="color:var(--color-text-muted);">{label}</span></div>'
-                f'<div style="background:var(--color-surface-2);border-radius:6px;height:8px;">'
-                f'<div style="background:{bar_clr};border-radius:6px;'
-                f'height:8px;width:{bar_w};"></div></div></div>',
+                f'<div style="display:flex;align-items:center;gap:6px;">'
+                f'<span style="color:var(--color-text-muted);font-size:0.72rem;">{count_label}</span>'
+                f'<span style="background:{badge_bg};color:{badge_fg};font-size:0.65rem;'
+                f'font-weight:700;padding:1px 7px;border-radius:4px;">{pct_label}</span>'
+                f'</div></div>'
+                f'<div class="an-progress-track">'
+                f'<div class="an-progress-fill" style="background:{bar_clr};width:{bar_w};"></div>'
+                f'</div></div>',
                 unsafe_allow_html=True,
             )
 
@@ -685,7 +949,7 @@ def _get_sector_opts(city: str) -> list:
 
 def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
     # ── Cascading region → city → sector filter ───────────────────────────────
-    subsection_label("Filter by Location")
+    _an_label("Filter by Location")
     col_reg, col_city, col_sec = st.columns(3)
 
     region_opts = _get_region_opts()
@@ -715,7 +979,7 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
     col_m1, col_m2 = st.columns(2)
 
     with col_m1:
-        subsection_label("Customer Locations")
+        _an_label("Customer Locations")
         cust_df = _cached_customer_locations()
         if not cust_df.empty:
             m1 = folium.Map(
@@ -733,7 +997,7 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
             st_folium(m1, width="100%", height=280, returned_objects=[])
 
     with col_m2:
-        subsection_label("Visit Locations")
+        _an_label("Visit Locations")
         visit_loc_df = get_visit_locations_for_map(
             uid, role, date_from, date_to, loc_filters, rep_ids
         )
@@ -751,10 +1015,10 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
                 ).add_to(cluster2)
             st_folium(m2, width="100%", height=280, returned_objects=[])
         else:
-            st.info("No visits with location data in selected range.")
+            _an_empty("No visits with location data in selected range.")
 
     # ── Visit records table ───────────────────────────────────────────────────
-    subsection_label("Visit Records")
+    _an_label("Visit Records")
     detail_df = get_analytics_visits_detail(uid, role, date_from, date_to, loc_filters, rep_ids)
     if not detail_df.empty:
         detail_df["Date Local"] = pd.to_datetime(
@@ -775,7 +1039,7 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
             key="an_csv_download",
         )
     else:
-        st.info("No visits match the current filters.")
+        _an_empty("No visits match the current filters.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -786,11 +1050,11 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
     tm_df = get_analytics_time_map(uid, role, date_from, date_to, filters, rep_ids)
 
     if tm_df.empty:
-        st.info("No data for the selected period.")
+        _an_empty("No data for the selected period.")
         return
 
     # ── Heatmap: Day × Hour — brand blue ─────────────────────────────────────
-    subsection_label("Day × Hour Heatmap  ·  click a cell to cross-filter")
+    _an_label("Day × Hour Heatmap  ·  click a cell to cross-filter")
     pivot = tm_df.groupby(["dow", "hour"])["visit_count"].sum().reset_index()
     heat_matrix = pd.DataFrame(0, index=list(range(7)), columns=list(range(24)))
     for _, row in pivot.iterrows():
@@ -826,6 +1090,13 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
         yaxis=dict(title="", autorange="reversed"),
         paper_bgcolor="rgba(0,0,0,0)",
     )
+    fig_heat.update_traces(colorbar=dict(
+        thickness=10,
+        len=0.8,
+        tickfont=dict(family="Inter, sans-serif", size=10, color="#57606a"),
+        outlinewidth=0,
+        borderwidth=0,
+    ))
     import numpy as _np
     peak_val = _np.array(heat_matrix.values).max()
     if peak_val > 0:
@@ -841,6 +1112,7 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
             yanchor="middle",
         )
 
+    _chart_style(fig_heat)
     ev_heat = st.plotly_chart(fig_heat, use_container_width=True,
                                on_select="rerun", key="an_heatmap")
     _handle_heatmap_click(ev_heat)
@@ -852,7 +1124,7 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
 
     with col_t:
         today = _local_now().date()
-        subsection_label(f"Today  ·  {today.strftime('%d/%m/%Y')}")
+        _an_label(f"Today  ·  {today.strftime('%d/%m/%Y')}")
         today_df = get_analytics_today(uid, role, today, rep_ids)
         if not today_df.empty:
             total_row = pd.DataFrame([{
@@ -865,10 +1137,10 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
                 unsafe_allow_html=True,
             )
         else:
-            st.caption("No visits today.")
+            _an_empty("No visits today.")
 
     with col_day:
-        subsection_label("Visits by Day")
+        _an_label("Visits by Day")
         day_bu = tm_df.groupby(["dow", "business_unit"])["visit_count"].sum().reset_index()
         day_bu["Day"] = day_bu["dow"].apply(lambda d: _DOW_NAMES[int(d)])
         day_bu = day_bu.sort_values("dow")
@@ -884,6 +1156,11 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         )
         fig_day.update_yaxes(gridcolor="rgba(0,0,0,0.06)")
+        fig_day.update_traces(
+            hovertemplate="%{x}: %{y} visits<extra></extra>",
+            marker_line_width=0,
+        )
+        _chart_style(fig_day)
         ev_day = st.plotly_chart(fig_day, use_container_width=True,
                                   on_select="rerun", key="an_daybar")
         if ev_day and getattr(ev_day, "selection", None):
@@ -896,7 +1173,7 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
                     _set_filter("dow", _DOW_MAP[day_name])
 
     with col_hr:
-        subsection_label("Visits by Hour")
+        _an_label("Visits by Hour")
         hr_bu = tm_df.groupby(["hour", "business_unit"])["visit_count"].sum().reset_index()
         hr_bu["Hour"] = hr_bu["hour"].astype(str)
         fig_hr = px.bar(
@@ -910,6 +1187,11 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         )
         fig_hr.update_yaxes(gridcolor="rgba(0,0,0,0.06)")
+        fig_hr.update_traces(
+            hovertemplate="Hour %{x}: %{y} visits<extra></extra>",
+            marker_line_width=0,
+        )
+        _chart_style(fig_hr)
         ev_hr = st.plotly_chart(fig_hr, use_container_width=True,
                                  on_select="rerun", key="an_hrbar")
         if ev_hr and getattr(ev_hr, "selection", None):
@@ -927,11 +1209,11 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
         return
 
     st.markdown("<div style='margin-top:1.5rem;'></div>", unsafe_allow_html=True)
-    subsection_label("Rep Attendance Calendar")
+    _an_label("Rep Attendance Calendar")
 
     att_df = get_analytics_attendance(uid, role, date_from, date_to, rep_ids)
     if att_df.empty:
-        st.caption("No attendance data for the selected period.")
+        _an_empty("No attendance data for the selected period.")
         return
 
     att_df["date"] = pd.to_datetime(att_df["date"])
@@ -969,10 +1251,11 @@ def _tab_time_map(uid, role, date_from, date_to, filters, rep_ids):
     fig_att.update_layout(
         margin=dict(l=0, r=0, t=10, b=0),
         height=max(200, len(heat_reps) * 26 + 60),
-        xaxis=dict(title="", tickfont=dict(size=9), tickangle=-45),
-        yaxis=dict(title="", tickfont=dict(size=10)),
+        xaxis=dict(title="", tickfont=dict(size=9, family="Inter, sans-serif"), tickangle=-45),
+        yaxis=dict(title="", tickfont=dict(size=10, family="Inter, sans-serif")),
         paper_bgcolor="rgba(0,0,0,0)",
     )
+    _chart_style(fig_att)
     st.plotly_chart(fig_att, use_container_width=True, key="an_att_cal")
 
 
@@ -984,7 +1267,7 @@ def _tab_customer_health(uid, role, rep_ids):
     health_df = get_analytics_customer_health(uid, role, rep_ids)
 
     if health_df.empty:
-        st.info("No customer data available.")
+        _an_empty("No customer data available.")
         return
 
     # ── Summary strip ─────────────────────────────────────────────────────────
@@ -996,29 +1279,34 @@ def _tab_customer_health(uid, role, rep_ids):
          (health_df["last_visit_date"].notna())).sum()
     )
 
-    def _hcard(label, val, color="#2667ff"):
+    def _hcard(label, val, border_color="var(--color-primary)", text_color="var(--color-text)"):
         return (
-            f'<div style="flex:1;min-width:120px;background:var(--color-surface);'
+            f'<div style="flex:1;min-width:130px;background:var(--color-surface);'
             f'border:1px solid var(--color-border);'
+            f'border-left:4px solid {border_color};'
             f'border-radius:10px;padding:10px 14px;">'
             f'<div style="font-size:0.6rem;font-weight:700;text-transform:uppercase;'
-            f'letter-spacing:.06em;color:var(--color-text-subtle);">{label}</div>'
-            f'<div style="font-size:1.4rem;font-weight:700;color:{color};">{val}</div>'
+            f'letter-spacing:.06em;color:var(--color-text-subtle);margin-bottom:4px;">{label}</div>'
+            f'<div style="font-size:1.4rem;font-weight:700;color:{text_color};">{val}</div>'
             f'</div>'
         )
 
     st.markdown(
         '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">'
-        + _hcard("Active Customers",  f"{total_active:,}")
-        + _hcard("Visited ≤ 30 days", f"{visited_30d:,}",  "#0e8a4f")
-        + _hcard("Stale > 60 days",   f"{stale_60d:,}",   "#c83333")
-        + _hcard("Never Visited",     f"{never_visited:,}", "#888888")
+        + _hcard("Active Customers",  f"{total_active:,}",
+                 "var(--color-primary)",       "var(--color-primary)")
+        + _hcard("Visited ≤ 30 days", f"{visited_30d:,}",
+                 "var(--status-success-text)", "var(--status-success-text)")
+        + _hcard("Stale > 60 days",   f"{stale_60d:,}",
+                 "var(--status-warning-text)", "var(--status-warning-text)")
+        + _hcard("Never Visited",     f"{never_visited:,}",
+                 "var(--color-border-strong)", "var(--color-text-muted)")
         + '</div>',
         unsafe_allow_html=True,
     )
 
     # ── Days-since-visit histogram ────────────────────────────────────────────
-    subsection_label("Days Since Last Visit Distribution")
+    _an_label("Days Since Last Visit Distribution")
     hist_df = health_df.dropna(subset=["days_since_visit"]).copy()
     if not hist_df.empty:
         hist_df["days_since_visit"] = hist_df["days_since_visit"].astype(int)
@@ -1032,10 +1320,15 @@ def _tab_customer_health(uid, role, rep_ids):
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         )
         fig_hist.update_yaxes(gridcolor="rgba(0,0,0,0.06)")
+        fig_hist.update_traces(
+            hovertemplate="%{x} days: %{y} customers<extra></extra>",
+            marker_line_width=0,
+        )
+        _chart_style(fig_hist)
         st.plotly_chart(fig_hist, use_container_width=True, key="an_ch_hist")
 
     # ── Detail table ──────────────────────────────────────────────────────────
-    subsection_label("Customer List — Sorted by Days Inactive")
+    _an_label("Customer List — Sorted by Days Inactive")
     display_df = health_df.copy()
     display_df["last_visit_date"] = display_df["last_visit_date"].fillna("Never").astype(str)
     display_df["days_since_visit"] = display_df["days_since_visit"].fillna("—").astype(str)
@@ -1054,6 +1347,7 @@ def _tab_customer_health(uid, role, rep_ids):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def page_analytics():
+    _analytics_css()
     user = st.session_state.get("user") or resolve_session_user()
     if not user:
         st.error("Not logged in.")

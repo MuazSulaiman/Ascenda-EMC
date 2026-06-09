@@ -31,6 +31,7 @@ from app_pages.review_customers import page_review_other_customers
 from app_pages.change_request import page_change_request
 from app_pages.admin_change_requests import page_admin_change_requests
 from app_pages.app_settings import page_app_settings
+from app_pages.analytics import page_analytics
 
 st.set_page_config(
     page_title=APP_TITLE,
@@ -364,6 +365,7 @@ else:
 
     PAGE_MAP = {
         "Dashboard":                page_dashboard,
+        "Analytics":                page_analytics,
         "Submit Visit":             page_submit_visit,
         "Check-In":                 page_check_in,
         "My Visits":                page_my_submissions,

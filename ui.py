@@ -431,6 +431,7 @@ def sidebar_nav():
     # ── Page icons (Heroicons outline, 24×24 viewBox) ─────────────────────────
     _ICONS = {
         "Dashboard":               '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+        "Analytics":               '<svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
         "Submit Visit":            '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>',
         "Check-In":                '<svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
         "My Visits":               '<svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
@@ -485,7 +486,7 @@ def sidebar_nav():
             st.session_state["_nav_counts_ts"] = time.time()
 
     # ── Build grouped page sections by role ──────────────────────────────────
-    main_pages = ["Dashboard"]
+    main_pages = ["Dashboard", "Analytics"]
 
     field_pages = ["Submit Visit", "Check-In", "My Visits"]
     if role in ("rep", "maintenance", "sales manager", "biomedical manager", "admin"):
