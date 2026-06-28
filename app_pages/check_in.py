@@ -195,13 +195,13 @@ def page_check_in():
 
     with st.spinner("Saving check-in…"):
         errors = []
-        if not region_choice:
+        if not is_other_customer and not region_choice:
             errors.append("Please choose a **Region**.")
-        if not city_choice:
+        if not is_other_customer and not city_choice:
             errors.append("Please choose a **City**.")
-        if not sector_choice:
+        if not is_other_customer and not sector_choice:
             errors.append("Please choose a **Sector**.")
-        if not customer_id:
+        if not customer_id and not is_other_customer:
             errors.append("Please choose a **Customer**.")
 
         # ✅ NEW: validate Other customer name

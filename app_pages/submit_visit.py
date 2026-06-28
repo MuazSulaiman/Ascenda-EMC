@@ -613,11 +613,11 @@ def page_submit_visit():
     with st.spinner("Saving your visit…"):
         errors: list[str] = []
 
-        if not region_choice:
+        if not is_other_customer and not region_choice:
             errors.append("Please choose a **Region**.")
-        if not city_choice:
+        if not is_other_customer and not city_choice:
             errors.append("Please choose a **City**.")
-        if not sector_choice:
+        if not is_other_customer and not sector_choice:
             errors.append("Please choose a **Sector**.")
         if not customer_id and not is_other_customer:
             errors.append("Please choose a **Customer**.")
