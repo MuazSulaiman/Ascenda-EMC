@@ -32,13 +32,18 @@ def _log_event(conn, sid: str, evt: str, details=None):
         INSERT INTO app_session_events(session_id, event_type, ip, user_agent, details)
         VALUES (:sid, :evt, :ip, :ua, :details)
     """).bindparams(bindparam("details", type_=JSONB))
-    conn.execute(stmt, {
-        "sid": sid,
-        "evt": evt,
-        "ip": _client_ip(),
-        "ua": _user_agent(),
-        "details": details,
-    })
+    try:
+        conn.execute(stmt, {
+            "sid": sid,
+            "evt": evt,
+            "ip": _client_ip(),
+            "ua": _user_agent(),
+            "details": details,
+        })
+    except Exception:
+        # Stale session IDs (e.g. from a previous DB) won't exist in app_sessions;
+        # silently skip rather than crashing the request.
+        pass
 
 
 def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
