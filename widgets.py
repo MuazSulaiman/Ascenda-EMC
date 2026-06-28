@@ -375,9 +375,10 @@ def customer_cascading_selectors(
 
     region_is_other = bool(region_choice and region_choice.strip().lower() == "other")
 
-    # City options — always include "Other"; disabled when region is "Other"
-    city_opts = [""]
-    if region_choice and not region_is_other:
+    # City options — locked to "Other" when region is "Other"
+    if region_is_other:
+        city_opts = ["Other"]
+    elif region_choice:
         city_df = query_df(
             f"""
             SELECT DISTINCT city
@@ -393,6 +394,8 @@ def customer_cascading_selectors(
         city_opts = [""] + _order_with_other_last(city_raw)
         if not any(str(v).strip().lower() == "other" for v in city_raw):
             city_opts.append("Other")
+    else:
+        city_opts = [""]
 
     city_choice = st.selectbox(
         "City *",
@@ -402,16 +405,17 @@ def customer_cascading_selectors(
         disabled=locked or region_is_other or (not bool(region_choice)),
         on_change=_on_city_change if (not locked and region_choice and not region_is_other) else None,
         help=("Filled from Account ID. Click Clear to change." if locked
-              else ("N/A — new customer" if region_is_other
+              else ("Auto-filled — new customer" if region_is_other
                     else ("Select a Region first" if not region_choice else None))),
     )
 
     city_is_other = bool(city_choice and city_choice.strip().lower() == "other")
     cascade_skip = region_is_other or city_is_other
 
-    # Sector options — always include "Other"; disabled when any upper level is "Other"
-    sector_opts = [""]
-    if region_choice and city_choice and not cascade_skip:
+    # Sector options — locked to "Other" when any upper cascade is "Other"
+    if cascade_skip:
+        sector_opts = ["Other"]
+    elif region_choice and city_choice:
         sec_df = query_df(
             f"""
             SELECT DISTINCT sector
@@ -428,6 +432,8 @@ def customer_cascading_selectors(
         sector_opts = [""] + _order_with_other_last(sec_raw)
         if not any(str(v).strip().lower() == "other" for v in sec_raw):
             sector_opts.append("Other")
+    else:
+        sector_opts = [""]
 
     sector_choice = st.selectbox(
         "Sector *",
@@ -437,17 +443,17 @@ def customer_cascading_selectors(
         disabled=locked or cascade_skip or (not bool(region_choice and city_choice)),
         on_change=_on_sector_change if (not locked and region_choice and city_choice and not cascade_skip) else None,
         help=("Filled from Account ID. Click Clear to change." if locked
-              else ("N/A — new customer" if cascade_skip
+              else ("Auto-filled — new customer" if cascade_skip
                     else ("Select a City first" if not (region_choice and city_choice) else None))),
     )
 
     sector_is_other = bool(sector_choice and sector_choice.strip().lower() == "other")
     cascade_other = region_is_other or city_is_other or sector_is_other
 
-    # Customer options — if any cascade level is "Other", shortcut to only "Other"
+    # Customer options — locked to "Other" when any cascade level is "Other"
     cust_df = pd.DataFrame(columns=["customer_id", "account_name"])
     if cascade_other:
-        cust_names = ["", "Other"]
+        cust_names = ["Other"]
     elif region_choice and city_choice and sector_choice:
         cust_df = query_df(
             f"""
@@ -474,9 +480,9 @@ def customer_cascading_selectors(
         cust_names,
         index=0,
         key=KEY_CUST,
-        disabled=locked or (not cascade_other and not bool(region_choice and city_choice and sector_choice)),
+        disabled=locked or cascade_other or (not bool(region_choice and city_choice and sector_choice)),
         help=("Filled from Account ID. Click Clear to change." if locked
-              else (None if cascade_other
+              else ("Auto-filled — new customer" if cascade_other
                     else ("Select Sector first" if not (region_choice and city_choice and sector_choice) else None))),
     )
 
