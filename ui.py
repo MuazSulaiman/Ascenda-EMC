@@ -741,7 +741,7 @@ def show_footer():
                     align-items:center;flex-wrap:wrap;gap:8px;">
           <div>
             <img src="./app/static/EMC LOGO.png"
-                 style="height:36px;width:auto;object-fit:contain;display:block;"
+                 style="height:64px;width:auto;object-fit:contain;display:block;"
                  alt="EMC Logo" />
           </div>
           <div style="text-align:right;font-size:0.875rem;color:var(--color-text-subtle);line-height:1.6;">
