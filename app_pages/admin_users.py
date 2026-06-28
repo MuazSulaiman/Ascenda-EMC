@@ -224,12 +224,16 @@ def page_admin_users():
             unsafe_allow_html=True,
         )
 
+    _region_opts = [""] + sorted(query_df(
+        "SELECT DISTINCT region FROM customers WHERE region IS NOT NULL AND region <> '' ORDER BY region"
+    )["region"].tolist())
+
     with st.form("add_user", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
             email  = st.text_input("Email *",  placeholder="user@company.com")
             name   = st.text_input("Name *",   placeholder="Full name")
-            region = st.selectbox("Region", ["", "C/R", "W/R", "E/R"], index=0)
+            region = st.selectbox("Region", _region_opts, index=0)
         with col2:
             bu_df    = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
             bu_names = bu_df["name"].tolist()
@@ -442,10 +446,10 @@ def page_admin_users():
             role_idx    = role_opts.index(current_role) if current_role in role_opts else 0
 
             with st.form(f"mg_user_edit_{uid}"):
-                new_region   = st.selectbox(
-                    "Region", ["", "C/R", "W/R", "E/R"],
-                    index=(["", "C/R", "W/R", "E/R"].index(row["region"])
-                           if row["region"] in ["", "C/R", "W/R", "E/R"] else 0),
+                current_region = row["region"] or ""
+                new_region = st.selectbox(
+                    "Region", _region_opts,
+                    index=(_region_opts.index(current_region) if current_region in _region_opts else 0),
                 )
                 new_bu_label = st.selectbox("Business Unit (optional)", bu_labels, index=bu_idx)
                 new_role     = st.selectbox("Role", role_opts, index=role_idx)
