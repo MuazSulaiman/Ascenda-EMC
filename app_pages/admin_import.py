@@ -189,7 +189,7 @@ def page_admin_import():
     # 1) CUSTOMERS
     # =====================================================================
     with main_tabs[0]:
-        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM customers")
+        _cnt = query_df("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END), 0) AS active FROM customers")
         _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
         st.markdown(
             f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
@@ -800,7 +800,7 @@ def page_admin_import():
     # 2) TARGET AUDIENCES
     # =====================================================================
     with main_tabs[1]:
-        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM target_audiences")
+        _cnt = query_df("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END), 0) AS active FROM target_audiences")
         _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
         st.markdown(
             f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
@@ -1588,7 +1588,7 @@ def page_admin_import():
     # 3) BUSINESS UNITS
     # =====================================================================
     with main_tabs[2]:
-        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM business_units")
+        _cnt = query_df("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END), 0) AS active FROM business_units")
         _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
         st.markdown(
             f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
@@ -1905,7 +1905,7 @@ def page_admin_import():
     # 5) BUSINESS LINES
     # =====================================================================
     with main_tabs[4]:
-        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM business_lines")
+        _cnt = query_df("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END), 0) AS active FROM business_lines")
         _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
         st.markdown(
             f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
@@ -2616,7 +2616,7 @@ def page_admin_import():
     # 6) Items (Products)
     # =====================
     with main_tabs[5]:
-        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM items")
+        _cnt = query_df("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END), 0) AS active FROM items")
         _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
         st.markdown(
             f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.25rem;">'
@@ -3234,7 +3234,7 @@ def page_admin_import():
     # 7) OBJECTIVES
     # =====================================================================
     with main_tabs[6]:
-        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM objectives")
+        _cnt = query_df("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END), 0) AS active FROM objectives")
         _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
         st.markdown(
             f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
@@ -3680,7 +3680,7 @@ def page_admin_import():
     # 4) PRODUCT CATEGORIES
     # =====================================================================
     with main_tabs[3]:
-        _cnt = query_df("SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END) AS active FROM product_categories")
+        _cnt = query_df("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN COALESCE(is_active,TRUE) THEN 1 ELSE 0 END), 0) AS active FROM product_categories")
         _t, _a = (int(_cnt.iloc[0]["total"]), int(_cnt.iloc[0]["active"])) if not _cnt.empty else (0, 0)
         st.markdown(
             f'<p style="font-size:0.82rem;color:var(--color-text-muted);margin:0 0 0.75rem;">'
