@@ -315,22 +315,37 @@ def customer_cascading_selectors(
     def _on_region_change():
         _clear_qf_msg()
         st.session_state[cid_locked_key] = False
-        st.session_state[KEY_CITY] = ""
-        st.session_state[KEY_SECTOR] = ""
-        st.session_state[KEY_CUST] = ""
+        new_region = st.session_state.get(KEY_REGION, "")
+        if new_region and new_region.strip().lower() == "other":
+            st.session_state[KEY_CITY]   = "Other"
+            st.session_state[KEY_SECTOR] = "Other"
+            st.session_state[KEY_CUST]   = "Other"
+        else:
+            st.session_state[KEY_CITY]   = ""
+            st.session_state[KEY_SECTOR] = ""
+            st.session_state[KEY_CUST]   = ""
         st.session_state.pop(KEY_CUSTID, None)
 
     def _on_city_change():
         _clear_qf_msg()
         st.session_state[cid_locked_key] = False
-        st.session_state[KEY_SECTOR] = ""
-        st.session_state[KEY_CUST] = ""
+        new_city = st.session_state.get(KEY_CITY, "")
+        if new_city and new_city.strip().lower() == "other":
+            st.session_state[KEY_SECTOR] = "Other"
+            st.session_state[KEY_CUST]   = "Other"
+        else:
+            st.session_state[KEY_SECTOR] = ""
+            st.session_state[KEY_CUST]   = ""
         st.session_state.pop(KEY_CUSTID, None)
 
     def _on_sector_change():
         _clear_qf_msg()
         st.session_state[cid_locked_key] = False
-        st.session_state[KEY_CUST] = ""
+        new_sector = st.session_state.get(KEY_SECTOR, "")
+        if new_sector and new_sector.strip().lower() == "other":
+            st.session_state[KEY_CUST] = "Other"
+        else:
+            st.session_state[KEY_CUST] = ""
         st.session_state.pop(KEY_CUSTID, None)
 
     # Region options — always include "Other" so users can log unknown customers
