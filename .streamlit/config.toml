@@ -1,5 +1,6 @@
 [server]
 enableStaticServing = true
+maxUploadSize = 50
 
 [theme]
 primaryColor = "#2667ff"
