@@ -733,18 +733,17 @@ def compare_row(field: str, original: str, requested: str, changed: bool = False
 
 
 def show_footer():
-    placeholder_html = (
-        '<div style="height:36px;width:120px;border:1px dashed #ccc;border-radius:4px;'
-        'display:flex;align-items:center;justify-content:center;'
-        'font-size:0.7rem;color:#aaa;opacity:0.8;">Company Logo</div>'
-    )
     st.markdown(
-        f"""
+        """
         <div style="margin-top:2.5rem;padding-top:1.25rem;
                     border-top:1px solid var(--color-border);
                     display:flex;justify-content:space-between;
                     align-items:center;flex-wrap:wrap;gap:8px;">
-          <div>{placeholder_html}</div>
+          <div>
+            <img src="./app/static/EMC LOGO.png"
+                 style="height:36px;width:auto;object-fit:contain;display:block;"
+                 alt="EMC Logo" />
+          </div>
           <div style="text-align:right;font-size:0.875rem;color:var(--color-text-subtle);line-height:1.6;">
             Core System © Cube n' Compass &nbsp;·&nbsp;
             Version 13
