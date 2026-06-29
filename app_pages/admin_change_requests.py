@@ -37,6 +37,7 @@ FIELD_TO_COLUMN = {
     "visits.objective_id":             "objective_id",
     "visits.notes":                    "notes",
     "visits.evaluation":               "evaluation",
+    "visits.visit_type":               "visit_type",
     "visits.project_id":               "project_id",
     "visits.other_customer_name":      "other_customer_name",
     "visits.other_audience_title":     "other_audience_title",
