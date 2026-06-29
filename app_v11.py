@@ -35,7 +35,7 @@ from app_pages.analytics import page_analytics
 
 st.set_page_config(
     page_title=APP_TITLE,
-    page_icon=Image.open("static/ascenda_180.png"),
+    page_icon=Image.open("static/ascenda_192.png"),
     layout="centered",
     initial_sidebar_state="collapsed",
 )
@@ -83,7 +83,7 @@ components.html("""
     }
   }
   if (!p.document.querySelector('link[rel="manifest"]')) {
-    add('link', { rel: 'apple-touch-icon', href: '/app/static/ascenda_180.png' });
+    add('link', { rel: 'apple-touch-icon', href: '/app/static/ascenda_192.png' });
     add('meta', { name: 'apple-mobile-web-app-capable', content: 'yes' });
     add('meta', { name: 'apple-mobile-web-app-status-bar-style', content: 'default' });
     add('meta', { name: 'apple-mobile-web-app-title', content: 'Ascenda' });
