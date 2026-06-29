@@ -16,6 +16,7 @@ VISIT_INSERT_COLUMNS = (
     "other_audience_name", "other_audience_department", "other_audience_position",
     "other_audience_phone", "other_audience_email",
     "region", "business_unit_id", "is_other_customer",
+    "visit_type",
 )
 
 
