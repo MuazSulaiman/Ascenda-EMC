@@ -385,6 +385,7 @@ else:
     }
 
     PAGE_ROLES = {
+        "Analytics":               ["admin"],
         "Admin: Import Lookups":   ["admin"],
         "Admin: Data Browser":     ["admin"],
         "Admin: Users":            ["admin"],

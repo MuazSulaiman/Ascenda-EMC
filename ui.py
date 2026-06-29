@@ -486,7 +486,9 @@ def sidebar_nav():
             st.session_state["_nav_counts_ts"] = time.time()
 
     # ── Build grouped page sections by role ──────────────────────────────────
-    main_pages = ["Dashboard", "Analytics"]
+    main_pages = ["Dashboard"]
+    if role == "admin":
+        main_pages.append("Analytics")
 
     field_pages = ["Submit Visit", "Check-In", "My Visits"]
     if role in ("rep", "maintenance", "sales manager", "biomedical manager", "admin"):
