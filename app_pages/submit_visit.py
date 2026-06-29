@@ -37,7 +37,7 @@ except Exception:
     UniqueViolation = None
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _fetch_departments() -> list:
     df = query_df(
         "SELECT DISTINCT department FROM target_audiences"
@@ -46,7 +46,7 @@ def _fetch_departments() -> list:
     return df["department"].astype(str).str.strip().tolist() if not df.empty else []
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _fetch_positions() -> list:
     df = query_df(
         "SELECT DISTINCT position FROM target_audiences"

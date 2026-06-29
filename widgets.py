@@ -275,8 +275,8 @@ def customer_quick_find_module(
         "did_clear": did_clear,
     }
 
-# ── Cached cascade-selector queries (5-min TTL) ──────────────────────────────
-@st.cache_data(ttl=300)
+# ── Cached cascade-selector queries (30-min TTL) ─────────────────────────────
+@st.cache_data(ttl=1800)
 def _fetch_cascade_regions(customers_table: str) -> list:
     df = query_df(
         f"SELECT DISTINCT region FROM {customers_table}"
@@ -285,7 +285,7 @@ def _fetch_cascade_regions(customers_table: str) -> list:
     return df["region"].tolist()
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _fetch_cascade_cities(customers_table: str, region: str) -> list:
     df = query_df(
         f"SELECT DISTINCT city FROM {customers_table}"
@@ -295,7 +295,7 @@ def _fetch_cascade_cities(customers_table: str, region: str) -> list:
     return df["city"].tolist()
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _fetch_cascade_sectors(customers_table: str, region: str, city: str) -> list:
     df = query_df(
         f"SELECT DISTINCT sector FROM {customers_table}"
@@ -305,7 +305,7 @@ def _fetch_cascade_sectors(customers_table: str, region: str, city: str) -> list
     return df["sector"].tolist()
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _fetch_cascade_customers(customers_table: str, region: str, city: str, sector: str) -> pd.DataFrame:
     return query_df(
         f"SELECT customer_id, account_name FROM {customers_table}"
