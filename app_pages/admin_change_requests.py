@@ -160,7 +160,8 @@ def _load_visit_context(visit_id: int) -> dict:
           c.account_name AS customer_name,
           v.submitted_at_local,
           u.name         AS rep_name,
-          bl.name        AS business_line
+          bl.name        AS business_line,
+          v.visit_type
         FROM visits v
         JOIN customers c    ON c.customer_id    = v.customer_id
         JOIN users u        ON u.user_id        = v.user_id
@@ -241,7 +242,7 @@ def _fa_load_visit_snap(visit_id: int) -> dict | None:
           bu.name AS bu_name,
           v.product_id, i.article_number, i.description AS product_desc,
           v.objective_id, o.name AS objective_name,
-          v.notes, v.evaluation,
+          v.notes, v.evaluation, v.visit_type,
           v.latitude, v.longitude, v.accuracy_m,
           v.submitted_at_local, v.submitted_at_utc,
           v.other_audience_title, v.other_audience_name,
@@ -496,8 +497,9 @@ def _render_force_tab(admin_uid: int):
                 del st.session_state[k]
         st.session_state[f"{NS}_snap"]     = snap
         st.session_state[f"{NS}_snap_vid"] = visit_id
-        st.session_state[f"{NS}_notes"]    = _norm(snap.get("notes"))
-        st.session_state[f"{NS}_eval_sel"] = _norm(snap.get("evaluation"))
+        st.session_state[f"{NS}_notes"]           = _norm(snap.get("notes"))
+        st.session_state[f"{NS}_eval_sel"]        = _norm(snap.get("evaluation"))
+        st.session_state[f"{NS}_visit_type_sel"]  = _norm(snap.get("visit_type")) or "Actual Visit"
         lat = snap.get("latitude")
         lon = snap.get("longitude")
         acc = snap.get("accuracy_m")
@@ -796,6 +798,13 @@ def _render_force_tab(admin_uid: int):
 
     notes = st.text_area("Notes (optional)", key=f"{NS}_notes")
 
+    _FA_VISIT_TYPE_OPTIONS = ["Actual Visit", "Phone Call"]
+    _fa_vt_cur = st.session_state.get(f"{NS}_visit_type_sel", "Actual Visit")
+    _fa_vt_idx = _FA_VISIT_TYPE_OPTIONS.index(_fa_vt_cur) if _fa_vt_cur in _FA_VISIT_TYPE_OPTIONS else 0
+    if _norm(snap.get("visit_type")):
+        st.caption(f"↩ Original: **{_norm(snap['visit_type'])}**")
+    fa_visit_type = st.selectbox("Visit Type *", _FA_VISIT_TYPE_OPTIONS, index=_fa_vt_idx, key=f"{NS}_visit_type_sel")
+
     eval_options = ["", "Positive", "Negative", "Neutral"]
     eval_sel_val = st.session_state.get(f"{NS}_eval_sel", "")
     if eval_sel_val not in eval_options:
@@ -840,6 +849,7 @@ def _render_force_tab(admin_uid: int):
     _add_detail(details, "visits.objective_id",     snap.get("objective_id"),     new_objective_id)
     _add_detail(details, "visits.notes",            snap.get("notes"),            notes.strip() or None)
     _add_detail(details, "visits.evaluation",       snap.get("evaluation"),       eval_choice or None)
+    _add_detail(details, "visits.visit_type",       snap.get("visit_type"),       fa_visit_type or None)
     _add_detail(details, "visits.submitted_at_local", old_local_str, new_local_str)
     _add_detail(details, "visits.submitted_at_utc",   old_utc_str,   new_utc_str)
     _add_detail(details, "visits.latitude",         snap.get("latitude"),         lat_val.strip() or None)
@@ -1036,7 +1046,8 @@ def _render_review_pending_tab(admin_uid: int):
                 f"Customer: {ctx.get('customer_name', '—')}  \n"
                 f"Rep: {ctx.get('rep_name', '—')}  \n"
                 f"Date: {date_str}  \n"
-                f"Business Line: {ctx.get('business_line', '—')}"
+                f"Business Line: {ctx.get('business_line', '—')}  \n"
+                f"Visit Type: {ctx.get('visit_type') or 'Actual Visit'}"
             )
 
         if pd.notna(sel.get("request_note")) and sel.get("request_note"):
