@@ -587,15 +587,11 @@ def get_analytics_visits_detail(user_id: int, role: str, date_from, date_to,
             u.name                                            AS "Frontline Name",
             COALESCE(c.account_name, v.other_customer_name)  AS "Customer Name",
             v.audience_id                                     AS "Audience ID",
-            COALESCE(
-                (SELECT ta.department FROM target_audiences ta WHERE ta.audience_id = v.audience_id),
-                v.other_audience_department
-            )                                                 AS "Department",
-            COALESCE(
-                (SELECT ta.position FROM target_audiences ta WHERE ta.audience_id = v.audience_id),
-                v.other_audience_position
-            )                                                 AS "Position"
-        FROM visits v {joins} {where}
+            COALESCE(ta.department, v.other_audience_department) AS "Department",
+            COALESCE(ta.position,   v.other_audience_position)   AS "Position"
+        FROM visits v
+        LEFT JOIN target_audiences ta ON ta.audience_id = v.audience_id
+        {joins} {where}
         ORDER BY v.visit_id DESC
         LIMIT 1000
     """, params)

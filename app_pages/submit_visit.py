@@ -37,6 +37,24 @@ except Exception:
     UniqueViolation = None
 
 
+@st.cache_data(ttl=300)
+def _fetch_departments() -> list:
+    df = query_df(
+        "SELECT DISTINCT department FROM target_audiences"
+        " WHERE department IS NOT NULL AND trim(department) <> '' ORDER BY department"
+    )
+    return df["department"].astype(str).str.strip().tolist() if not df.empty else []
+
+
+@st.cache_data(ttl=300)
+def _fetch_positions() -> list:
+    df = query_df(
+        "SELECT DISTINCT position FROM target_audiences"
+        " WHERE position IS NOT NULL AND trim(position) <> '' ORDER BY position"
+    )
+    return df["position"].astype(str).str.strip().tolist() if not df.empty else []
+
+
 def page_submit_visit():
     section_header("Submit Visit", "Log a new customer visit.")
 
@@ -203,29 +221,8 @@ def page_submit_visit():
     dept_choices_base: list[str] = []
     pos_choices_base:  list[str] = []
 
-    dept_df = query_df(
-        """
-        SELECT DISTINCT department
-        FROM target_audiences
-        WHERE department IS NOT NULL
-          AND trim(department) <> ''
-        ORDER BY department
-        """
-    )
-    if not dept_df.empty:
-        dept_choices_base = dept_df["department"].astype(str).str.strip().tolist()
-
-    pos_df = query_df(
-        """
-        SELECT DISTINCT position
-        FROM target_audiences
-        WHERE position IS NOT NULL
-          AND trim(position) <> ''
-        ORDER BY position
-        """
-    )
-    if not pos_df.empty:
-        pos_choices_base = pos_df["position"].astype(str).str.strip().tolist()
+    dept_choices_base = _fetch_departments()
+    pos_choices_base  = _fetch_positions()
 
     if customer_id:
         aud_df = query_df(

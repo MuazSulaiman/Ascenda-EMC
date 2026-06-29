@@ -275,6 +275,45 @@ def customer_quick_find_module(
         "did_clear": did_clear,
     }
 
+# ── Cached cascade-selector queries (5-min TTL) ──────────────────────────────
+@st.cache_data(ttl=300)
+def _fetch_cascade_regions(customers_table: str) -> list:
+    df = query_df(
+        f"SELECT DISTINCT region FROM {customers_table}"
+        " WHERE is_active IS TRUE AND region IS NOT NULL AND trim(region) <> '' ORDER BY region"
+    )
+    return df["region"].tolist()
+
+
+@st.cache_data(ttl=300)
+def _fetch_cascade_cities(customers_table: str, region: str) -> list:
+    df = query_df(
+        f"SELECT DISTINCT city FROM {customers_table}"
+        " WHERE is_active IS TRUE AND region = :r AND city IS NOT NULL AND trim(city) <> '' ORDER BY city",
+        {"r": region},
+    )
+    return df["city"].tolist()
+
+
+@st.cache_data(ttl=300)
+def _fetch_cascade_sectors(customers_table: str, region: str, city: str) -> list:
+    df = query_df(
+        f"SELECT DISTINCT sector FROM {customers_table}"
+        " WHERE is_active IS TRUE AND region = :r AND city = :c AND sector IS NOT NULL AND trim(sector) <> '' ORDER BY sector",
+        {"r": region, "c": city},
+    )
+    return df["sector"].tolist()
+
+
+@st.cache_data(ttl=300)
+def _fetch_cascade_customers(customers_table: str, region: str, city: str, sector: str) -> pd.DataFrame:
+    return query_df(
+        f"SELECT customer_id, account_name FROM {customers_table}"
+        " WHERE is_active IS TRUE AND region = :r AND city = :c AND sector = :s ORDER BY account_name",
+        {"r": region, "c": city, "s": sector},
+    )
+
+
 def customer_cascading_selectors(
     *,
     query_df,
@@ -349,16 +388,7 @@ def customer_cascading_selectors(
         st.session_state.pop(KEY_CUSTID, None)
 
     # Region options — always include "Other" so users can log unknown customers
-    reg_df = query_df(
-        f"""
-        SELECT DISTINCT region
-        FROM {customers_table}
-        WHERE is_active IS TRUE
-          AND region IS NOT NULL AND trim(region) <> ''
-        ORDER BY region
-        """
-    )
-    reg_raw = reg_df["region"].tolist()
+    reg_raw = _fetch_cascade_regions(customers_table)
     region_opts = [""] + _order_with_other_last(reg_raw)
     if not any(str(v).strip().lower() == "other" for v in reg_raw):
         region_opts.append("Other")
@@ -379,18 +409,7 @@ def customer_cascading_selectors(
     if region_is_other:
         city_opts = ["Other"]
     elif region_choice:
-        city_df = query_df(
-            f"""
-            SELECT DISTINCT city
-            FROM {customers_table}
-            WHERE is_active IS TRUE
-              AND region = :r
-              AND city IS NOT NULL AND trim(city) <> ''
-            ORDER BY city
-            """,
-            {"r": region_choice},
-        )
-        city_raw = city_df["city"].tolist()
+        city_raw = _fetch_cascade_cities(customers_table, region_choice)
         city_opts = [""] + _order_with_other_last(city_raw)
         if not any(str(v).strip().lower() == "other" for v in city_raw):
             city_opts.append("Other")
@@ -416,19 +435,7 @@ def customer_cascading_selectors(
     if cascade_skip:
         sector_opts = ["Other"]
     elif region_choice and city_choice:
-        sec_df = query_df(
-            f"""
-            SELECT DISTINCT sector
-            FROM {customers_table}
-            WHERE is_active IS TRUE
-              AND region = :r
-              AND city   = :c
-              AND sector IS NOT NULL AND trim(sector) <> ''
-            ORDER BY sector
-            """,
-            {"r": region_choice, "c": city_choice},
-        )
-        sec_raw = sec_df["sector"].tolist()
+        sec_raw = _fetch_cascade_sectors(customers_table, region_choice, city_choice)
         sector_opts = [""] + _order_with_other_last(sec_raw)
         if not any(str(v).strip().lower() == "other" for v in sec_raw):
             sector_opts.append("Other")
@@ -455,18 +462,7 @@ def customer_cascading_selectors(
     if cascade_other:
         cust_names = ["Other"]
     elif region_choice and city_choice and sector_choice:
-        cust_df = query_df(
-            f"""
-            SELECT customer_id, account_name
-            FROM {customers_table}
-            WHERE is_active IS TRUE
-              AND region = :r
-              AND city   = :c
-              AND sector = :s
-            ORDER BY account_name
-            """,
-            {"r": region_choice, "c": city_choice, "s": sector_choice},
-        )
+        cust_df = _fetch_cascade_customers(customers_table, region_choice, city_choice, sector_choice)
         cust_names = (
             [""]
             + [n for n in cust_df["account_name"].tolist() if str(n).strip().lower() != "other"]

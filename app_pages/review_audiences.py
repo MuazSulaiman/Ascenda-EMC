@@ -320,6 +320,7 @@ def page_review_target_audiences():
                 v.submitted_at_local AS last_visited_date,
                 v.user_id            AS last_visited_user_id
             FROM visits v
+            WHERE v.customer_id = :cid
             ORDER BY v.audience_id, v.submitted_at_local DESC, v.visit_id DESC
         )
         SELECT

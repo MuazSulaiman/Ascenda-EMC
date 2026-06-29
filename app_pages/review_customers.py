@@ -255,6 +255,7 @@ def page_review_other_customers():
         FROM customers
         WHERE COALESCE(is_active, TRUE) IS TRUE
         ORDER BY account_name
+        LIMIT 300
         """
     )
 

@@ -72,6 +72,20 @@ CREATE INDEX IF NOT EXISTS idx_target_bd_customer    ON target_breakdown(custome
 CREATE INDEX IF NOT EXISTS idx_target_bd_bu          ON target_breakdown(business_unit_id);
 CREATE INDEX IF NOT EXISTS idx_target_bd_level       ON target_breakdown(breakdown_level);
 
+-- ── Performance indexes ───────────────────────────────────────────────────────
+-- Speeds up Region → City → Sector → Customer cascading selectors
+CREATE INDEX IF NOT EXISTS idx_customers_cascade
+    ON customers(region, city, sector)
+    WHERE is_active IS TRUE;
+
+-- Speeds up recent-visit duplicate check (submit_visit)
+CREATE INDEX IF NOT EXISTS idx_visits_user_customer_time
+    ON visits(user_id, customer_id, submitted_at_utc DESC);
+
+-- Speeds up role-based objectives join
+CREATE INDEX IF NOT EXISTS idx_role_objectives_role_obj
+    ON role_objectives(role, objective_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_target_breakdown ON target_breakdown (
     target_rep_id,
     breakdown_level,
