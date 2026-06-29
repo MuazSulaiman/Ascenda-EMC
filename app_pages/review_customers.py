@@ -9,7 +9,7 @@ from config import TIMEZONE
 from db import engine
 from db_ops import query_df, exec_sql
 from utils import _utcnow_iso
-from widgets import set_current_page
+from widgets import set_current_page, _fetch_cascade_customers
 from ui import section_header, status_badge, html_table
 
 
@@ -613,6 +613,7 @@ def page_review_other_customers():
                         },
                     )
                     new_cid = int(res.scalar_one())
+                    _fetch_cascade_customers.clear()
 
                     # Link visit to this customer
                     conn.execute(

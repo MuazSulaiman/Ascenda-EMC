@@ -18,6 +18,7 @@ from config import TIMEZONE
 from db import engine
 from db_ops import query_df, exec_sql
 from utils import _utcnow_iso, _local_now_str, _utcnow
+from widgets import _fetch_cascade_customers
 from widgets import set_current_page
 from ui import section_header
 
@@ -367,6 +368,7 @@ def page_admin_import():
                             )
 
                         if (res.rowcount or 0) > 0:
+                            _fetch_cascade_customers.clear()
                             for key in (
                                 "cust_add_acc",
                                 "cust_add_sector_opt",
@@ -495,6 +497,8 @@ def page_admin_import():
                                 f"Customers import ✅ Inserted: {inserted} | Skipped: {skipped}",
                                 ok=True,
                             )
+                            if inserted > 0:
+                                _fetch_cascade_customers.clear()
                             st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{skipped}** skipped.")
                         except Exception as e:
                             _finish_status(sts, has_status, "Customers import failed ❌", ok=False)
@@ -755,6 +759,7 @@ def page_admin_import():
                                             "id": cid,
                                         },
                                     )
+                                    _fetch_cascade_customers.clear()
                                     st.success("Customer updated ✅")
                                 except Exception as e:
                                     st.error("Could not update customer.")
