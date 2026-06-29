@@ -275,6 +275,7 @@ CREATE TABLE IF NOT EXISTS visits (
     objective_id              INTEGER NOT NULL REFERENCES objectives(objective_id),
     notes                     TEXT,
     evaluation                TEXT CHECK (evaluation IS NULL OR evaluation IN ('Positive', 'Negative', 'Neutral')),
+    visit_type                TEXT CHECK (visit_type IN ('Actual Visit', 'Phone Call')) DEFAULT 'Actual Visit',
     submitted_at_local        TIMESTAMP,
     project_id                BIGINT  REFERENCES projects(project_id),
     other_audience_name       TEXT,
