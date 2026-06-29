@@ -255,6 +255,7 @@ _FIELD_LABELS = {
     "visits.objective_id":              "Objective",
     "visits.notes":                     "Notes",
     "visits.evaluation":                "Evaluation",
+    "visits.visit_type":                "Visit Type",
     "visits.other_audience_title":      "Audience Title",
     "visits.other_audience_name":       "Audience Name",
     "visits.other_audience_department": "Audience Department",
