@@ -484,6 +484,14 @@ def page_submit_visit():
     # =====================================================
     st.markdown(form_section(4, "Visit Details & Outcome"), unsafe_allow_html=True)
 
+    visit_type_choice = st.radio(
+        "Visit Type *",
+        ["Actual Visit", "Phone Call"],
+        index=0,
+        horizontal=True,
+        key=k("visit_type_sel"),
+    )
+
     if role in {"admin"}:
         obj_df = query_df(
             """
@@ -761,6 +769,7 @@ def page_submit_visit():
             "objective_id":        int(objective_id),
             "notes":               (notes.strip() if notes else None),
             "evaluation":          evaluation_val,
+            "visit_type":          visit_type_choice,
 
             "is_other_customer":   is_other_customer,
             # ✅ NEW: store the typed name when customer is Other
