@@ -1,0 +1,9 @@
+role 'GASTROINTESTINAL & OR'
+	modelPermission: read
+
+	tablePermission 'public business_units' = [Business Unit] == "GASTROINTESTINAL & OR"
+
+	tablePermission 'public users' = [business_unit_id] == 2 || [email] == "a.jawad@almadarmed.com"
+
+	annotation PBI_Id = 5626f90eda8e4b30b57448cd15b052eb
+

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
+  "name": "a9cec3648a8c07e38501",
+  "position": {
+    "x": 1082.0809248554913,
+    "y": 0,
+    "z": 1000,
+    "height": 160.92485549132948,
+    "width": 197.91907514450867,
+    "tabOrder": 1000
+  },
+  "visual": {
+    "visualType": "slicer",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "VISITS vs POs_Customers"
+                    }
+                  },
+                  "Property": "REGION"
+                }
+              },
+              "queryRef": "VISITS vs POs.REGION",
+              "nativeQueryRef": "REGION1",
+              "active": true
+            }
+          ]
+        }
+      }
+    },
+    "objects": {
+      "data": [
+        {
+          "properties": {
+            "mode": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Basic'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {}
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

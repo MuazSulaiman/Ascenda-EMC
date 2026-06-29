@@ -1,0 +1,66 @@
+table 'public business_units'
+	isHidden
+	lineageTag: 81e3b299-892d-4dd3-81cb-3a90d21568a6
+
+	column 'Business Unit ID'
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: b4701b1a-01ed-4d5d-8112-7883809f9444
+		summarizeBy: none
+		sourceColumn: Business Unit ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Business Unit'
+		dataType: string
+		isHidden
+		lineageTag: 729a04da-9e32-48ae-b93e-dfa12d5d67ad
+		summarizeBy: none
+		sourceColumn: Business Unit
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column is_active
+		dataType: boolean
+		isHidden
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: e1496c31-3b32-4fd2-a181-25994ea53634
+		summarizeBy: none
+		sourceColumn: is_active
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Business Unit Mask' = "Business Unit" & " " & 'public business_units'[Business Unit ID]
+		isHidden
+		lineageTag: 4494d6ef-83b8-4989-a049-009016bfea5a
+		summarizeBy: none
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'public business_units' = m
+		mode: import
+		source =
+				let
+				    Source = Excel.Workbook(File.Contents("C:\Users\Muhammad Sulaiman\Downloads\Ascenda_Masking Project\ascenda_backup.xlsx"), null, true),
+				    public_business_units = Source{[Item="business_units",Kind="Sheet"]}[Data],
+				    #"Promoted Headers" = Table.PromoteHeaders(public_business_units, [PromoteAllScalars=true]),
+				    #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers",{{"business_unit_id", Int64.Type}, {"name", type text}, {"is_active", type logical}}),
+				    #"Renamed Columns" = Table.RenameColumns(#"Changed Type",{{"name", "Business Unit"}, {"business_unit_id", "Business Unit ID"}})
+				in
+				    #"Renamed Columns"
+
+	changedProperty = IsHidden
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+

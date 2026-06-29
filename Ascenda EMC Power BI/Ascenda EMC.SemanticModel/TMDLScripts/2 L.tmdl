@@ -1,0 +1,173 @@
+createOrReplace
+
+	table 'public visits_lines (Ammendable)'
+		lineageTag: 36aaea33-f56f-4244-ae25-99ae8e58f749
+
+		column CATEGORY
+			dataType: string
+			lineageTag: 2706cd7e-61aa-4c4e-a033-bfcb5dcb3fa9
+			summarizeBy: none
+			sourceColumn: CATEGORY
+
+			annotation SummarizationSetBy = Automatic
+
+		column YEAR
+			dataType: string
+			lineageTag: ea676ed7-99b3-4551-aeb6-1ee714996767
+			summarizeBy: none
+			sourceColumn: YEAR
+
+			annotation SummarizationSetBy = Automatic
+
+		column 'SALES REP.'
+			dataType: string
+			lineageTag: 0087d9fb-b199-4abe-81d0-5ed8c6751c87
+			summarizeBy: none
+			sourceColumn: SALES REP.
+
+			annotation SummarizationSetBy = Automatic
+
+		column REGION
+			dataType: string
+			lineageTag: f4908583-c86b-48cb-bfba-349317a34d54
+			summarizeBy: none
+			sourceColumn: REGION
+
+			annotation SummarizationSetBy = Automatic
+
+		column SECTOR
+			dataType: string
+			lineageTag: 7c7c89d1-3235-455b-96d9-e506f999f38f
+			summarizeBy: none
+			sourceColumn: SECTOR
+
+			annotation SummarizationSetBy = Automatic
+
+		column 'POs Value'
+			dataType: string
+			lineageTag: 1f19b886-042f-4456-8f7d-d5d719ec2e80
+			summarizeBy: none
+			sourceColumn: POs Value
+
+			annotation SummarizationSetBy = Automatic
+
+		column 'SUM of VISITS'
+			dataType: double
+			lineageTag: a3e0f36a-b524-4c93-b521-b7a7fed5a559
+			summarizeBy: sum
+			sourceColumn: SUM of VISITS
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column LINE
+			dataType: int64
+			formatString: 0
+			lineageTag: 7e6736de-973e-4412-9ba5-a11c396296a4
+			summarizeBy: sum
+			sourceColumn: LINE
+
+			annotation SummarizationSetBy = Automatic
+
+		partition 'public visits_lines (Ammendable)' = m
+			mode: import
+			source = 
+					let
+						Source = #"public visits",
+						#"Added Custom" = Table.AddColumn(Source, "Visit Count", each 1),
+						#"Grouped Rows" = Table.Group(
+							#"Added Custom",
+							{"business_line_id", "customer_id", "user_id", "yearx"},
+							{{"SUM of VISITS", each List.Sum([Visit Count]), type number}}
+						),
+						#"Merged Queries" = Table.NestedJoin(
+							#"Grouped Rows",
+							{"business_line_id"},
+							#"public business_lines",
+							{"Business Line ID"},
+							"public business_lines",
+							JoinKind.LeftOuter
+						),
+						#"Expanded public business_lines" = Table.ExpandTableColumn(
+							#"Merged Queries", "public business_lines", {"Product Category"}, {"public business_lines.Product Category"}
+						),
+						#"Merged Queries1" = Table.NestedJoin(
+							#"Expanded public business_lines",
+							{"customer_id"},
+							#"public customers",
+							{"Customer ID"},
+							"public customers",
+							JoinKind.LeftOuter
+						),
+						#"Expanded public customers" = Table.ExpandTableColumn(
+							#"Merged Queries1",
+							"public customers",
+							{"Customer Name", "Sector", "Region"},
+							{"public customers.Customer Name", "public customers.Sector", "public customers.Region"}
+						),
+						#"Merged Queries2" = Table.NestedJoin(
+							#"Expanded public customers", {"user_id"}, #"public users", {"user_id"}, "public users", JoinKind.LeftOuter
+						),
+						#"Expanded public users" = Table.ExpandTableColumn(
+							#"Merged Queries2", "public users", {"Frontline Name"}, {"public users.Frontline Name"}
+						),
+						#"Removed Other Columns" = Table.SelectColumns(
+							#"Expanded public users",
+							{
+								"yearx",
+								"SUM of VISITS",
+								"public business_lines.Product Category",
+								"business_line_id",
+								"public customers.Sector",
+								"public customers.Region",
+								"public users.Frontline Name"
+							}
+						),
+						#"Reordered Columns" = Table.ReorderColumns(
+							#"Removed Other Columns",
+							{
+								"public business_lines.Product Category",
+								"yearx",
+								"business_line_id",
+								"public users.Frontline Name",
+								"public customers.Region",
+								"public customers.Sector",
+								"SUM of VISITS"
+							}
+						),
+						#"Added Custom1" = Table.AddColumn(#"Reordered Columns", "POs Value", each 0),
+						#"Reordered Columns1" = Table.ReorderColumns(
+							#"Added Custom1",
+							{
+								"public business_lines.Product Category",
+								"yearx",
+								"business_line_id",
+								"public users.Frontline Name",
+								"public customers.Region",
+								"public customers.Sector",
+								"POs Value",
+								"SUM of VISITS"
+							}
+						),
+						#"Renamed Columns" = Table.RenameColumns(
+							#"Reordered Columns1",
+							{
+								{"public business_lines.Product Category", "CATEGORY"},
+								{"business_line_id", "LINE"},
+								{"public users.Frontline Name", "SALES REP."},
+								{"public customers.Region", "REGION"},
+								{"public customers.Sector", "SECTOR"},
+								{"yearx", "YEAR"}
+							}
+						),
+						#"Filtered Rows" = Table.SelectRows(#"Renamed Columns", each ([CATEGORY] = "12. GASTACH / OT") and ([YEAR] > 2023)),
+						#"Replaced Value" = Table.ReplaceValue(
+							#"Filtered Rows", "SALAH ZULFIKAR", "AHMAD RAMZY", Replacer.ReplaceText, {"SALES REP."}
+						)
+					in
+						#"Replaced Value"
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table

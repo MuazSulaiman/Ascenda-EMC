@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Report",
+    "displayName": "Ascenda EMC"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "35cacba2-7ca7-4273-bb52-a2c7b36d4ca3"
+  }
+}

@@ -1,0 +1,581 @@
+table 'public visits'
+	isHidden
+	lineageTag: e7e5a1e0-0901-466d-8fd0-59662344bbbe
+
+	measure 'Last Refreshed' = ```
+			
+			"Last Refresh: " & FORMAT(NOW(), "dd/MM/yyyy hh:mm:ss AM/PM")
+			
+			```
+		isHidden
+		lineageTag: fe9fe69c-3b09-4628-9513-73b0c5b2ae8f
+
+		changedProperty = IsHidden
+
+	measure 'Departments Visited' =
+			
+			CALCULATE(
+			    DISTINCTCOUNT('public target_audiences'[Department]),
+			    TREATAS(
+			        VALUES('public visits'[Audience]),
+			        'public target_audiences'[Audience ID]
+			    )
+			)
+		formatString: 0
+		isHidden
+		lineageTag: ab4b9db5-dcd4-4144-9768-798942c34102
+
+		changedProperty = IsHidden
+
+	measure 'Customers Visited per Working Day' =
+			
+			AVERAGEX (
+			    FILTER (
+			        VALUES ( 'public visits'[Visit Date] ),
+			        WEEKDAY ( 'public visits'[Visit Date], 1 ) >= 1
+			            && WEEKDAY ( 'public visits'[Visit Date], 1 ) <= 5   -- Sun to Thu
+			    ),
+			    CALCULATE (
+			        DISTINCTCOUNT ( 'public visits'[customer_id] )
+			    )
+			)
+		formatString: #,0.0
+		isHidden
+		lineageTag: 8fa7832d-b0f5-4dab-b7ba-2c1dd613f39b
+
+		changedProperty = IsHidden
+
+	measure 'Visits by Customer' =
+			
+			DIVIDE(
+				COUNTA('public visits'[Visit #]),
+				DISTINCTCOUNT('public visits'[customer_id])
+			)
+		formatString: #,0.0
+		isHidden
+		lineageTag: 2796ec3c-fbd1-4d1d-bb73-a2b3fc5a4038
+
+		extendedProperty MeasureTemplate =
+				{
+				  "version": 0,
+				  "daxTemplateName": "MathematicalDivision"
+				}
+
+		changedProperty = FormatString
+
+		changedProperty = IsHidden
+
+	measure 'Audience by Customer' =
+			
+			DIVIDE(
+				DISTINCTCOUNT('public visits'[Audience]),
+				DISTINCTCOUNT('public visits'[customer_id])
+			)
+		formatString: #,0.0
+		isHidden
+		lineageTag: a03c5e00-4556-4ce2-af3e-c63a7a0daf68
+
+		changedProperty = IsHidden
+
+	measure 'Avg Customers Visited per Month' = ```
+			
+			AVERAGEX (
+			    VALUES ( 'public visits'[MonthStart] ),
+			    CALCULATE ( DISTINCTCOUNT ( 'public visits'[customer_id] ) )
+			)
+			
+			```
+		formatString: #,0.0
+		isHidden
+		lineageTag: b7b6ac3f-9369-456e-a02a-f9d02034067c
+
+		changedProperty = IsHidden
+
+	measure 'Avg Business Lines Visited per Month' = ```
+			
+			AVERAGEX (
+			    VALUES ( 'public visits'[MonthStart] ),
+			    CALCULATE ( DISTINCTCOUNT ( 'public visits'[business_line_id] ) )
+			)
+			
+			```
+		formatString: #,0.0
+		isHidden
+		lineageTag: 2e39bf4a-6f19-458c-847f-dc91f84187bf
+
+		changedProperty = IsHidden
+
+	column 'Visit #'
+		dataType: string
+		isHidden
+		lineageTag: 103edaa4-b5f7-4b4c-a46c-6a929a0d8c68
+		summarizeBy: none
+		sourceColumn: Visit #
+
+		changedProperty = DataType
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column user_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: f30c3b9a-b9ae-4763-8d08-5e58e351dc68
+		summarizeBy: none
+		sourceColumn: user_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column submitted_at_utc
+		dataType: dateTime
+		isHidden
+		formatString: General Date
+		lineageTag: 84020491-3c56-40f0-a4cc-f51d88659f45
+		summarizeBy: none
+		sourceColumn: submitted_at_utc
+
+		variation Variation
+			isDefault
+			relationship: 24121db1-d1b4-4623-944e-a45d415e294f
+			defaultHierarchy: LocalDateTable_7a420065-7954-485e-b70f-ca695a334fe3.'Date Hierarchy'
+
+		changedProperty = DataType
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Date Local'
+		dataType: dateTime
+		isHidden
+		formatString: dd/mm/yyyy h:nn:ss AM/PM
+		lineageTag: d5f401cb-3037-4245-a3dc-5668f0877abc
+		summarizeBy: none
+		sourceColumn: Date Local
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isDateTimeCustom":true}
+
+	column latitude
+		dataType: double
+		isHidden
+		lineageTag: e3342acd-93c6-47e3-9167-ba8f2b9fb0ea
+		summarizeBy: sum
+		sourceColumn: latitude
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column longitude
+		dataType: double
+		isHidden
+		lineageTag: 92e8d80f-1431-47f1-8d27-8f9750307129
+		summarizeBy: sum
+		sourceColumn: longitude
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column accuracy_m
+		dataType: double
+		isHidden
+		lineageTag: e6b0300a-ae59-4986-b5c8-d665e2bf18f6
+		summarizeBy: sum
+		sourceColumn: accuracy_m
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column customer_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 8c5c4179-8e72-4271-9171-8afcfc6ecfac
+		summarizeBy: none
+		sourceColumn: customer_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Audience
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: a05c2ef1-cd76-4ac4-bfe9-fab6654c3f09
+		summarizeBy: none
+		sourceColumn: Audience
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column business_line_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: c22170ca-aa4d-4d44-8fd7-ebfcd2a3f63c
+		summarizeBy: none
+		sourceColumn: business_line_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column product_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 2a1e8744-96fd-4605-bf5e-273fc0260dc4
+		summarizeBy: none
+		sourceColumn: product_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column objective_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 4138482c-f6c4-44a5-afde-9ec468db6876
+		summarizeBy: none
+		sourceColumn: objective_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Notes
+		dataType: string
+		isHidden
+		lineageTag: 5c3f5fba-a186-47bc-bef1-29fa21d935d4
+		summarizeBy: none
+		sourceColumn: Notes
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Evaluation
+		dataType: string
+		isHidden
+		lineageTag: 68c9312b-814a-460f-9978-e8ffc3e0e84a
+		summarizeBy: none
+		sourceColumn: Evaluation
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column project_id
+		dataType: string
+		isHidden
+		lineageTag: bab17c42-6542-4647-9afb-f0565c2f768b
+		summarizeBy: none
+		sourceColumn: project_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column other_audience_name
+		dataType: string
+		isHidden
+		lineageTag: 18d3f553-4229-4fdf-b705-866929fa58a9
+		summarizeBy: none
+		sourceColumn: other_audience_name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column other_audience_department
+		dataType: string
+		isHidden
+		lineageTag: d0c4cf66-09ee-406a-bf79-a743478016e6
+		summarizeBy: none
+		sourceColumn: other_audience_department
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column other_audience_position
+		dataType: string
+		isHidden
+		lineageTag: b5bdd748-f490-4757-a93a-4bec1bb65b5c
+		summarizeBy: none
+		sourceColumn: other_audience_position
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column week_num = WEEKNUM('public visits'[Date Local],1)
+		isHidden
+		formatString: 0
+		lineageTag: 68cc5efc-8e39-4f34-a980-3da52a7761e8
+		summarizeBy: sum
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column other_audience_title
+		dataType: string
+		isHidden
+		lineageTag: c0adcd69-e56d-4602-bda1-00699e921b37
+		summarizeBy: none
+		sourceColumn: other_audience_title
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column other_audience_phone
+		dataType: string
+		isHidden
+		lineageTag: b72dfe04-9c21-4f57-9107-97621a63b4b1
+		summarizeBy: none
+		sourceColumn: other_audience_phone
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column other_audience_email
+		dataType: string
+		isHidden
+		lineageTag: 93106d9a-e4b1-4b1f-b792-ffd21c73f9f0
+		summarizeBy: none
+		sourceColumn: other_audience_email
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column AfterHours_Home_OR =
+			
+			VAR Obj = 'public visits'[objective_id]
+			VAR IsWantedObjective =
+			    Obj IN { 494, 496, 616, 619 }   -- Home Visit + OR Technical Support + TS OR Avanos + TS Home Visit (replace IDs if needed)
+			
+			VAR dt  = 'public visits'[Date Local]
+			VAR Dow = WEEKDAY(dt, 1)          -- 1 = Sunday, 7 = Saturday
+			VAR Hr  = HOUR(dt)
+			
+			VAR IsWeekday  = Dow >= 1 && Dow <= 5   -- Sun–Thu
+			VAR IsWeekend  = Dow >= 6               -- Fri–Sat
+			
+			VAR IsWeekdayOvertime =
+			    IsWeekday && (Hr >= 17 || Hr < 8)   -- after 5 PM or before 8 AM
+			
+			VAR IsWeekendOvertime =
+			    IsWeekend                           -- whole weekend = overtime
+			
+			RETURN
+			IF(
+			    NOT IsWantedObjective,
+			    BLANK(),                            -- all other objectives ignored
+			    IF(
+			        IsWeekdayOvertime || IsWeekendOvertime,
+			        "Overtime",
+			        "Working Hours"
+			    )
+			)
+		isHidden
+		lineageTag: c04e9f22-0ce1-4533-b72e-1e97e5695937
+		summarizeBy: none
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Visit Date' = ```
+			
+			DATE (
+			    YEAR ( 'public visits'[Date Local] ),
+			    MONTH( 'public visits'[Date Local] ),
+			    DAY  ( 'public visits'[Date Local] )
+			)
+			
+			```
+		isHidden
+		formatString: Short Date
+		lineageTag: daf16125-4f5d-4fe7-87bf-1d6a54385ae9
+		summarizeBy: none
+
+		variation Variation
+			isDefault
+			relationship: 559a904e-0dc1-4cc1-a952-34acc2122757
+			defaultHierarchy: LocalDateTable_c604b8c9-2c5f-4053-ab70-65b4e6d4be7f.'Date Hierarchy'
+
+		changedProperty = DataType
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column MonthStart = ```
+			
+			DATE ( YEAR ( 'public visits'[Visit Date] ), MONTH ( 'public visits'[Visit Date] ), 1 )
+			
+			```
+		isHidden
+		formatString: Short Date
+		lineageTag: 6f4be10b-2ee7-4ecd-b6ec-e6619de998bd
+		summarizeBy: none
+
+		variation Variation
+			isDefault
+			relationship: e426cfc0-4d23-4a8c-ac66-781eb983171f
+			defaultHierarchy: LocalDateTable_3f1a6c58-41ed-4927-ba0a-fc75377b1e93.'Date Hierarchy'
+
+		changedProperty = DataType
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column 'Visit Hour' = HOUR('public visits'[Date Local])
+		isHidden
+		formatString: 0
+		lineageTag: da4db1ba-6d2c-43db-93c9-ee69e0d32cea
+		summarizeBy: sum
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Day Number' = WEEKDAY('public visits'[Date Local], 1)
+		isHidden
+		formatString: 0
+		lineageTag: 3fb3356a-6c1b-423b-9284-9ca24191f7c2
+		summarizeBy: sum
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Day Name' = FORMAT('public visits'[Date Local], "dddd")
+		isHidden
+		lineageTag: 63b0fd30-18cf-4f92-bd9c-452aab296717
+		summarizeBy: none
+		sortByColumn: 'Day Number'
+
+		changedProperty = SortByColumn
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column other_customer_name
+		dataType: string
+		isHidden
+		lineageTag: 72e051d3-4f40-4eec-809e-04ac35296811
+		summarizeBy: none
+		sourceColumn: other_customer_name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column yearx
+		dataType: string
+		isHidden
+		lineageTag: c4cd484c-9112-47cb-b55e-28397fae36c9
+		summarizeBy: none
+		sourceColumn: yearx
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column is_deleted
+		dataType: boolean
+		isHidden
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 18bcce8b-3cfb-4676-8012-39969885a2d2
+		summarizeBy: none
+		sourceColumn: is_deleted
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column deleted_at
+		dataType: string
+		isHidden
+		lineageTag: 7cfb537a-810c-4663-af02-f8d8bb49274a
+		summarizeBy: none
+		sourceColumn: deleted_at
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column deleted_by
+		dataType: string
+		isHidden
+		lineageTag: 641d85c2-b77c-4984-9034-a192e2da9349
+		summarizeBy: none
+		sourceColumn: deleted_by
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column version
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: d9e4cd1a-2bee-4983-9c8d-8dead41d5b2f
+		summarizeBy: sum
+		sourceColumn: version
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'public visits' = m
+		mode: import
+		source =
+				let
+				    Source = Excel.Workbook(File.Contents("C:\Users\Muhammad Sulaiman\Downloads\Ascenda_Masking Project\ascenda_backup.xlsx"), null, true),
+				    public_visits = Source{[Item="visits",Kind="Sheet"]}[Data],
+				    #"Promoted Headers" = Table.PromoteHeaders(public_visits, [PromoteAllScalars=true]),
+				    #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers",{{"visit_id", Int64.Type}, {"user_id", Int64.Type}, {"submitted_at_utc", type number}, {"latitude", type number}, {"longitude", type number}, {"accuracy_m", type number}, {"customer_id", Int64.Type}, {"audience_id", Int64.Type}, {"business_line_id", Int64.Type}, {"product_id", Int64.Type}, {"objective_id", Int64.Type}, {"notes", type text}, {"evaluation", type text}, {"submitted_at_local", type number}, {"project_id", type any}, {"other_audience_name", type any}, {"other_audience_department", type any}, {"other_audience_position", type any}, {"other_audience_title", type any}, {"other_audience_phone", type any}, {"other_audience_email", type any}, {"other_customer_name", type any}, {"is_deleted", type logical}, {"deleted_at", type any}, {"deleted_by", type any}, {"version", Int64.Type}}),
+				    #"Renamed Columns" = Table.RenameColumns(#"Changed Type",{{"visit_id", "Visit #"}, {"notes", "Notes"}, {"evaluation", "Evaluation"}, {"submitted_at_local", "Date Local"}}),
+				    #"Changed Type1" = Table.TransformColumnTypes(#"Renamed Columns",{{"Date Local", type datetime}}),
+				    #"Added Custom" = Table.AddColumn(#"Changed Type1", "yearx", each Date.Year([Date Local])),
+				    #"Renamed Columns1" = Table.RenameColumns(#"Added Custom",{{"audience_id", "Audience"}})
+				in
+				    #"Renamed Columns1"
+
+	changedProperty = IsHidden
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+

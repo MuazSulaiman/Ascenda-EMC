@@ -1,0 +1,9 @@
+role W/R
+	modelPermission: read
+
+	tablePermission 'public customers' = [Region] == "W/R"
+
+	tablePermission 'public users' = [region] == "W/R"
+
+	annotation PBI_Id = 98a67fbae15f46bc9eaf2a7b6064bfe9
+

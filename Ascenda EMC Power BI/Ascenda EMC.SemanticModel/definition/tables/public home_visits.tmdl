@@ -1,0 +1,93 @@
+table 'public home_visits'
+	isHidden
+	lineageTag: 0d7adf81-8c50-45d1-a9fc-7f1bb1e1ccee
+
+	column home_visit_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 408f2823-5479-4041-8bab-930dec7802a5
+		summarizeBy: sum
+		sourceColumn: home_visit_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column visit_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: e951b71f-5d00-48ad-895a-b58de81443ca
+		summarizeBy: none
+		sourceColumn: visit_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column patient_name
+		dataType: string
+		isHidden
+		lineageTag: 8154e2f1-2d72-41d4-bc14-137cd14c6f38
+		summarizeBy: none
+		sourceColumn: patient_name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column patient_phone
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: d635f470-9a58-481b-a7c6-f916aad92698
+		summarizeBy: sum
+		sourceColumn: patient_phone
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column serial_no
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: f581fc54-fde8-4e8a-8ab9-d87ed66f371d
+		summarizeBy: sum
+		sourceColumn: serial_no
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column created_at_utc
+		dataType: double
+		isHidden
+		lineageTag: e848a57c-9fe7-4193-94bc-9aa0332b99eb
+		summarizeBy: sum
+		sourceColumn: created_at_utc
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	partition 'public home_visits' = m
+		mode: import
+		source =
+				let
+				    Source = Excel.Workbook(File.Contents("C:\Users\Muhammad Sulaiman\Downloads\Ascenda_Masking Project\ascenda_backup.xlsx"), null, true),
+				    public_home_visits = Source{[Item="home_visits",Kind="Sheet"]}[Data],
+				    #"Promoted Headers" = Table.PromoteHeaders(public_home_visits, [PromoteAllScalars=true]),
+				    #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers",{{"home_visit_id", Int64.Type}, {"visit_id", Int64.Type}, {"patient_name", type text}, {"patient_phone", Int64.Type}, {"serial_no", Int64.Type}, {"created_at_utc", type number}})
+				in
+				    #"Changed Type"
+
+	changedProperty = IsHidden
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+

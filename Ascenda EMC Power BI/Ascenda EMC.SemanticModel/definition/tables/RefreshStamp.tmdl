@@ -1,0 +1,58 @@
+table RefreshStamp
+	isHidden
+	lineageTag: ac83d3d6-9705-47bb-9a52-7983074dd67d
+
+	column utc_now
+		dataType: string
+		isHidden
+		lineageTag: 1e3f74ef-b658-482e-9bdf-f41ed90ad128
+		summarizeBy: none
+		sourceColumn: utc_now
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column local_ast
+		dataType: string
+		isHidden
+		lineageTag: 28d0adcc-f42a-470c-a60d-5ab487bd5bf7
+		summarizeBy: none
+		sourceColumn: local_ast
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Msg = "Refreshed at:"
+		isHidden
+		lineageTag: 182fa33a-c3ae-42ce-b752-826306768356
+		summarizeBy: none
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition RefreshStamp = m
+		mode: import
+		source =
+				let
+				    // Always returns the dataset refresh time in UTC (Service runs in UTC)
+				    UtcNow   = DateTimeZone.FixedUtcNow(),
+				    // KSA is UTC+3 and has no DST
+				    LocalAST = DateTimeZone.SwitchZone(UtcNow, 3),
+				    // Output a single-row table
+				    Output =
+				        #table(
+				            {"utc_now", "local_ast"},
+				            {{ UtcNow, LocalAST }}
+				        )
+				in
+				    Output
+
+	changedProperty = IsHidden
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

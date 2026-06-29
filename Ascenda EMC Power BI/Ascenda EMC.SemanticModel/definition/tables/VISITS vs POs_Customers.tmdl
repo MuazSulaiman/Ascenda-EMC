@@ -1,0 +1,174 @@
+table 'VISITS vs POs_Customers'
+	isHidden
+	lineageTag: aa69d556-f4fd-4ced-84af-e4e0197cb4b2
+
+	measure PRODUCTIVITY_CUSTOMERS =
+			
+			DIVIDE(
+				SUM('VISITS vs POs_Customers'[POs]),
+				SUM('VISITS vs POs_Customers'[VISITS])
+			)
+		formatString: #,0.00
+		isHidden
+		lineageTag: 71affafc-e1e3-49e7-9015-7534f9798257
+
+		extendedProperty MeasureTemplate =
+				{
+				  "version": 0,
+				  "daxTemplateName": "MathematicalDivision"
+				}
+
+		changedProperty = FormatString
+
+		changedProperty = IsHidden
+
+	column CATEGORY
+		dataType: string
+		isHidden
+		lineageTag: 665bcdf7-4c93-42df-966a-2f7cb083ebe5
+		summarizeBy: none
+		sourceColumn: CATEGORY
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column YEAR
+		dataType: string
+		isHidden
+		lineageTag: a42e3e41-dd57-45b3-9826-fe2907f332fe
+		summarizeBy: none
+		sourceColumn: YEAR
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'CUSTOMER (Original)'
+		dataType: string
+		isHidden
+		lineageTag: 9d4801d1-c8b6-4540-b82c-9b4a38158d65
+		summarizeBy: none
+		sourceColumn: CUSTOMER (Original)
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'SALES REP (Original)'
+		dataType: string
+		isHidden
+		lineageTag: 537b2620-3fb2-476c-8b1c-57ca2362b2a0
+		summarizeBy: none
+		sourceColumn: SALES REP (Original)
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column REGION
+		dataType: string
+		isHidden
+		lineageTag: 45436e25-dc28-4404-9023-6419d0595433
+		summarizeBy: none
+		sourceColumn: REGION
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column SECTOR
+		dataType: string
+		isHidden
+		lineageTag: 1ac27c5a-b6d2-4ca2-adf9-6f809d12467b
+		summarizeBy: none
+		sourceColumn: SECTOR
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column POs
+		dataType: double
+		isHidden
+		formatString: #,0.00
+		lineageTag: 34ee4f05-5413-4c8e-9aa3-9a0d5d8773fb
+		summarizeBy: sum
+		sourceColumn: POs
+
+		changedProperty = DataType
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column VISITS
+		dataType: int64
+		isHidden
+		formatString: #,0
+		lineageTag: 4b2a49c1-1530-454b-addd-e14ccb35c306
+		summarizeBy: sum
+		sourceColumn: VISITS
+
+		changedProperty = DataType
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column CUSTOMER =
+			
+			VAR MaskValue =
+			    LOOKUPVALUE(
+			        'public customers'[Customer Name Mask],
+			        'public customers'[Customer Name],
+			        'VISITS vs POs_Customers'[CUSTOMER (Original)]
+			    )
+			RETURN
+			IF(
+			    NOT ISBLANK(MaskValue),
+			    MaskValue,
+			    "Customer 1000"
+			)
+		isHidden
+		lineageTag: 47f9eec7-203a-4056-845c-6a1dc8fae922
+		summarizeBy: none
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'SALES REP' = ```
+			
+			    LOOKUPVALUE(
+			        'public users'[Frontline Mask],
+			        'public users'[Frontline Name],
+			        'VISITS vs POs_Customers'[SALES REP (Original)]
+			    )
+			
+			```
+		isHidden
+		lineageTag: 7443ca50-1525-41e8-9d66-360bfc88f755
+		summarizeBy: none
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'VISITS vs POs_Customers' = m
+		mode: import
+		source =
+				let
+				    Source = Table.Combine({#"public visits_customers (Ammendable)", #"Category 12_Year 24-25-26_Customers_PT (Ammendable)"}),
+				    #"Filtered Rows" = Table.SelectRows(Source, each true),
+				    #"Renamed Columns" = Table.RenameColumns(#"Filtered Rows",{{"SALES REP.", "SALES REP (Original)"}, {"SUM of VISITS", "VISITS"}, {"POs Value", "POs"}, {"CUSTOMER", "CUSTOMER (Original)"}}),
+				    #"Replaced Value" = Table.ReplaceValue(#"Renamed Columns","12. AVANOS / ANES & ICU","12. GASTACH / OT",Replacer.ReplaceText,{"CATEGORY"})
+				in
+				    #"Replaced Value"
+
+	changedProperty = IsHidden
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

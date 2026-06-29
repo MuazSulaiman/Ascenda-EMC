@@ -1,0 +1,129 @@
+table 'public app_sessions'
+	isHidden
+	lineageTag: 7547d769-3692-46d9-b5fa-c5cfba49b10f
+
+	column session_id
+		dataType: string
+		isHidden
+		lineageTag: 16b1937a-9ef9-448f-b37f-20ab47328f09
+		summarizeBy: none
+		sourceColumn: session_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column user_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 581d36ae-7fc8-49a7-9b89-1aed9a20373a
+		summarizeBy: none
+		sourceColumn: user_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column created_at_utc
+		dataType: double
+		isHidden
+		lineageTag: 5cad8536-8175-457b-b10b-9ea3ab572f56
+		summarizeBy: sum
+		sourceColumn: created_at_utc
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column expires_at_utc
+		dataType: double
+		isHidden
+		lineageTag: 46bd9538-fd0c-4e5f-bdb8-ef8f4b27025b
+		summarizeBy: sum
+		sourceColumn: expires_at_utc
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column revoked_at_utc
+		dataType: double
+		isHidden
+		lineageTag: 7f835566-74c8-409d-952e-913b954cbdb2
+		summarizeBy: sum
+		sourceColumn: revoked_at_utc
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column closed_reason
+		dataType: string
+		isHidden
+		lineageTag: 3e4337f5-f6bd-49f9-8850-7a67463e6cf5
+		summarizeBy: none
+		sourceColumn: closed_reason
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column last_seen_utc
+		dataType: double
+		isHidden
+		lineageTag: 4ec76489-ab41-4adc-9a01-9e1731cd2ddf
+		summarizeBy: sum
+		sourceColumn: last_seen_utc
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column ip
+		dataType: string
+		isHidden
+		lineageTag: 24eaaa45-0bd4-4a81-9422-ef0f8fdfa5b2
+		summarizeBy: none
+		sourceColumn: ip
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column user_agent
+		dataType: string
+		isHidden
+		lineageTag: 050e1fbe-825a-4157-b882-9c1bcf42072e
+		summarizeBy: none
+		sourceColumn: user_agent
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'public app_sessions' = m
+		mode: import
+		source =
+				let
+				    Source = Excel.Workbook(File.Contents("C:\Users\Muhammad Sulaiman\Downloads\Ascenda_Masking Project\ascenda_backup.xlsx"), null, true),
+				    public_app_sessions = Source{[Item="app_sessions",Kind="Sheet"]}[Data],
+				    #"Promoted Headers" = Table.PromoteHeaders(public_app_sessions, [PromoteAllScalars=true]),
+				    #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers",{{"session_id", type text}, {"user_id", Int64.Type}, {"created_at_utc", type number}, {"expires_at_utc", type number}, {"revoked_at_utc", type number}, {"closed_reason", type text}, {"last_seen_utc", type number}, {"ip", type any}, {"user_agent", type text}})
+				in
+				    #"Changed Type"
+
+	changedProperty = IsHidden
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+

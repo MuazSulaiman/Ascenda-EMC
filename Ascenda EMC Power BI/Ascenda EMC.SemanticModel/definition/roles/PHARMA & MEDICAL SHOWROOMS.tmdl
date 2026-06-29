@@ -1,0 +1,9 @@
+role 'PHARMA & MEDICAL SHOWROOMS'
+	modelPermission: read
+
+	tablePermission 'public business_units' = [Business Unit] == "PHARMA & MEDICAL SHOWROOMS"
+
+	tablePermission 'public users' = [business_unit_id] == 4
+
+	annotation PBI_Id = 2704c41474214f7eb846804dd4b14e7d
+

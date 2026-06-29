@@ -1,0 +1,7 @@
+role 'TOP MNGMT'
+	modelPermission: read
+
+	tablePermission 'public users' = [role] <> "admin" && [user_id] <> 24 && [user_id] <> 27
+
+	annotation PBI_Id = aac87120b6c249969259fc9c53959794
+

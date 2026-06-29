@@ -1,0 +1,176 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
+  "name": "57ca5f631711b770d97c",
+  "position": {
+    "x": 23.466666666666665,
+    "y": 43.733333333333334,
+    "z": 0,
+    "height": 633.6,
+    "width": 1057.0666666666666,
+    "tabOrder": 0
+  },
+  "visual": {
+    "visualType": "scatterChart",
+    "query": {
+      "queryState": {
+        "Play": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "VISITS vs POs_Customers"
+                    }
+                  },
+                  "Property": "YEAR"
+                }
+              },
+              "queryRef": "VISITS vs POs.YEAR",
+              "nativeQueryRef": "YEAR"
+            }
+          ]
+        },
+        "Series": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "VISITS vs POs_Customers"
+                    }
+                  },
+                  "Property": "CUSTOMER (Original)"
+                }
+              },
+              "queryRef": "VISITS vs POs.CUSTOMER",
+              "nativeQueryRef": "CUSTOMER"
+            }
+          ]
+        },
+        "Size": {
+          "projections": [
+            {
+              "field": {
+                "Aggregation": {
+                  "Expression": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "VISITS vs POs_Customers"
+                        }
+                      },
+                      "Property": "POs"
+                    }
+                  },
+                  "Function": 0
+                }
+              },
+              "queryRef": "Sum(VISITS vs POs.POs Value)",
+              "nativeQueryRef": "Sum of POs Value"
+            }
+          ]
+        },
+        "X": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "VISITS vs POs_Customers"
+                    }
+                  },
+                  "Property": "PRODUCTIVITY_CUSTOMERS"
+                }
+              },
+              "queryRef": "VISITS vs POs.PRODUCTIVITY",
+              "nativeQueryRef": "PRODUCTIVITY",
+              "active": true
+            }
+          ]
+        },
+        "Y": {
+          "projections": [
+            {
+              "field": {
+                "Aggregation": {
+                  "Expression": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "VISITS vs POs_Customers"
+                        }
+                      },
+                      "Property": "VISITS"
+                    }
+                  },
+                  "Function": 0
+                }
+              },
+              "queryRef": "Sum(VISITS vs POs.SUM of VISITS)",
+              "nativeQueryRef": "Sum of SUM of VISITS"
+            }
+          ]
+        }
+      }
+    },
+    "objects": {
+      "legend": [
+        {
+          "properties": {
+            "showGradientLegend": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            },
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "zoom": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "categoryLabels": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "enableBackground": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

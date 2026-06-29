@@ -1,0 +1,66 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
+  "name": "3554522c17b83d3a8a40",
+  "position": {
+    "x": 866.2325581395346,
+    "y": 632.55813953488371,
+    "z": 8000,
+    "height": 87.813953488372093,
+    "width": 214.32558139534885,
+    "tabOrder": 8000
+  },
+  "visual": {
+    "visualType": "card",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Aggregation": {
+                  "Expression": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "VISITS vs POs_Customers"
+                        }
+                      },
+                      "Property": "CUSTOMER (Original)"
+                    }
+                  },
+                  "Function": 2
+                }
+              },
+              "queryRef": "Min(VISITS vs POs.CUSTOMER)",
+              "nativeQueryRef": "Count of CUSTOMER"
+            }
+          ]
+        }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Aggregation": {
+                "Expression": {
+                  "Column": {
+                    "Expression": {
+                      "SourceRef": {
+                        "Entity": "VISITS vs POs_Customers"
+                      }
+                    },
+                    "Property": "CUSTOMER (Original)"
+                  }
+                },
+                "Function": 2
+              }
+            },
+            "direction": "Descending"
+          }
+        ],
+        "isDefaultSort": true
+      }
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

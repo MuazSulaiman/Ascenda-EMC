@@ -1,0 +1,9 @@
+role 'ANESTHESIA & ICU'
+	modelPermission: read
+
+	tablePermission 'public business_units' = [Business Unit] == "ANESTHESIA & ICU"
+
+	tablePermission 'public users' = [business_unit_id] == 1 || [email] == "a.jawad@almadarmed.com"
+
+	annotation PBI_Id = 1640e90f366e4409b834d86f9786dab7
+

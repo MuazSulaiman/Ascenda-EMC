@@ -1,0 +1,9 @@
+role 'RESPIRATORY CARE'
+	modelPermission: read
+
+	tablePermission 'public business_units' = [Business Unit] == "RESPIRATORY CARE"
+
+	tablePermission 'public users' = [business_unit_id] == 3 || [email] == "a.jawad@almadarmed.com"
+
+	annotation PBI_Id = bb90f89c519b47a7954eab3573656edd
+

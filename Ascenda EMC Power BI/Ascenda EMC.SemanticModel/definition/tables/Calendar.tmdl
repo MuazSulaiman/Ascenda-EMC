@@ -1,0 +1,89 @@
+table Calendar
+	isHidden
+	lineageTag: 1480d79f-b3a9-411c-8f4a-036a251daac9
+	dataCategory: Time
+
+	column Date
+		isHidden
+		isKey
+		formatString: General Date
+		lineageTag: 6a23ec40-84e5-41ee-bf3d-d6c76640ed23
+		summarizeBy: none
+		isNameInferred
+		sourceColumn: [Date]
+
+		annotation SummarizationSetBy = Automatic
+
+	column Year
+		isHidden
+		formatString: 0
+		lineageTag: 4c256e66-bbe6-4266-b008-b7f2eb427a9e
+		summarizeBy: none
+		isNameInferred
+		sourceColumn: [Year]
+
+		annotation SummarizationSetBy = Automatic
+
+	column Month
+		isHidden
+		lineageTag: ffd20007-7fda-479e-a021-b1864664e0dd
+		summarizeBy: none
+		isNameInferred
+		sourceColumn: [Month]
+
+		annotation SummarizationSetBy = Automatic
+
+	column MonthNumber
+		isHidden
+		formatString: 0
+		lineageTag: 1da3b7d6-773c-4262-8bfe-0946e8b429e8
+		summarizeBy: none
+		isNameInferred
+		sourceColumn: [MonthNumber]
+
+		annotation SummarizationSetBy = Automatic
+
+	column WeekdayName
+		isHidden
+		lineageTag: 3f66aa34-d1cc-4113-92ca-92b4465883ca
+		summarizeBy: none
+		isNameInferred
+		sourceColumn: [WeekdayName]
+
+		annotation SummarizationSetBy = Automatic
+
+	column WeekdayNumber
+		isHidden
+		formatString: 0
+		lineageTag: 90ba6969-5b66-4984-a451-9d3fd3f930b1
+		summarizeBy: none
+		isNameInferred
+		sourceColumn: [WeekdayNumber]
+
+		annotation SummarizationSetBy = Automatic
+
+	hierarchy 'Date Hierarchy'
+		isHidden
+		lineageTag: c061f4a7-bcd4-482d-960d-5e0328a818db
+
+		level Date
+			lineageTag: 9d53c7a8-298d-4449-82f8-746c6627b3fc
+			column: Date
+
+	partition Calendar = calculated
+		mode: import
+		source = ```
+				
+				ADDCOLUMNS (
+				    CALENDAR ( DATE(2022,1,1), TODAY() ),
+				    "Year", YEAR([Date]),
+				    "Month", FORMAT([Date], "MMM"),
+				    "MonthNumber", MONTH([Date]),
+				    "WeekdayName", FORMAT([Date], "ddd"),
+				    "WeekdayNumber", WEEKDAY([Date],1)
+				)
+				
+				```
+
+	annotation PBI_Id = 313bb9dc0eaf45daaacfc5a9d0fd82b2
+
