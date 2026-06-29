@@ -230,6 +230,7 @@ def page_check_in():
             "accuracy_m":         acc,
             "customer_id":        int(customer_id),
             "objective_id":       int(CHECKIN_OBJECTIVE_ID),
+            "visit_type":         "Actual Visit",
             "notes":              (notes.strip() if notes else None),
 
             # ✅ NEW: store typed name if customer == Other
