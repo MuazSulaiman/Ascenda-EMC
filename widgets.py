@@ -305,7 +305,7 @@ def _fetch_cascade_sectors(customers_table: str, region: str, city: str) -> list
     return df["sector"].tolist()
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=120)
 def _fetch_cascade_customers(customers_table: str, region: str, city: str, sector: str) -> pd.DataFrame:
     return query_df(
         f"SELECT customer_id, account_name FROM {customers_table}"
