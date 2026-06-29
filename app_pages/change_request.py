@@ -41,7 +41,7 @@ PREFILL_KEYS = [
 
     f"{PAGE_NS}/aud_sel",
     f"{PAGE_NS}/bu_sel", f"{PAGE_NS}/cat_sel", f"{PAGE_NS}/bl_sel", f"{PAGE_NS}/prod_sel",
-    f"{PAGE_NS}/obj_sel", f"{PAGE_NS}/eval_sel",
+    f"{PAGE_NS}/obj_sel", f"{PAGE_NS}/eval_sel", f"{PAGE_NS}/visit_type_sel",
     f"{PAGE_NS}/notes",
 
     f"{PAGE_NS}/ota_title", f"{PAGE_NS}/ota_name", f"{PAGE_NS}/ota_dept", f"{PAGE_NS}/ota_pos",
@@ -100,7 +100,7 @@ def _load_visit_snapshot(visit_id: int) -> dict | None:
           latitude, longitude, accuracy_m,
           customer_id, audience_id,
           business_line_id, product_id, objective_id,
-          notes, evaluation, project_id,
+          notes, evaluation, project_id, visit_type,
           other_audience_name, other_audience_department, other_audience_position,
           other_audience_title, other_audience_phone, other_audience_email,
           other_customer_name
@@ -441,6 +441,7 @@ def page_change_request():
                 st.session_state[f"{PAGE_NS}/ota_pos"] = _norm(v.get("other_audience_position"))
                 st.session_state[f"{PAGE_NS}/ota_phone"] = _norm(v.get("other_audience_phone"))
                 st.session_state[f"{PAGE_NS}/ota_email"] = _norm(v.get("other_audience_email"))
+                st.session_state[f"{PAGE_NS}/visit_type_sel"] = _norm(v.get("visit_type")) or "Actual Visit"
 
                 # Home visit fields
                 hv0 = snap["home_visit"] or {}
@@ -486,6 +487,7 @@ def page_change_request():
             _orig_prod_label = (_product_label_for_id(_norm(v.get("product_id"))) or "") if v.get("product_id") else ""
             _orig_obj_label = _objective_name_for_id(int(v["objective_id"])) if v.get("objective_id") else ""
             _orig_eval = _norm(v.get("evaluation")) or ""
+            _orig_visit_type = _norm(v.get("visit_type")) or "Actual Visit"
 
             # =====================================================
             # SECTION 3 — Customer & Target Audience
@@ -613,6 +615,19 @@ def page_change_request():
             # =====================================================
             st.markdown("### 4️⃣ Visit Details & Outcome")
 
+            _VISIT_TYPE_OPTIONS = ["Actual Visit", "Phone Call"]
+            if _orig_visit_type:
+                st.caption(f"↩ Original: **{_orig_visit_type}**")
+            current_vt = st.session_state.get(f"{PAGE_NS}/visit_type_sel", "Actual Visit")
+            vt_idx = _VISIT_TYPE_OPTIONS.index(current_vt) if current_vt in _VISIT_TYPE_OPTIONS else 0
+            st.selectbox(
+                "Visit Type *",
+                _VISIT_TYPE_OPTIONS,
+                index=vt_idx,
+                key=f"{PAGE_NS}/visit_type_sel",
+            )
+            visit_type_sel = st.session_state.get(f"{PAGE_NS}/visit_type_sel", "Actual Visit")
+
             obj_names = _load_objective_options_for_role(role)
             if _orig_obj_label:
                 st.caption(f"↩ Original: **{_orig_obj_label}**")
@@ -661,6 +676,7 @@ def page_change_request():
             _add_detail(details, "visits.objective_id", v.get("objective_id"), new_objective_id)
             _add_detail(details, "visits.notes", v.get("notes"), (notes.strip() if notes else None))
             _add_detail(details, "visits.evaluation", v.get("evaluation"), (evaluation_choice or None))
+            _add_detail(details, "visits.visit_type", v.get("visit_type"), visit_type_sel or None)
 
             # include other-audience fields in preview if Other
             if is_other_aud:
@@ -696,6 +712,9 @@ def page_change_request():
                 elif _field == "visits.objective_id":
                     _old_disp = _objective_name_for_id_safe(_old) or "—" if _old else "—"
                     _new_disp = obj_choice or "—"
+                elif _field == "visits.visit_type":
+                    _old_disp = _old or "—"
+                    _new_disp = _new or "—"
                 else:
                     _old_disp = _old or "—"
                     _new_disp = _new or "—"
