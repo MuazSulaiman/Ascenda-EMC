@@ -55,6 +55,81 @@ def _fetch_positions() -> list:
     return df["position"].astype(str).str.strip().tolist() if not df.empty else []
 
 
+@st.cache_data(ttl=1800)
+def _fetch_business_units() -> pd.DataFrame:
+    return query_df(
+        "SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name"
+    )
+
+
+@st.cache_data(ttl=1800)
+def _fetch_categories(bu_id: int) -> list:
+    df = query_df(
+        "SELECT DISTINCT category FROM business_lines"
+        " WHERE is_active IS TRUE AND business_unit_id = :bid"
+        " AND category IS NOT NULL AND trim(category) <> '' ORDER BY category",
+        {"bid": bu_id},
+    )
+    return df["category"].tolist()
+
+
+@st.cache_data(ttl=1800)
+def _fetch_business_lines(bu_id: int, category: str) -> pd.DataFrame:
+    return query_df(
+        "SELECT business_line_id, name FROM business_lines"
+        " WHERE is_active IS TRUE AND business_unit_id = :bid AND category = :cat ORDER BY name",
+        {"bid": bu_id, "cat": category},
+    )
+
+
+@st.cache_data(ttl=1800)
+def _fetch_items_by_bl(bl_id: int) -> pd.DataFrame:
+    return query_df(
+        "SELECT product_id, article_number, description FROM items"
+        " WHERE is_active IS TRUE AND business_line_id = :blid"
+        " ORDER BY COALESCE(article_number, product_id)",
+        {"blid": bl_id},
+    )
+
+
+@st.cache_data(ttl=1800)
+def _fetch_shelf_items(bu_id: int, category: str) -> pd.DataFrame:
+    return query_df(
+        """
+        SELECT i.product_id,
+               COALESCE(i.article_number, i.product_id) AS article_number,
+               COALESCE(i.description, '') AS description
+        FROM items i
+        JOIN business_lines bl ON bl.business_line_id = i.business_line_id
+        WHERE i.is_active IS TRUE
+          AND bl.is_active IS TRUE
+          AND bl.business_unit_id = :bid
+          AND bl.category = :cat
+        ORDER BY COALESCE(i.article_number, i.product_id)
+        """,
+        {"bid": bu_id, "cat": category},
+    )
+
+
+@st.cache_data(ttl=1800)
+def _fetch_objectives_all() -> pd.DataFrame:
+    return query_df(
+        "SELECT objective_id, name FROM objectives"
+        " WHERE COALESCE(is_active, TRUE) IS TRUE ORDER BY name"
+    )
+
+
+@st.cache_data(ttl=1800)
+def _fetch_objectives_by_role(role: str) -> pd.DataFrame:
+    return query_df(
+        "SELECT o.objective_id, o.name"
+        " FROM objectives o JOIN role_objectives ro ON ro.objective_id = o.objective_id"
+        " WHERE COALESCE(o.is_active, TRUE) IS TRUE AND COALESCE(ro.is_active, TRUE) IS TRUE"
+        " AND ro.role = :role ORDER BY o.name",
+        {"role": role},
+    )
+
+
 def page_submit_visit():
     section_header("Submit Visit", "Log a new customer visit.")
 
@@ -343,14 +418,7 @@ def page_submit_visit():
     st.markdown(form_section(3, "Product Details"), unsafe_allow_html=True)
 
     # ---- Business Unit ----
-    bu_df = query_df(
-        """
-        SELECT business_unit_id, name
-        FROM business_units
-        WHERE is_active IS TRUE
-        ORDER BY name
-        """
-    )
+    bu_df    = _fetch_business_units()
     bu_names = [""] + bu_df["name"].tolist()
 
     bu_choice = st.selectbox(
@@ -371,19 +439,7 @@ def page_submit_visit():
     cat_names = [""]
 
     if bu_id:
-        cat_df = query_df(
-            """
-            SELECT DISTINCT category
-            FROM business_lines
-            WHERE is_active IS TRUE
-            AND business_unit_id = :bid
-            AND category IS NOT NULL
-            AND trim(category) <> ''
-            ORDER BY category
-            """,
-            {"bid": bu_id},
-        )
-        cat_names = [""] + cat_df["category"].tolist()
+        cat_names = [""] + _fetch_categories(bu_id)
 
     cat_choice = st.selectbox(
         "Category *",
@@ -402,17 +458,7 @@ def page_submit_visit():
     business_line_id = None
 
     if bu_id and cat_choice:
-        bl_df = query_df(
-            """
-            SELECT business_line_id, name
-            FROM business_lines
-            WHERE is_active IS TRUE
-            AND business_unit_id = :bid
-            AND category = :cat
-            ORDER BY name
-            """,
-            {"bid": bu_id, "cat": cat_choice},
-        )
+        bl_df    = _fetch_business_lines(bu_id, cat_choice)
         bl_names = [""] + bl_df["name"].tolist()
 
     bl_choice = st.selectbox(
@@ -436,16 +482,7 @@ def page_submit_visit():
     prod_choice = ""
 
     if business_line_id:
-        prod_df = query_df(
-            """
-            SELECT product_id, article_number, description
-            FROM items
-            WHERE is_active IS TRUE
-            AND business_line_id = :blid
-            ORDER BY COALESCE(article_number, product_id)
-            """,
-            {"blid": business_line_id},
-        )
+        prod_df = _fetch_items_by_bl(business_line_id)
 
         prod_labels = [""] + [
             (
@@ -490,28 +527,9 @@ def page_submit_visit():
     )
 
     if role in {"admin"}:
-        obj_df = query_df(
-            """
-            SELECT objective_id, name
-            FROM objectives
-            WHERE COALESCE(is_active, TRUE) IS TRUE
-            ORDER BY name
-            """
-        )
+        obj_df = _fetch_objectives_all()
     else:
-        obj_df = query_df(
-            """
-            SELECT o.objective_id, o.name
-            FROM objectives o
-            JOIN role_objectives ro
-              ON ro.objective_id = o.objective_id
-            WHERE COALESCE(o.is_active, TRUE) IS TRUE
-              AND COALESCE(ro.is_active, TRUE) IS TRUE
-              AND ro.role = :role
-            ORDER BY o.name
-            """,
-            {"role": role},
-        )
+        obj_df = _fetch_objectives_by_role(role)
 
     obj_names  = [""] + obj_df["name"].tolist()
     obj_choice = st.selectbox("Business Objective *", obj_names, index=0, key=k("obj_sel"))
@@ -543,21 +561,7 @@ def page_submit_visit():
         elif not cat_choice:
             st.info("Select a Category to load items.")
         else:
-            shelf_df = query_df(
-                """
-                SELECT i.product_id,
-                       COALESCE(i.article_number, i.product_id) AS article_number,
-                       COALESCE(i.description, '') AS description
-                FROM items i
-                JOIN business_lines bl ON bl.business_line_id = i.business_line_id
-                WHERE i.is_active IS TRUE
-                  AND bl.is_active IS TRUE
-                  AND bl.business_unit_id = :bid
-                  AND bl.category = :cat
-                ORDER BY COALESCE(i.article_number, i.product_id)
-                """,
-                {"bid": bu_id, "cat": cat_choice},
-            )
+            shelf_df = _fetch_shelf_items(bu_id, cat_choice)
             if shelf_df.empty:
                 st.warning("No active items found for this Category.")
             else:

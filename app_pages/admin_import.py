@@ -18,8 +18,19 @@ from config import TIMEZONE
 from db import engine
 from db_ops import query_df, exec_sql
 from utils import _utcnow_iso, _local_now_str, _utcnow
-from widgets import _fetch_cascade_customers
-from widgets import set_current_page
+from widgets import _fetch_cascade_customers, set_current_page
+from app_pages.submit_visit import (
+    _fetch_business_units,
+    _fetch_categories,
+    _fetch_business_lines,
+    _fetch_items_by_bl,
+    _fetch_shelf_items,
+    _fetch_objectives_all,
+    _fetch_objectives_by_role,
+    _fetch_departments,
+    _fetch_positions,
+)
+from app_pages.review_audiences import _cached_dept_choices, _cached_pos_choices
 from ui import section_header
 
 def page_admin_import():
@@ -1013,6 +1024,10 @@ def page_admin_import():
                                             "email": (email_val.strip() or None),
                                         },
                                     )
+                                _fetch_departments.clear()
+                                _fetch_positions.clear()
+                                _cached_dept_choices.clear()
+                                _cached_pos_choices.clear()
                                 st.success("Target audience added ✅")
                                 st.rerun()
                         except Exception as e:
@@ -1203,6 +1218,11 @@ def page_admin_import():
                                 f"✅ Target audiences import done. Inserted: {inserted} | Skipped: {skipped}",
                                 ok=True,
                             )
+                            if inserted > 0:
+                                _fetch_departments.clear()
+                                _fetch_positions.clear()
+                                _cached_dept_choices.clear()
+                                _cached_pos_choices.clear()
                             st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{skipped}** skipped.")
                             if unknown_customers:
                                 st.warning(
@@ -1545,6 +1565,10 @@ def page_admin_import():
                                                     "aid": aid,
                                                 },
                                             )
+                                            _fetch_departments.clear()
+                                            _fetch_positions.clear()
+                                            _cached_dept_choices.clear()
+                                            _cached_pos_choices.clear()
                                             st.success("Target audience updated ✅")
                                         except Exception as e:
                                             st.error("Could not update target audience.")
@@ -1643,6 +1667,7 @@ def page_admin_import():
                                 {"name": nm},
                             )
                         if (res.rowcount or 0) > 0:
+                            _fetch_business_units.clear()
                             st.session_state.pop("bu_add_name", None)
                             st.success("Business Unit added ✅")
                             st.rerun()
@@ -1736,6 +1761,8 @@ def page_admin_import():
                                 f"Business Units import ✅ Inserted: {inserted} | Skipped: {skipped}",
                                 ok=True,
                             )
+                            if inserted > 0:
+                                _fetch_business_units.clear()
                             st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{skipped}** skipped.")
                         except Exception as e:
                             _finish_status(
@@ -1865,6 +1892,7 @@ def page_admin_import():
                                             "id": buid,
                                         },
                                     )
+                                    _fetch_business_units.clear()
                                     st.success("Business Unit updated ✅")
                                 except Exception as e:
                                     st.error("Could not update Business Unit.")
@@ -2126,6 +2154,10 @@ def page_admin_import():
                                     )
 
                                 if (res.rowcount or 0) > 0:
+                                    _fetch_categories.clear()
+                                    _fetch_business_lines.clear()
+                                    _fetch_items_by_bl.clear()
+                                    _fetch_shelf_items.clear()
                                     st.success("Business Line added ✅")
                                     for key in (
                                         "bl_add_bu",
@@ -2280,6 +2312,11 @@ def page_admin_import():
                                 f"Business Lines import ✅ Inserted: {inserted} | Skipped: {skipped}",
                                 ok=True,
                             )
+                            if inserted > 0:
+                                _fetch_categories.clear()
+                                _fetch_business_lines.clear()
+                                _fetch_items_by_bl.clear()
+                                _fetch_shelf_items.clear()
                             st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{skipped}** skipped.")
                         except Exception as e:
                             _finish_status(sts, has_status, "Business Lines import failed ❌", ok=False)
@@ -2576,6 +2613,10 @@ def page_admin_import():
                                             "id": blid,
                                         },
                                     )
+                                    _fetch_categories.clear()
+                                    _fetch_business_lines.clear()
+                                    _fetch_items_by_bl.clear()
+                                    _fetch_shelf_items.clear()
                                     st.success("Business Line updated ✅")
                                 except Exception as e:
                                     st.error("Could not update Business Line.")
@@ -2779,6 +2820,8 @@ def page_admin_import():
                                     },
                                 )
                             if (res.rowcount or 0) > 0:
+                                _fetch_items_by_bl.clear()
+                                _fetch_shelf_items.clear()
                                 for key in (
                                     "item_add_pid",
                                     "item_add_article",
@@ -2960,6 +3003,9 @@ def page_admin_import():
                                 f"Items import ✅ Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}",
                                 ok=True,
                             )
+                            if inserted + updated > 0:
+                                _fetch_items_by_bl.clear()
+                                _fetch_shelf_items.clear()
                             st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{updated}** updated, **{skipped}** skipped.")
                         except Exception as e:
                             _finish_status(sts, has_status, "Items import failed ❌", ok=False)
@@ -3177,6 +3223,8 @@ def page_admin_import():
                                                 "pid": pid,
                                             },
                                         )
+                                        _fetch_items_by_bl.clear()
+                                        _fetch_shelf_items.clear()
                                         st.success("Item updated ✅")
                                 else:
                                     exec_sql(
@@ -3195,6 +3243,8 @@ def page_admin_import():
                                             "pid": pid,
                                         },
                                     )
+                                    _fetch_items_by_bl.clear()
+                                    _fetch_shelf_items.clear()
                                     st.success("Item updated ✅")
                             except Exception as e:
                                 st.error("Could not update item.")
@@ -3356,6 +3406,8 @@ def page_admin_import():
                                             """),
                                             {"r": r, "oid": new_oid}
                                         )
+                            _fetch_objectives_all.clear()
+                            _fetch_objectives_by_role.clear()
                             st.success("Objective added ✅")
                             # Reset widget-backed keys safely
                             for key in (
@@ -3452,6 +3504,9 @@ def page_admin_import():
                                 f"Objectives import ✅ Inserted: {inserted} | Skipped: {skipped}",
                                 True,
                             )
+                            if inserted > 0:
+                                _fetch_objectives_all.clear()
+                                _fetch_objectives_by_role.clear()
                             st.session_state["flash_admin"] = ("success", f"Last import: **{inserted}** inserted, **{skipped}** skipped.")
 
                         except Exception as e:
@@ -3646,6 +3701,8 @@ def page_admin_import():
                                                 """),
                                                 {"r": r, "oid": oid}
                                             )
+                                    _fetch_objectives_all.clear()
+                                    _fetch_objectives_by_role.clear()
                                     st.success("Objective updated ✅")
                                 except Exception as e:
                                     st.error("Could not update objective.")

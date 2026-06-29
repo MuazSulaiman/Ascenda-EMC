@@ -11,6 +11,7 @@ from db_ops import query_df, exec_sql
 from utils import _utcnow_iso
 from widgets import set_current_page
 from ui import section_header, status_badge, html_table
+from app_pages.submit_visit import _fetch_departments, _fetch_positions
 
 
 @st.cache_data(ttl=300)
@@ -665,6 +666,10 @@ def page_review_target_audiences():
                         {"aid": new_aid, "vid": selected_visit_id, "resolver_uid": uid},
                     )
 
+                _fetch_departments.clear()
+                _fetch_positions.clear()
+                _cached_dept_choices.clear()
+                _cached_pos_choices.clear()
                 st.session_state[success_key] = (
                     f"Created new Target Audience (ID {new_aid}) and linked visit #{selected_visit_id} ✅"
                 )
