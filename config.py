@@ -5,7 +5,7 @@ APP_TITLE = "Ascenda"
 TIMEZONE = "Asia/Riyadh"
 SESSION_TTL_MIN = 20
 DUP_MINUTES = 15
-ACCURACY_METERS = 2500
+ACCURACY_METERS = 250
 
 try:
     import streamlit as st
