@@ -1,0 +1,51 @@
+table 'public product_categories'
+	lineageTag: 53bfd495-2c22-4c35-9d64-a3b2a2b74edc
+
+	column product_category_id
+		dataType: int64
+		formatString: 0
+		lineageTag: 01fb0995-43c4-4030-aa22-9ea3e77ba351
+		summarizeBy: sum
+		sourceColumn: product_category_id
+
+		annotation SummarizationSetBy = Automatic
+
+	column business_unit_id
+		dataType: int64
+		formatString: 0
+		lineageTag: 15d67232-81fd-4d88-943e-7ac937751583
+		summarizeBy: sum
+		sourceColumn: business_unit_id
+
+		annotation SummarizationSetBy = Automatic
+
+	column name
+		dataType: string
+		lineageTag: 4c2e21c4-d834-4ecc-8bc0-07fc7e440cfd
+		summarizeBy: none
+		sourceColumn: name
+
+		annotation SummarizationSetBy = Automatic
+
+	column is_active
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 012a1847-4ff2-4986-8dff-438008c45e5f
+		summarizeBy: none
+		sourceColumn: is_active
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'public product_categories' = m
+		mode: import
+		source =
+				let
+				    Source = PostgreSQL.Database("dpg-d90llpn7f7vs73cot2fg-a.oregon-postgres.render.com", "ascenda_emc_db"),
+				    public_product_categories = Source{[Schema="public",Item="product_categories"]}[Data]
+				in
+				    public_product_categories
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

@@ -1,0 +1,23 @@
+expression 'Errors in public visits' =
+		let
+		Source = #"public visits",
+		  #"Detected Type Mismatches" = let
+		    tableWithOnlyPrimitiveTypes = Table.SelectColumns(Source, Table.ColumnsOfType(Source, {type nullable number, type nullable text, type nullable logical, type nullable date, type nullable datetime, type nullable datetimezone, type nullable time, type nullable duration})),
+		    recordTypeFields = Type.RecordFields(Type.TableRow(Value.Type(tableWithOnlyPrimitiveTypes))),
+		    fieldNames = Record.FieldNames(recordTypeFields),
+		    fieldTypes = List.Transform(Record.ToList(recordTypeFields), each [Type]),
+		    pairs = List.Transform(List.Positions(fieldNames), (i) => {fieldNames{i}, (v) => if v = null or Value.Is(v, fieldTypes{i}) then v else error [Message = "The type of the value does not match the type of the column.", Detail = v], fieldTypes{i}})
+		in
+		    Table.TransformColumns(Source, pairs),
+		  #"Added Index" = Table.AddIndexColumn(#"Detected Type Mismatches", "Row Number" ,1),
+		  #"Kept Errors" = Table.SelectRowsWithErrors(#"Added Index", {"Visit #", "user_id", "submitted_at_utc", "latitude", "longitude", "accuracy_m", "customer_id", "Audience", "business_line_id", "product_id", "objective_id", "Notes", "Evaluation", "Date Local", "project_id", "other_audience_name", "other_audience_department", "other_audience_position", "other_audience_title", "other_audience_phone", "other_audience_email", "other_customer_name", "is_other_customer", "other_resolved_by", "other_resolved_at", "is_deleted", "deleted_at", "deleted_by", "version", "public.business_lines", "public.customers", "public.home_visits", "public.items", "public.objectives", "public.projects", "public.request_changes", "public.shelf_movement_headers", "public.target_audiences", "public.users(deleted_by)", "public.users(other_resolved_by)", "public.users(user_id)", "yearx"}),
+		  #"Reordered Columns" = Table.ReorderColumns(#"Kept Errors", {"Row Number", "Visit #", "user_id", "submitted_at_utc", "latitude", "longitude", "accuracy_m", "customer_id", "Audience", "business_line_id", "product_id", "objective_id", "Notes", "Evaluation", "Date Local", "project_id", "other_audience_name", "other_audience_department", "other_audience_position", "other_audience_title", "other_audience_phone", "other_audience_email", "other_customer_name", "is_other_customer", "other_resolved_by", "other_resolved_at", "is_deleted", "deleted_at", "deleted_by", "version", "public.business_lines", "public.customers", "public.home_visits", "public.items", "public.objectives", "public.projects", "public.request_changes", "public.shelf_movement_headers", "public.target_audiences", "public.users(deleted_by)", "public.users(other_resolved_by)", "public.users(user_id)", "yearx"})
+		in
+		  #"Reordered Columns"
+	lineageTag: 569476f0-b411-478f-ba45-95443bf5c2a2
+	queryGroup: 'Query Errors - 29/06/2026 3:14:45 PM'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

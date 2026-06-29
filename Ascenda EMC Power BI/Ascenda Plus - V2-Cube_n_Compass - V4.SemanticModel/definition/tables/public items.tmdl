@@ -1,0 +1,80 @@
+table 'public items'
+	isHidden
+	lineageTag: 293433fb-ff94-41e7-9407-1c5e1b0aef51
+
+	column 'Product ID'
+		dataType: string
+		isHidden
+		lineageTag: 01cd9cee-45ce-49e1-b6fc-3633e0eb23d1
+		summarizeBy: none
+		sourceColumn: Product ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Article #'
+		dataType: string
+		isHidden
+		lineageTag: 602434cc-63c8-460a-9048-b632cb929400
+		summarizeBy: none
+		sourceColumn: Article #
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Item Description'
+		dataType: string
+		isHidden
+		lineageTag: 942e993b-a4a4-4f79-876e-b1882cc1cde2
+		summarizeBy: none
+		sourceColumn: Item Description
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Business Line ID'
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: ff88f96e-65a9-4a52-af92-eba11dee2526
+		summarizeBy: none
+		sourceColumn: Business Line ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column is_active
+		dataType: boolean
+		isHidden
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 4da63681-7f98-4069-9fa5-56329cd62f49
+		summarizeBy: none
+		sourceColumn: is_active
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'public items' = m
+		mode: import
+		source =
+				let
+				    Source = PostgreSQL.Database("dpg-d90llpn7f7vs73cot2fg-a.oregon-postgres.render.com", "ascenda_emc_db"),
+				    public_items = Source{[Schema="public",Item="items"]}[Data],
+				    #"Changed Type" = Table.TransformColumnTypes(public_items,{{"product_id", type text}, {"article_number", type text}, {"description", type text}, {"business_line_id", Int64.Type}, {"is_active", type logical}}),
+				    #"Replaced Errors" = Table.ReplaceErrorValues(#"Changed Type", {{"product_id", null}, {"business_line_id", null}}),
+				    #"Renamed Columns" = Table.RenameColumns(#"Replaced Errors",{{"product_id", "Product ID"}, {"article_number", "Article #"}, {"description", "Item Description"}, {"business_line_id", "Business Line ID"}}),
+				    #"Filtered Rows" = Table.SelectRows(#"Renamed Columns", each [Product ID] <> null)
+				in
+				    #"Filtered Rows"
+
+	changedProperty = IsHidden
+
+	annotation PBI_ResultType = Exception
+
+	annotation PBI_NavigationStepName = Navigation
+

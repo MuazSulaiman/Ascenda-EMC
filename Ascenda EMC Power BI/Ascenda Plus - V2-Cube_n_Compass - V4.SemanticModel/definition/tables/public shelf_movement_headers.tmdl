@@ -1,0 +1,57 @@
+table 'public shelf_movement_headers'
+	isHidden
+	lineageTag: 8c1bc195-866f-46a5-bf66-aae941ffd37a
+
+	column movement_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 1fbc7bca-ac50-476f-8443-14cc833f30c4
+		summarizeBy: none
+		sourceColumn: movement_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column visit_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 04ba8e42-c54a-46a5-aa5d-6ed757a81e87
+		summarizeBy: none
+		sourceColumn: visit_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column created_at_utc
+		dataType: double
+		isHidden
+		lineageTag: 7f3f2709-4b69-44d7-9619-d772d726dd3d
+		summarizeBy: none
+		sourceColumn: created_at_utc
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	partition 'public shelf_movement_headers' = m
+		mode: import
+		source =
+				let
+				    Source = PostgreSQL.Database("dpg-d90llpn7f7vs73cot2fg-a.oregon-postgres.render.com", "ascenda_emc_db"),
+				    public_shelf_movement_headers = Source{[Schema="public",Item="shelf_movement_headers"]}[Data],
+				    #"Changed Type" = Table.TransformColumnTypes(public_shelf_movement_headers,{{"movement_id", Int64.Type}, {"visit_id", Int64.Type}, {"created_at_utc", type number}})
+				in
+				    #"Changed Type"
+
+	changedProperty = IsHidden
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+

@@ -1,0 +1,177 @@
+table 'public target_audiences'
+	isHidden
+	lineageTag: d5d0115b-b467-4741-9aaa-8b52477be63b
+
+	column 'Audience ID'
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 79d39552-ef7c-4945-92d6-6b7b11a8b0f7
+		summarizeBy: none
+		sourceColumn: Audience ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Customer ID'
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 8c8ada91-65f1-4114-9612-e121d5dd67b8
+		summarizeBy: none
+		sourceColumn: Customer ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Title
+		dataType: string
+		isHidden
+		lineageTag: 9f99693b-508f-442a-a929-4e0bb24a8583
+		summarizeBy: none
+		sourceColumn: Title
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Audience Name'
+		dataType: string
+		isHidden
+		lineageTag: 821a7704-a3d6-4c2e-b5d8-928d0ef50156
+		summarizeBy: none
+		sourceColumn: Audience Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Department
+		dataType: string
+		isHidden
+		lineageTag: e724c61d-1d03-4627-8d18-d437f127ca9c
+		summarizeBy: none
+		sourceColumn: Department
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Position
+		dataType: string
+		isHidden
+		lineageTag: 2f1eb1b1-d81e-47e0-9370-a66ea62e74a9
+		summarizeBy: none
+		sourceColumn: Position
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column potentiality
+		dataType: string
+		isHidden
+		lineageTag: cec8be27-ea22-44de-a0fd-696e6c3bf5a8
+		summarizeBy: none
+		sourceColumn: potentiality
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column loyalty
+		dataType: string
+		isHidden
+		lineageTag: 67308b45-5cba-4b4f-be73-1b3026b24708
+		summarizeBy: none
+		sourceColumn: loyalty
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column mobile
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 50a8e848-c471-48d4-86b3-d70240e9a4bc
+		summarizeBy: none
+		sourceColumn: mobile
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column landline
+		dataType: string
+		isHidden
+		lineageTag: caa6aceb-f6d5-489f-bd8b-8d70b0c23806
+		summarizeBy: none
+		sourceColumn: landline
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column external_number
+		dataType: string
+		isHidden
+		lineageTag: 5d891a52-e3c7-428a-92f3-fa46941a99a7
+		summarizeBy: none
+		sourceColumn: external_number
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column email
+		dataType: string
+		isHidden
+		lineageTag: 2df64c9e-d152-419a-afa3-0f4014259388
+		summarizeBy: none
+		sourceColumn: email
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column is_active
+		dataType: boolean
+		isHidden
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 547255e4-9a90-44a5-a144-a6ba019b0a1f
+		summarizeBy: none
+		sourceColumn: is_active
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Target Audience Mask' = "Target Audience " & 'public target_audiences'[Audience ID]
+		isHidden
+		lineageTag: b8b572ef-96eb-46ab-a8a4-e682fb4bc94f
+		summarizeBy: none
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'public target_audiences' = m
+		mode: import
+		source =
+				let
+				    Source = PostgreSQL.Database("dpg-d90llpn7f7vs73cot2fg-a.oregon-postgres.render.com", "ascenda_emc_db"),
+				    public_target_audiences = Source{[Schema="public",Item="target_audiences"]}[Data],
+				    #"Changed Type" = Table.TransformColumnTypes(public_target_audiences,{{"audience_id", Int64.Type}, {"customer_id", Int64.Type}, {"title", type text}, {"name", type text}, {"department", type text}, {"position", type text}, {"potentiality", type text}, {"loyalty", type text}, {"mobile", Int64.Type}, {"landline", type any}, {"external_number", type any}, {"email", type any}, {"is_active", type logical}}),
+				    #"Renamed Columns" = Table.RenameColumns(#"Changed Type",{{"name", "Audience Name"}, {"audience_id", "Audience ID"}, {"customer_id", "Customer ID"}, {"title", "Title"}, {"department", "Department"}, {"position", "Position"}})
+				in
+				    #"Renamed Columns"
+
+	changedProperty = IsHidden
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+

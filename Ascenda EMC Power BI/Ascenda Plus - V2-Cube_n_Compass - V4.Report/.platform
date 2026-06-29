@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Report",
+    "displayName": "Ascenda Plus - V2-Cube_n_Compass - V4"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "006957dd-3b0f-40b9-9fb1-24fdee21200c"
+  }
+}

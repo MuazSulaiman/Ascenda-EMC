@@ -1,0 +1,52 @@
+model Model
+	culture: en-US
+	defaultPowerBIDataSourceVersion: powerBI_V3
+	sourceQueryCulture: en-AE
+	dataAccessOptions
+		legacyRedirects
+		returnErrorValuesAsNull
+
+/// Errors in queries that were loaded on 29/06/2026 3:14:45 PM.
+queryGroup 'Query Errors - 29/06/2026 3:14:45 PM'
+
+	annotation PBI_QueryGroupOrder = 0
+
+annotation __PBI_TimeIntelligenceEnabled = 1
+
+annotation PBI_QueryOrder = ["public app_sessions","public business_lines","public product_categories","public business_units","public customers","public home_visits","public items","public shelf_movement_headers","public objectives","public shelf_movement_lines","public target_audiences","public users","public visits","RefreshStamp","Errors in public visits"]
+
+annotation PBI_ProTooling = ["MCP-PBIModeling","TMDLView_Desktop","DevMode"]
+
+ref table 'public app_sessions'
+ref table DateTableTemplate_3bee8bf7-f09c-407d-81be-a7ce8fc7a9fe
+ref table 'public business_lines'
+ref table 'public business_units'
+ref table 'public customers'
+ref table 'public home_visits'
+ref table 'public items'
+ref table 'public shelf_movement_headers'
+ref table 'public objectives'
+ref table 'public shelf_movement_lines'
+ref table 'public target_audiences'
+ref table 'public users'
+ref table 'public visits'
+ref table RefreshStamp
+ref table Calendar
+ref table LocalDateTable_c604b8c9-2c5f-4053-ab70-65b4e6d4be7f
+ref table LocalDateTable_3f1a6c58-41ed-4927-ba0a-fc75377b1e93
+ref table LocalDateTable_7a420065-7954-485e-b70f-ca695a334fe3
+ref table 'public product_categories'
+ref table LocalDateTable_06fd9180-15b6-4879-aab6-21ffd5187011
+ref table LocalDateTable_e188eff9-a219-494f-835a-e192d0c1855b
+
+ref role C/R
+ref role W/R
+ref role E/R
+ref role 'ANESTHESIA & ICU'
+ref role 'GASTROINTESTINAL & OR'
+ref role 'RESPIRATORY CARE'
+ref role 'PHARMA & MEDICAL SHOWROOMS'
+ref role 'TOP MNGMT'
+
+ref cultureInfo en-US
+

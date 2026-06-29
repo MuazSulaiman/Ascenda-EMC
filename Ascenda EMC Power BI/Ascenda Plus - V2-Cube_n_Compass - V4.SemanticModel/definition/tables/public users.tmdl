@@ -1,0 +1,122 @@
+table 'public users'
+	isHidden
+	lineageTag: 77a2dd7e-89a8-464f-9d5b-8a12749fe1b7
+
+	column user_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: be03e3b6-ee7c-44b1-b20a-f355df6fa090
+		summarizeBy: none
+		sourceColumn: user_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column email
+		dataType: string
+		isHidden
+		lineageTag: d9c991f0-065d-4a54-bb6c-f7dd17bd27b9
+		summarizeBy: none
+		sourceColumn: email
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Frontline Name'
+		dataType: string
+		isHidden
+		lineageTag: 07bb0693-d525-4397-8732-baef9ab8f478
+		summarizeBy: none
+		sourceColumn: Frontline Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column region
+		dataType: string
+		isHidden
+		lineageTag: 55783472-84e2-4da8-a347-ca9e404e5202
+		summarizeBy: none
+		sourceColumn: region
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column business_unit_id
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: faefb0e7-add1-4ac6-a56c-1d76d1f291c0
+		summarizeBy: sum
+		sourceColumn: business_unit_id
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column role
+		dataType: string
+		isHidden
+		lineageTag: 3abcb765-89ea-4b2a-a792-97c16bb80867
+		summarizeBy: none
+		sourceColumn: role
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column is_active
+		dataType: boolean
+		isHidden
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 127c4f0a-bbf1-4579-b9f6-70da6e3056e4
+		summarizeBy: none
+		sourceColumn: is_active
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Frontline Mask' = "User " & 'public users'[user_id]
+		isHidden
+		lineageTag: 8ddf08c5-a27a-4c89-87a7-4260c2159a51
+		summarizeBy: none
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column preferences
+		dataType: string
+		isHidden
+		lineageTag: 0e355756-44cd-40e5-9be3-a563be4df3b2
+		summarizeBy: none
+		sourceColumn: preferences
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'public users' = m
+		mode: import
+		source =
+				let
+				    Source = PostgreSQL.Database("dpg-d90llpn7f7vs73cot2fg-a.oregon-postgres.render.com", "ascenda_emc_db"),
+				    public_users = Source{[Schema="public",Item="users"]}[Data],
+				    #"Changed Type" = Table.TransformColumnTypes(public_users,{{"user_id", Int64.Type}, {"email", type text}, {"password_hash", type text}, {"name", type text}, {"region", type text}, {"business_unit_id", Int64.Type}, {"role", type text}, {"is_active", type logical}, {"preferences", type text}}),
+				    #"Removed Columns" = Table.RemoveColumns(#"Changed Type",{"password_hash"}),
+				    #"Renamed Columns" = Table.RenameColumns(#"Removed Columns",{{"name", "Frontline Name"}})
+				in
+				    #"Renamed Columns"
+
+	changedProperty = IsHidden
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+
