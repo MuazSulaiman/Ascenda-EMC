@@ -51,8 +51,9 @@ def page_admin_import():
         has_status = hasattr(st, "status")
         if has_status:
             sts = st.status(title, expanded=True)
-            pb = st.progress(0)
-            ln = st.empty()
+            with sts:
+                pb = st.progress(0)
+                ln = st.empty()
             return (sts, pb, ln, True)
         sp = st.spinner(title + "…")
         pb = st.progress(0)
@@ -391,7 +392,6 @@ def page_admin_import():
                             ):
                                 st.session_state.pop(key, None)
                             st.success("Customer added ✅")
-                            st.rerun()
                         else:
                             st.info(
                                 "A customer with the same **Name + Sector + Region + City** already exists — nothing added."
@@ -807,7 +807,6 @@ def page_admin_import():
                                 exec_sql("DELETE FROM customers WHERE customer_id=:id", {"id": cid})
                                 st.success("Customer deleted.")
                                 st.session_state.pop("mg_cust_sel", None)
-                                st.rerun()
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
@@ -1029,7 +1028,6 @@ def page_admin_import():
                                 _cached_dept_choices.clear()
                                 _cached_pos_choices.clear()
                                 st.success("Target audience added ✅")
-                                st.rerun()
                         except Exception as e:
                             st.error("Could not add target audience.")
                             st.caption(str(e))
@@ -1608,7 +1606,6 @@ def page_admin_import():
                                         )
                                         st.success("Target audience deleted.")
                                         st.session_state.pop("mg_aud_sel", None)
-                                        st.rerun()
                                     except Exception as e:
                                         st.error("Delete failed.")
                                         st.caption(str(e))
@@ -1670,7 +1667,6 @@ def page_admin_import():
                             _fetch_business_units.clear()
                             st.session_state.pop("bu_add_name", None)
                             st.success("Business Unit added ✅")
-                            st.rerun()
                         else:
                             st.info("That Business Unit already exists — nothing added.")
                     except Exception as e:
@@ -1929,7 +1925,6 @@ def page_admin_import():
                                 exec_sql("DELETE FROM business_units WHERE business_unit_id=:id", {"id": buid})
                                 st.success("Business Unit deleted.")
                                 st.session_state.pop("mg_bu_sel", None)
-                                st.rerun()
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
@@ -2169,7 +2164,6 @@ def page_admin_import():
                                         "bl_add_pg_other",
                                     ):
                                         st.session_state.pop(key, None)
-                                    st.rerun()
                                 else:
                                     st.info("That Business Unit + Business Line Name already exists — nothing added.")
                         except Exception as e:
@@ -2653,7 +2647,6 @@ def page_admin_import():
                                 exec_sql("DELETE FROM business_lines WHERE business_line_id=:id", {"id": blid})
                                 st.success("Business Line deleted.")
                                 st.session_state.pop("mg_bl_sel", None)
-                                st.rerun()
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
@@ -2832,7 +2825,6 @@ def page_admin_import():
                                 ):
                                     st.session_state.pop(key, None)
                                 st.success("Item added ✅")
-                                st.rerun()
                             else:
                                 st.error("That Product ID already exists.")
                         except Exception as e:
@@ -3417,7 +3409,6 @@ def page_admin_import():
                                 "obj_add_roles",
                             ):
                                 st.session_state.pop(key, None)
-                            st.rerun()
                         else:
                             st.info("This objective already exists — nothing added.")
                     except Exception as e:
@@ -3733,7 +3724,6 @@ def page_admin_import():
                                 exec_sql("DELETE FROM objectives WHERE objective_id=:id", {"id": oid})
                                 st.success("Objective deleted.")
                                 st.session_state.pop("mg_obj_sel", None)
-                                st.rerun()
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))
@@ -3825,7 +3815,6 @@ def page_admin_import():
                                 st.session_state.pop("pc_add_bu", None)
                                 st.session_state.pop("pc_add_name", None)
                                 st.success("Product Category added ✅")
-                                st.rerun()
                             else:
                                 st.info("That Business Unit + Category Name already exists — nothing added.")
                         except Exception as e:
@@ -4131,7 +4120,6 @@ def page_admin_import():
                                 )
                                 st.session_state.pop("mg_pc_sel", None)
                                 st.success("Product Category deleted.")
-                                st.rerun()
                             except Exception as e:
                                 st.error("Delete failed.")
                                 st.caption(str(e))

@@ -170,7 +170,7 @@ def page_check_in():
     # =====================================================
     # Check In button
     # =====================================================
-    CHECKIN_OBJECTIVE_ID = 620
+    CHECKIN_OBJECTIVE_ID = 18
 
     st.markdown(
         '<div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--color-border);"></div>',
