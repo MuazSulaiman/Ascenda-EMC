@@ -196,7 +196,7 @@ def page_admin_import():
         "Business Lines",
         "Items",
         "Objectives",
-    ])
+    ], key="admin_import_active_tab", on_change="rerun")
 
     # =====================================================================
     # 1) CUSTOMERS
@@ -555,7 +555,7 @@ def page_admin_import():
                     "Select customer", filtered_cust, index=0, key="mg_cust_sel"
                 )
 
-                if sel_label == "":
+                if sel_label == "" or sel_label not in options:
                     st.info("Please select a customer.")
                 else:
                     row_idx = options.index(sel_label) - 1
@@ -897,7 +897,7 @@ def page_admin_import():
                     key="aud_add_cust",
                 )
 
-                if cust_choice:
+                if cust_choice and cust_choice in cust_labels:
                     cust_row = cust_df.iloc[cust_labels.index(cust_choice) - 1]
                     cid = int(cust_row["customer_id"])
                 else:
@@ -1256,7 +1256,7 @@ def page_admin_import():
                     key="mg_aud_cust_sel",
                 )
 
-                if not cust_choice:
+                if not cust_choice or cust_choice not in cust_labels:
                     st.info("Please select a customer.")
                 else:
                     cust_row = cust_df.iloc[cust_labels.index(cust_choice) - 1]
@@ -1316,7 +1316,7 @@ def page_admin_import():
                             key="mg_aud_sel",
                         )
 
-                        if not aud_choice:
+                        if not aud_choice or aud_choice not in aud_labels:
                             st.info("Please select a target audience.")
                         else:
                             row = adf.iloc[aud_labels.index(aud_choice) - 1]
@@ -1808,7 +1808,7 @@ def page_admin_import():
                     key="mg_bu_sel",
                 )
 
-                if sel_bu_label == "":
+                if sel_bu_label == "" or sel_bu_label not in bu_options:
                     st.info("Please select a business unit.")
                 else:
                     idx = bu_options.index(sel_bu_label) - 1
@@ -2366,7 +2366,7 @@ def page_admin_import():
 
                 sel_label = st.selectbox("Select business line", filtered_bls, index=0, key="mg_bl_sel")
 
-                if sel_label == "":
+                if sel_label == "" or sel_label not in options:
                     st.info("Please select a business line.")
                 else:
                     row_idx = options.index(sel_label) - 1
@@ -3068,7 +3068,7 @@ def page_admin_import():
                     key="mg_item_sel",
                 )
 
-                if sel_label == "":
+                if sel_label == "" or sel_label not in options:
                     st.info("Please select an item.")
                 else:
                     row_idx = options.index(sel_label) - 1
@@ -3536,7 +3536,7 @@ def page_admin_import():
 
                 sel = st.selectbox("Select objective", filtered_objs, index=0, key="mg_obj_sel")
 
-                if sel == "":
+                if sel == "" or sel not in display:
                     st.info("Select an objective to edit or update.")
                 else:
                     row_idx = display.index(sel) - 1
@@ -4003,7 +4003,7 @@ def page_admin_import():
                     "Select product category", filtered_pcs, index=0, key="mg_pc_sel"
                 )
 
-                if sel_pc_label == "":
+                if sel_pc_label == "" or sel_pc_label not in pc_options:
                     st.info("Please select a product category.")
                 else:
                     row_idx = pc_options.index(sel_pc_label) - 1

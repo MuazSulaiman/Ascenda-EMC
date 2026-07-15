@@ -364,7 +364,7 @@ def page_admin_users():
     sel = st.selectbox("Select user", [""] + labels, index=0, key="mg_user_sel",
                        label_visibility="collapsed", placeholder="Choose a user to manage…")
 
-    if not sel:
+    if not sel or sel not in labels:
         st.markdown(
             '<p style="font-size:0.875rem;color:var(--color-text-subtle);margin:0.25rem 0 0;">Select a user above to view and edit their account.</p>',
             unsafe_allow_html=True,
