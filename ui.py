@@ -965,71 +965,158 @@ def kpi_hero_block(
 # THEMED HTML TABLE (replaces st.dataframe for dark-mode compatibility)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def html_table(df, max_rows: int = 500, max_height: int = 400) -> str:
-    """Return a fully theme-aware HTML table string from a DataFrame.
+_RESIZABLE_TABLE_TEMPLATE = """
+<!DOCTYPE html><html><head><style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Inter", system-ui, sans-serif; }
+.wrap {
+  border: 1px solid var(--color-border, #e4e8ec); border-radius: 10px;
+  overflow: auto; max-height: ${max_height}px;
+}
+.wrap::-webkit-scrollbar { width: 6px; height: 6px; }
+.wrap::-webkit-scrollbar-track { background: var(--color-surface-2, #f6f8fa); border-radius: 0 10px 10px 0; }
+.wrap::-webkit-scrollbar-thumb { background: var(--color-border-strong, #c9d1d9); border-radius: 6px; }
+table { border-collapse: collapse; table-layout: fixed; background: var(--color-surface, #ffffff); }
+th, td {
+  padding: 0.45rem 0.75rem; font-size: 0.85rem; color: var(--color-text, #0d1117);
+  border-bottom: 1px solid var(--color-border, #e4e8ec);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+tr:nth-child(even) td { background: var(--color-surface-2, #f6f8fa); }
+th {
+  position: sticky; top: 0; z-index: 1; text-align: left; font-weight: 600;
+  color: var(--color-text-muted, #57606a); font-size: 0.75rem; letter-spacing: 0.05em;
+  text-transform: uppercase; background: var(--color-surface-2, #f6f8fa);
+  border-bottom: 2px solid var(--color-border, #e4e8ec);
+  user-select: none;
+}
+.rh {
+  position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; z-index: 2;
+}
+.rh:hover, .rh.active { background: var(--color-primary, #2667ff); opacity: 0.4; }
+.more-row td {
+  color: var(--color-text-subtle, #8b949e); font-size: 0.875rem; font-style: italic;
+}
+</style></head><body>
+<div class="wrap"><table id="tbl_${uid}" style="width:${total_width}px">
+<colgroup>${colgroup}</colgroup>
+<thead><tr>${header_cells}</tr></thead>
+<tbody>${rows_html}</tbody>
+</table></div>
+<script>
+(function() {
+  function g(name, fallback) {
+    try {
+      var v = window.parent.getComputedStyle(window.parent.document.documentElement).getPropertyValue(name).trim();
+      return v || fallback;
+    } catch (e) { return fallback; }
+  }
+  function applyTheme() {
+    var vars = [
+      '--color-primary', '--color-surface', '--color-surface-2',
+      '--color-border', '--color-border-strong', '--color-text',
+      '--color-text-muted', '--color-text-subtle',
+    ];
+    vars.forEach(function(v) {
+      document.documentElement.style.setProperty(v, g(v, ''));
+    });
+  }
+  applyTheme();
+  setTimeout(applyTheme, 150);
+  setTimeout(applyTheme, 500);
 
-    st.dataframe() uses a canvas renderer that ignores CSS variables, so in
-    custom dark mode the table background stays white. Use this instead and
-    render with st.markdown(..., unsafe_allow_html=True).
+  var table = document.getElementById('tbl_${uid}');
+  var cols = table.querySelectorAll('col');
+  var dragging = -1, startX = 0, startWidth = 0, activeHandle = null;
+
+  table.querySelectorAll('.rh').forEach(function(h, idx) {
+    h.addEventListener('mousedown', function(e) {
+      dragging = idx;
+      startX = e.clientX;
+      startWidth = h.parentElement.getBoundingClientRect().width;
+      activeHandle = h;
+      h.classList.add('active');
+      e.preventDefault();
+      e.stopPropagation();
+    });
+  });
+  document.addEventListener('mousemove', function(e) {
+    if (dragging < 0) return;
+    var delta = e.clientX - startX;
+    var newWidth = Math.max(60, Math.round(startWidth + delta));
+    cols[dragging].style.width = newWidth + 'px';
+    // table-layout:fixed only honors <col> widths when the table itself has
+    // an explicit width, so keep that width in sync with the live column
+    // widths on every drag step (otherwise the resize has no visible effect).
+    // Read back each <col>'s own inline style rather than its rendered box —
+    // <col> elements don't reliably report a real bounding rect in all browsers.
+    var total = 0;
+    cols.forEach(function(c) { total += parseInt(c.style.width, 10) || 0; });
+    table.style.width = total + 'px';
+  });
+  document.addEventListener('mouseup', function() {
+    dragging = -1;
+    if (activeHandle) { activeHandle.classList.remove('active'); activeHandle = null; }
+  });
+})();
+</script>
+</body></html>
+"""
+
+
+def html_table(df, max_rows: int = 500, max_height: int = 400) -> str:
+    """Render df as a resizable HTML table (drag column borders) and return "".
+
+    TEMPORARY EXPERIMENT: renders via components.html() (an iframe) because
+    inline <script> tags are inert when injected through st.markdown(). The
+    iframe is isolated from the parent document's CSS, so a small JS snippet
+    copies the app's theme CSS variables in on load to keep dark/light mode
+    correct. Callers still do st.markdown(html_table(df), unsafe_allow_html=True)
+    — returning "" makes that a no-op, so no call sites needed to change.
     """
     import html as _html
     import pandas as pd
+    import uuid
+    from string import Template
 
     cols = list(df.columns)
 
+    def _col_width(label: str) -> int:
+        return min(260, max(90, len(str(label)) * 9 + 40))
+
+    col_widths = [_col_width(c) for c in cols]
+    total_width = sum(col_widths)
+    colgroup = "".join(f'<col style="width:{w}px">' for w in col_widths)
+    header_cells = "".join(
+        f'<th>{_html.escape(str(c))}<span class="rh"></span></th>' for c in cols
+    )
+
     rows_html = ""
-    for i, (_, row) in enumerate(df.head(max_rows).iterrows()):
-        bg = "background:var(--color-surface-2);" if i % 2 == 1 else ""
+    for _, row in df.head(max_rows).iterrows():
         cells = ""
         for val in row:
             raw = str(val).strip() if pd.notna(val) else "—"
-            # Collapse embedded newlines/blank lines — a raw blank line here
-            # would prematurely terminate the surrounding HTML block when
-            # Streamlit's markdown parser processes this string, leaving the
-            # rest of the table rendered as literal text.
+            # Collapse embedded newlines/blank lines to keep each cell single-line.
             text = _html.escape(" ".join(raw.split())) if raw else "—"
-            cells += (
-                f'<td style="padding:0.45rem 0.75rem;color:var(--color-text);'
-                f'font-size:0.85rem;border-bottom:1px solid var(--color-border);'
-                f'white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;" '
-                f'title="{text}">{text}</td>'
-            )
-        rows_html += f'<tr style="{bg}">{cells}</tr>'
+            cells += f'<td title="{text}">{text}</td>'
+        rows_html += f"<tr>{cells}</tr>"
 
     if len(df) > max_rows:
         rows_html += (
-            f'<tr><td colspan="{len(cols)}" style="padding:0.5rem 0.75rem;'
-            f'color:var(--color-text-subtle);font-size:0.875rem;font-style:italic;">'
+            f'<tr class="more-row"><td colspan="{len(cols)}">'
             f'… {len(df) - max_rows} more rows not shown</td></tr>'
         )
 
-    sticky_th = (
-        'padding:0.5rem 0.75rem;text-align:left;font-weight:600;'
-        'color:var(--color-text-muted);white-space:nowrap;font-size:0.75rem;'
-        'letter-spacing:0.05em;text-transform:uppercase;'
-        'position:sticky;top:0;z-index:1;'
-        'background:var(--color-surface-2);'
-        'border-bottom:2px solid var(--color-border);'
+    doc = Template(_RESIZABLE_TABLE_TEMPLATE).substitute(
+        uid=uuid.uuid4().hex[:8],
+        max_height=max_height,
+        total_width=total_width,
+        colgroup=colgroup,
+        header_cells=header_cells,
+        rows_html=rows_html,
     )
-    header_cells = "".join(
-        f'<th style="{sticky_th}">{_html.escape(str(c))}</th>'
-        for c in cols
-    )
-    return (
-        '<style>'
-        '.ascenda-html-table::-webkit-scrollbar { width: 6px; height: 6px; }'
-        '.ascenda-html-table::-webkit-scrollbar-track { background: var(--color-surface-2); border-radius: 0 10px 10px 0; }'
-        '.ascenda-html-table::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 6px; }'
-        '.ascenda-html-table::-webkit-scrollbar-thumb:hover { background: var(--color-text-subtle); }'
-        '.ascenda-html-table { scrollbar-color: var(--color-border-strong) var(--color-surface-2); scrollbar-width: thin; }'
-        '</style>'
-        f'<div class="ascenda-html-table" style="border:1px solid var(--color-border);border-radius:10px;'
-        f'margin:0.5rem 0;overflow:auto;max-height:{max_height}px;">'
-        '<table style="width:100%;border-collapse:collapse;">'
-        f'<thead><tr>{header_cells}</tr></thead>'
-        f'<tbody>{rows_html}</tbody>'
-        '</table></div>'
-    )
+    components.html(doc, height=max_height + 28, scrolling=False)
+    return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
