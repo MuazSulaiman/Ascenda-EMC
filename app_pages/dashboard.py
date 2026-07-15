@@ -274,14 +274,14 @@ def _render_admin_pending_reviews() -> None:
         """
         SELECT COUNT(*) FROM visits
         WHERE audience_id IS NULL
-          AND customer_id <> 807
+          AND is_other_customer IS NOT TRUE
           AND other_audience_name IS NOT NULL
           AND trim(other_audience_name) <> ''
           AND COALESCE(is_deleted, FALSE) IS FALSE
         """
     )
     oc_count = _safe_count(
-        "SELECT COUNT(*) FROM visits WHERE customer_id = 807 AND COALESCE(is_deleted, FALSE) IS FALSE"
+        "SELECT COUNT(*) FROM visits WHERE is_other_customer = TRUE AND COALESCE(is_deleted, FALSE) IS FALSE"
     )
 
     total_pending = cr_count + ta_count + oc_count
@@ -363,7 +363,7 @@ def _render_admin_pending_reviews() -> None:
             FROM visits v
             JOIN users u ON u.user_id = v.user_id
             WHERE v.audience_id IS NULL
-              AND v.customer_id <> 807
+              AND v.is_other_customer IS NOT TRUE
               AND v.other_audience_name IS NOT NULL
               AND trim(v.other_audience_name) <> ''
               AND COALESCE(v.is_deleted, FALSE) IS FALSE
@@ -378,7 +378,7 @@ def _render_admin_pending_reviews() -> None:
                    'Review Other Customers' AS target_page
             FROM visits v
             JOIN users u ON u.user_id = v.user_id
-            WHERE v.customer_id = 807
+            WHERE v.is_other_customer = TRUE
               AND COALESCE(v.is_deleted, FALSE) IS FALSE
 
             ORDER BY submitted_at ASC
