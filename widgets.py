@@ -500,6 +500,36 @@ def _acc_str(v: Optional[float]) -> str:
     return f" (~{v:.0f} m accuracy)" if isinstance(v, (int, float)) and math.isfinite(v) else ""
 
 
+# Pulsing marker icon via DivIcon (no PNG dependency) — shared by get_location_block()
+# and render_visit_location_map() so both render the same primary-pin style.
+_PULSING_MARKER_HTML = """
+<div style="position:relative;width:20px;height:20px">
+    <div style="
+        position:absolute;top:50%;left:50%;
+        transform:translate(-50%,-50%);
+        width:14px;height:14px;
+        background:#1d4ed8;border:2.5px solid #fff;
+        border-radius:50%;z-index:2;
+        box-shadow:0 2px 8px rgba(0,0,0,.35);
+    "></div>
+    <div style="
+        position:absolute;top:50%;left:50%;
+        transform:translate(-50%,-50%);
+        width:14px;height:14px;
+        background:rgba(29,78,216,.35);
+        border-radius:50%;
+        animation:loc-ripple 2s ease-out infinite;
+    "></div>
+</div>
+<style>
+@keyframes loc-ripple {
+    0%  { width:14px;height:14px;opacity:.9 }
+    100%{ width:52px;height:52px;opacity:0  }
+}
+</style>
+"""
+
+
 def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """
     UX:
@@ -628,34 +658,6 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
             unsafe_allow_html=True,
         )
 
-        # Pulsing marker icon via DivIcon (no PNG dependency)
-        _marker_icon_html = """
-        <div style="position:relative;width:20px;height:20px">
-            <div style="
-                position:absolute;top:50%;left:50%;
-                transform:translate(-50%,-50%);
-                width:14px;height:14px;
-                background:#1d4ed8;border:2.5px solid #fff;
-                border-radius:50%;z-index:2;
-                box-shadow:0 2px 8px rgba(0,0,0,.35);
-            "></div>
-            <div style="
-                position:absolute;top:50%;left:50%;
-                transform:translate(-50%,-50%);
-                width:14px;height:14px;
-                background:rgba(29,78,216,.35);
-                border-radius:50%;
-                animation:loc-ripple 2s ease-out infinite;
-            "></div>
-        </div>
-        <style>
-        @keyframes loc-ripple {
-            0%  { width:14px;height:14px;opacity:.9 }
-            100%{ width:52px;height:52px;opacity:0  }
-        }
-        </style>
-        """
-
         m = folium.Map(
             location=[flat, flon],
             zoom_start=17,
@@ -680,7 +682,7 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
             [flat, flon],
             tooltip="Your location",
             icon=folium.DivIcon(
-                html=_marker_icon_html,
+                html=_PULSING_MARKER_HTML,
                 icon_size=(20, 20),
                 icon_anchor=(10, 10),
             ),
@@ -694,6 +696,79 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
             st.rerun()
 
         return (flat, flon, facc)
+
+
+def render_visit_location_map(
+    visit_lat: float,
+    visit_lon: float,
+    accuracy_m: Optional[float] = None,
+    nearby: Optional[list] = None,
+    height: int = 360,
+    key: str = "visit_loc_map",
+) -> None:
+    """Render a read-only map with a visit's recorded GPS pin plus nearby
+    existing customers, so an admin can visually verify the location before
+    assigning it to a customer record. Mirrors get_location_block()'s map
+    styling (CartoDB positron tiles, pulsing marker, accuracy circle).
+    """
+    nearby = nearby or []
+
+    st.markdown(
+        """
+        <style>
+        iframe[title="streamlit_folium.st_folium"] {
+            border-radius: 12px !important;
+            box-shadow: 0 4px 24px rgba(0,0,0,.15) !important;
+            margin-top: 8px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    m = folium.Map(
+        location=[visit_lat, visit_lon],
+        zoom_start=16,
+        tiles="CartoDB positron",
+        control_scale=True,
+    )
+
+    if accuracy_m is not None:
+        folium.Circle(
+            location=[visit_lat, visit_lon],
+            radius=accuracy_m,
+            color="#3b82f6",
+            weight=1.5,
+            fill=True,
+            fill_color="#3b82f6",
+            fill_opacity=0.10,
+            tooltip=f"GPS accuracy: ±{accuracy_m:.0f} m",
+        ).add_to(m)
+
+    folium.Marker(
+        [visit_lat, visit_lon],
+        tooltip="Visit location",
+        icon=folium.DivIcon(
+            html=_PULSING_MARKER_HTML,
+            icon_size=(20, 20),
+            icon_anchor=(10, 10),
+        ),
+    ).add_to(m)
+
+    for c in nearby:
+        try:
+            clat, clon = float(c["latitude"]), float(c["longitude"])
+        except Exception:
+            continue
+        dist_m = c.get("dist_km", 0) * 1000
+        dist_label = f"{dist_m:.0f} m" if dist_m < 1000 else f"{c['dist_km']:.1f} km"
+        folium.Marker(
+            [clat, clon],
+            tooltip=f"{_safe_str(c.get('account_name')) or '(unnamed)'} — {dist_label}",
+            icon=folium.Icon(color="green", icon="briefcase", prefix="fa"),
+        ).add_to(m)
+
+    st_folium(m, height=height, width="100%", key=key)
 
 
 # ── Nearby customer suggestions ─────────────────────────────────────────────
@@ -726,6 +801,37 @@ def _fetch_customers_with_coords() -> list:
     return df.to_dict("records")
 
 
+def find_nearby_customers(
+    lat: float,
+    lon: float,
+    radius_km: float = 1.0,
+    limit: Optional[int] = None,
+    exclude_customer_id: Optional[int] = None,
+) -> list:
+    """Return active customers with coordinates within radius_km of (lat, lon), nearest first.
+
+    Each returned dict is the customer row plus a 'dist_km' key. Shared by
+    nearby_customers_block() (visit-submission chips) and
+    render_visit_location_map() (review-page map markers).
+    """
+    customers = _fetch_customers_with_coords()
+    with_dist = []
+    for c in customers:
+        if exclude_customer_id is not None and c.get("customer_id") == exclude_customer_id:
+            continue
+        try:
+            d = _haversine_km(lat, lon, float(c["latitude"]), float(c["longitude"]))
+        except Exception:
+            continue
+        with_dist.append({**c, "dist_km": d})
+
+    with_dist.sort(key=lambda x: x["dist_km"])
+    within = [c for c in with_dist if c["dist_km"] <= radius_km]
+    if limit is not None:
+        within = within[:limit]
+    return within
+
+
 def nearby_customers_block(
     user_lat: float,
     user_lng: float,
@@ -737,28 +843,18 @@ def nearby_customers_block(
     limit: int = 3,
 ) -> None:
     """Show nearest customer suggestion chips after location is captured."""
-    customers = _fetch_customers_with_coords()
-    if not customers:
-        return
-
-    with_dist = []
-    for c in customers:
-        try:
-            d = _haversine_km(user_lat, user_lng, float(c["latitude"]), float(c["longitude"]))
-            with_dist.append({**c, "dist_km": d})
-        except Exception:
-            continue
-
-    if not with_dist:
-        return
-
-    with_dist.sort(key=lambda x: x["dist_km"])
-    nearby = [c for c in with_dist if c["dist_km"] <= threshold_km][:limit]
+    nearby = find_nearby_customers(user_lat, user_lng, radius_km=threshold_km, limit=limit)
 
     # When nothing is within threshold, fall back to the single nearest customer
     # shown as a muted chip — user explicitly taps to use it, no silent pre-fill.
     show_muted = not nearby
-    chips = nearby if nearby else with_dist[:1]
+    if show_muted:
+        fallback = find_nearby_customers(user_lat, user_lng, radius_km=float("inf"), limit=1)
+        if not fallback:
+            return
+        chips = fallback
+    else:
+        chips = nearby
 
     # ── Section header ────────────────────────────────────────────────────────
     st.markdown(

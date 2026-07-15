@@ -5,11 +5,16 @@ import streamlit as st
 from sqlalchemy import text
 
 from auth import resolve_session_user
-from config import TIMEZONE
+from config import TIMEZONE, ACCURACY_METERS
 from db import engine
 from db_ops import query_df, exec_sql
 from utils import _utcnow_iso
-from widgets import set_current_page, _fetch_cascade_customers
+from widgets import (
+    set_current_page,
+    _fetch_cascade_customers,
+    find_nearby_customers,
+    render_visit_location_map,
+)
 from ui import section_header, status_badge, html_table
 
 
@@ -82,7 +87,7 @@ def page_review_other_customers():
         st.success(last_msg)
         st.session_state[success_key] = ""
 
-    # ------------- Similarity helpers (NAME ONLY) -------------
+    # ------------- Similarity helpers (name + region/city/sector, weighted) -------------
     def normalize_customer(s: str) -> str:
         if not s:
             return ""
@@ -104,6 +109,45 @@ def page_review_other_customers():
             return 0.0
         return SequenceMatcher(None, a_norm, b_norm).ratio()
 
+    def normalize_loc(s: str) -> str:
+        s = _safe_str(s)
+        return s.lower() if s else ""
+
+    def field_match_score(a: str, b: str):
+        """Exact-match after normalization. Returns None if either side is blank
+        (signal excluded from the composite score), else 1.0 or 0.0."""
+        a_n, b_n = normalize_loc(a), normalize_loc(b)
+        if not a_n or not b_n:
+            return None
+        return 1.0 if a_n == b_n else 0.0
+
+    MATCH_WEIGHTS = {"name": 0.70, "region": 0.10, "city": 0.10, "sector": 0.10}
+
+    def composite_similarity(other_name, visit_region, visit_city, visit_sector, cand_row) -> float:
+        """Blend name similarity with region/city/sector exact-match agreement.
+        Missing signals (blank on either side) are excluded and their weight is
+        redistributed across the remaining valid signals."""
+        signals = {}
+
+        name_a, name_b = normalize_customer(other_name), normalize_customer(cand_row["account_name"])
+        if name_a and name_b:
+            signals["name"] = SequenceMatcher(None, name_a, name_b).ratio()
+
+        for key, v_val, c_val in (
+            ("region", visit_region, cand_row["region"]),
+            ("city",   visit_city,   cand_row["city"]),
+            ("sector", visit_sector, cand_row["sector"]),
+        ):
+            s = field_match_score(v_val, c_val)
+            if s is not None:
+                signals[key] = s
+
+        if not signals:
+            return 0.0
+
+        weight_sum = sum(MATCH_WEIGHTS[k] for k in signals)
+        return sum(MATCH_WEIGHTS[k] * signals[k] for k in signals) / weight_sum
+
     # ------------- Load unresolved visits (is_other_customer = TRUE) -------------
     unresolved_df = query_df(
         """
@@ -120,7 +164,11 @@ def page_review_other_customers():
             COALESCE(v.other_region, c.region) AS region,
             COALESCE(v.other_city,   c.city)   AS city,
             COALESCE(v.other_sector, c.sector) AS sector,
-            bu.name                     AS business_unit_name
+            bu.name                     AS business_unit_name,
+            v.visit_type                AS visit_type,
+            v.latitude                  AS latitude,
+            v.longitude                 AS longitude,
+            v.accuracy_m                AS accuracy_m
         FROM visits v
         LEFT JOIN customers c ON c.customer_id = v.customer_id
         JOIN users u          ON u.user_id     = v.user_id
@@ -253,6 +301,43 @@ def page_review_other_customers():
         unsafe_allow_html=True,
     )
 
+    # ------------- GPS eligibility for this visit -------------
+    # Only 'Actual Visit' carries a customer-relevant location — a 'Phone Call'
+    # visit's coordinates are the rep's location at call time, not the customer's.
+    _visit_type = _safe_str(visit_row.get("visit_type"))
+    _raw_lat = visit_row.get("latitude")
+    _raw_lon = visit_row.get("longitude")
+    _raw_acc = visit_row.get("accuracy_m")
+
+    has_gps = _visit_type == "Actual Visit" and pd.notna(_raw_lat) and pd.notna(_raw_lon)
+
+    vlat = vlon = vacc = None
+    nearby_for_map = []
+
+    if has_gps:
+        vlat = float(_raw_lat)
+        vlon = float(_raw_lon)
+        vacc = float(_raw_acc) if pd.notna(_raw_acc) else None
+
+        if vacc is not None:
+            badge_variant = "danger" if vacc > ACCURACY_METERS else "warning"
+            st.markdown(
+                status_badge(f"~{vacc:.0f}m accuracy — verify before assigning", variant=badge_variant),
+                unsafe_allow_html=True,
+            )
+
+        nearby_for_map = find_nearby_customers(vlat, vlon, radius_km=1.0, limit=8)
+
+        render_visit_location_map(
+            vlat, vlon,
+            accuracy_m=vacc,
+            nearby=nearby_for_map,
+            key=f"{PAGE_NS}_loc_map_{selected_visit_id}",
+        )
+    else:
+        note = "📍 Location unavailable — phone call" if _visit_type == "Phone Call" else "📍 Location unavailable for this visit"
+        st.caption(note)
+
     # ------------- Load ALL candidate customers (NO region/city/sector filter) -------------
     candidates_df = query_df(
         """
@@ -264,12 +349,13 @@ def page_review_other_customers():
         """
     )
 
-    # ------------- Suggested matches (NAME ONLY) -------------
+    # ------------- Suggested matches (name + region/city/sector, weighted) -------------
     st.markdown(
         '<p style="font-size:.875rem;font-weight:700;color:var(--color-text);margin:.75rem 0 .1rem;">'
         'Suggested Matches</p>'
         '<p style="font-size:.78rem;color:var(--color-text-subtle);margin:0 0 .5rem;">'
-        'Top 15 matches sorted by name similarity (account_name vs provided name).</p>',
+        'Top 15 matches sorted by combined name + location similarity '
+        '(70% name, 10% each region/city/sector).</p>',
         unsafe_allow_html=True,
     )
 
@@ -278,7 +364,11 @@ def page_review_other_customers():
         st.warning("No customers available to match against.")
     else:
         candidates_df["similarity"] = candidates_df.apply(
-            lambda r: string_similarity(other_name, r["account_name"]),
+            lambda r: composite_similarity(
+                other_name,
+                visit_row.get("region"), visit_row.get("city"), visit_row.get("sector"),
+                r,
+            ),
             axis=1,
         )
         candidates_df = candidates_df.sort_values(by="similarity", ascending=False)
@@ -315,6 +405,31 @@ def page_review_other_customers():
             help="Pick an existing customer, then click 'Link to Selected'.",
         )
 
+        # ---- Resolve selected candidate + its coordinate status ----
+        selected_candidate_id = None
+        selected_candidate_has_coords = False
+        if existing_sel:
+            try:
+                selected_candidate_id = int(existing_sel.split("—", 1)[0].strip())
+            except ValueError:
+                selected_candidate_id = None
+            if selected_candidate_id is not None and not candidates_df.empty:
+                _match = candidates_df.loc[candidates_df["customer_id"] == selected_candidate_id]
+                if not _match.empty:
+                    _crow = _match.iloc[0]
+                    selected_candidate_has_coords = pd.notna(_crow["latitude"]) and pd.notna(_crow["longitude"])
+
+        offer_set_location = has_gps and selected_candidate_id is not None and not selected_candidate_has_coords
+        set_location_checked = False
+        if offer_set_location:
+            set_location_checked = st.checkbox(
+                "Also set this customer's location from the visit's GPS",
+                key=f"{PAGE_NS}_link_set_loc_{selected_visit_id}_{selected_candidate_id}",
+                help="Offered because this customer currently has no saved location.",
+            )
+        elif has_gps and selected_candidate_id is not None and selected_candidate_has_coords:
+            st.caption("This customer already has a saved location — it will not be changed.")
+
         link_confirm_key = f"{PAGE_NS}_confirm_link_{selected_visit_id}"
         confirm_link = st.checkbox(
             "I confirm this is the correct match.",
@@ -348,9 +463,25 @@ def page_review_other_customers():
                             {"cid": new_customer_id, "vid": selected_visit_id, "resolver_uid": uid},
                         )
 
-                    st.session_state[success_key] = (
-                        f"Linked visit #{selected_visit_id} to Customer ID {new_customer_id} ✅"
-                    )
+                        location_set = False
+                        if offer_set_location and set_location_checked:
+                            # Guard repeats the NULL check to avoid a race with another
+                            # session setting coordinates between page render and click.
+                            result = conn.execute(
+                                text("""
+                                    UPDATE customers
+                                    SET latitude = :lat, longitude = :lon
+                                    WHERE customer_id = :cid
+                                      AND latitude IS NULL AND longitude IS NULL
+                                """),
+                                {"lat": vlat, "lon": vlon, "cid": new_customer_id},
+                            )
+                            location_set = result.rowcount > 0
+
+                    msg = f"Linked visit #{selected_visit_id} to Customer ID {new_customer_id} ✅"
+                    if offer_set_location and set_location_checked:
+                        msg += " (location also set)" if location_set else " (location NOT set — customer already had coordinates)"
+                    st.session_state[success_key] = msg
                     st.rerun()
                 except Exception as e:
                     st.error("Failed to link visit to customer.")
@@ -409,8 +540,8 @@ def page_review_other_customers():
 
         st.session_state.setdefault(acctid_key, "")
         st.session_state.setdefault(partyid_key, "")
-        st.session_state.setdefault(lat_key, "")
-        st.session_state.setdefault(lon_key, "")
+        st.session_state.setdefault(lat_key, f"{vlat:.6f}" if has_gps else "")
+        st.session_state.setdefault(lon_key, f"{vlon:.6f}" if has_gps else "")
 
         # Optional: prefill sector/region/city from visit if they exist in customers table values
         # (won't affect similarity; just helps data quality)
@@ -516,6 +647,8 @@ def page_review_other_customers():
         # -------------------------
         new_account_id = st.text_input("Account ID (optional)", key=acctid_key)
         new_party_id   = st.text_input("Party ID (optional)", key=partyid_key)
+        if has_gps:
+            st.caption("📍 Latitude/Longitude auto-filled from the visit's GPS — edit or clear if needed.")
         new_lat        = st.text_input("Latitude (optional)", key=lat_key)
         new_lon        = st.text_input("Longitude (optional)", key=lon_key)
 
