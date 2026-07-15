@@ -973,6 +973,7 @@ def html_table(df, max_rows: int = 500, max_height: int = 400) -> str:
     render with st.markdown(..., unsafe_allow_html=True).
     """
     import html as _html
+    import pandas as pd
 
     cols = list(df.columns)
 
@@ -981,11 +982,16 @@ def html_table(df, max_rows: int = 500, max_height: int = 400) -> str:
         bg = "background:var(--color-surface-2);" if i % 2 == 1 else ""
         cells = ""
         for val in row:
-            text = _html.escape(str(val) if val is not None else "—")
+            raw = str(val).strip() if pd.notna(val) else "—"
+            # Collapse embedded newlines/blank lines — a raw blank line here
+            # would prematurely terminate the surrounding HTML block when
+            # Streamlit's markdown parser processes this string, leaving the
+            # rest of the table rendered as literal text.
+            text = _html.escape(" ".join(raw.split())) if raw else "—"
             cells += (
                 f'<td style="padding:0.45rem 0.75rem;color:var(--color-text);'
                 f'font-size:0.85rem;border-bottom:1px solid var(--color-border);'
-                f'white-space:normal;max-width:260px;overflow-wrap:break-word;" '
+                f'white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;" '
                 f'title="{text}">{text}</td>'
             )
         rows_html += f'<tr style="{bg}">{cells}</tr>'
