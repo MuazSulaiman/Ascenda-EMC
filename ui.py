@@ -979,13 +979,15 @@ def html_table(df, max_rows: int = 500, max_height: int = 400) -> str:
     rows_html = ""
     for i, (_, row) in enumerate(df.head(max_rows).iterrows()):
         bg = "background:var(--color-surface-2);" if i % 2 == 1 else ""
-        cells = "".join(
-            f'<td style="padding:0.45rem 0.75rem;color:var(--color-text);'
-            f'font-size:0.85rem;border-bottom:1px solid var(--color-border);'
-            f'white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;">'
-            f'{_html.escape(str(val) if val is not None else "—")}</td>'
-            for val in row
-        )
+        cells = ""
+        for val in row:
+            text = _html.escape(str(val) if val is not None else "—")
+            cells += (
+                f'<td style="padding:0.45rem 0.75rem;color:var(--color-text);'
+                f'font-size:0.85rem;border-bottom:1px solid var(--color-border);'
+                f'white-space:normal;max-width:260px;overflow-wrap:break-word;" '
+                f'title="{text}">{text}</td>'
+            )
         rows_html += f'<tr style="{bg}">{cells}</tr>'
 
     if len(df) > max_rows:
