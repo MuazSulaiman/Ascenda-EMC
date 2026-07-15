@@ -1027,7 +1027,33 @@ th {
 
   var table = document.getElementById('tbl_${uid}');
   var cols = table.querySelectorAll('col');
+  var headerCells = table.querySelectorAll('thead th');
   var dragging = -1, startX = 0, startWidth = 0, activeHandle = null;
+
+  // table-layout:fixed only honors <col> widths when the table itself has an
+  // explicit width, so this must be kept in sync with the live column widths
+  // after every change (drag or auto-fit) — otherwise resizing has no visible
+  // effect. Read back each <col>'s own inline style rather than its rendered
+  // box — <col> elements don't reliably report a real bounding rect in all
+  // browsers.
+  function syncTableWidth() {
+    var total = 0;
+    cols.forEach(function(c) { total += parseInt(c.style.width, 10) || 0; });
+    table.style.width = total + 'px';
+  }
+
+  // scrollWidth reflects a cell's full unclipped content width even under
+  // overflow:hidden, so it doubles as a cheap "how wide would this need to be
+  // to show everything" measurement without touching any styles.
+  function autoFitColumn(idx) {
+    var maxW = headerCells[idx] ? headerCells[idx].scrollWidth : 0;
+    table.querySelectorAll('tbody tr').forEach(function(tr) {
+      var td = tr.children[idx];
+      if (td) maxW = Math.max(maxW, td.scrollWidth);
+    });
+    cols[idx].style.width = Math.max(60, maxW + 2) + 'px';
+    syncTableWidth();
+  }
 
   table.querySelectorAll('.rh').forEach(function(h, idx) {
     h.addEventListener('mousedown', function(e) {
@@ -1039,20 +1065,18 @@ th {
       e.preventDefault();
       e.stopPropagation();
     });
+    h.addEventListener('dblclick', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      autoFitColumn(idx);
+    });
   });
   document.addEventListener('mousemove', function(e) {
     if (dragging < 0) return;
     var delta = e.clientX - startX;
     var newWidth = Math.max(60, Math.round(startWidth + delta));
     cols[dragging].style.width = newWidth + 'px';
-    // table-layout:fixed only honors <col> widths when the table itself has
-    // an explicit width, so keep that width in sync with the live column
-    // widths on every drag step (otherwise the resize has no visible effect).
-    // Read back each <col>'s own inline style rather than its rendered box —
-    // <col> elements don't reliably report a real bounding rect in all browsers.
-    var total = 0;
-    cols.forEach(function(c) { total += parseInt(c.style.width, 10) || 0; });
-    table.style.width = total + 'px';
+    syncTableWidth();
   });
   document.addEventListener('mouseup', function() {
     dragging = -1;
