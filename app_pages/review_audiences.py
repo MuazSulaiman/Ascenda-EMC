@@ -14,6 +14,11 @@ from ui import section_header, status_badge, html_table
 from app_pages.submit_visit import _fetch_departments, _fetch_positions
 
 
+def _safe_str(v) -> str:
+    """Return v as a stripped string; NaN/None becomes ''."""
+    return str(v).strip() if pd.notna(v) else ""
+
+
 @st.cache_data(ttl=300)
 def _cached_dept_choices() -> list:
     df = query_df(
@@ -114,14 +119,14 @@ def page_review_target_audiences():
         return 0.6 * s1 + 0.4 * s2
 
     def audience_similarity(other_row: pd.Series, ta_row: pd.Series | dict) -> float:
-        name_other = (other_row.get("other_audience_name") or "").strip()
-        name_ta    = (ta_row.get("name") or "").strip()
+        name_other = _safe_str(other_row.get("other_audience_name"))
+        name_ta    = _safe_str(ta_row.get("name"))
         name_score = string_similarity(name_other, name_ta)
 
-        dept_other = (other_row.get("other_audience_department") or "").strip().lower()
-        dept_ta    = (ta_row.get("department") or "").strip().lower()
-        pos_other  = (other_row.get("other_audience_position") or "").strip().lower()
-        pos_ta     = (ta_row.get("position") or "").strip().lower()
+        dept_other = _safe_str(other_row.get("other_audience_department")).lower()
+        dept_ta    = _safe_str(ta_row.get("department")).lower()
+        pos_other  = _safe_str(other_row.get("other_audience_position")).lower()
+        pos_ta     = _safe_str(ta_row.get("position")).lower()
 
         dept_score = 1.0 if dept_other and dept_other == dept_ta else 0.0
         pos_score  = 1.0 if pos_other and pos_other == pos_ta else 0.0
@@ -130,15 +135,15 @@ def page_review_target_audiences():
 
     def format_ta_label(row) -> str:
         if isinstance(row, pd.Series):
-            #title = (row.get("title") or "").strip()
-            name  = (row.get("name") or "").strip()
-            dept  = (row.get("department") or "").strip()
-            pos   = (row.get("position") or "").strip()
+            #title = _safe_str(row.get("title"))
+            name  = _safe_str(row.get("name"))
+            dept  = _safe_str(row.get("department"))
+            pos   = _safe_str(row.get("position"))
         else:
-            #title = (getattr(row, "title", "") or "").strip()
-            name  = (getattr(row, "name", "") or "").strip()
-            dept  = (getattr(row, "department", "") or "").strip()
-            pos   = (getattr(row, "position", "") or "").strip()
+            #title = _safe_str(getattr(row, "title", ""))
+            name  = _safe_str(getattr(row, "name", ""))
+            dept  = _safe_str(getattr(row, "department", ""))
+            pos   = _safe_str(getattr(row, "position", ""))
 
         parts = []
         if name:
@@ -292,22 +297,22 @@ def page_review_target_audiences():
         f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Customer</div>'
         f'<div style="font-size:.875rem;font-weight:600;color:var(--color-text);">{_esc(str(visit_row["customer_name"]))}</div></div>'
         f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Title</div>'
-        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["other_audience_title"] or "—"))}</div></div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(_safe_str(visit_row["other_audience_title"]) or "—")}</div></div>'
         f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Name</div>'
         f'<div style="font-size:.875rem;font-weight:600;color:var(--color-text);">{_esc(str(visit_row["other_audience_name"]))}</div></div>'
         f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Department</div>'
-        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["other_audience_department"] or "—"))}</div></div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(_safe_str(visit_row["other_audience_department"]) or "—")}</div></div>'
         f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Position</div>'
-        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["other_audience_position"] or "—"))}</div></div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(_safe_str(visit_row["other_audience_position"]) or "—")}</div></div>'
         f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Phone</div>'
-        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["other_audience_phone"] or "—"))}</div></div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(_safe_str(visit_row["other_audience_phone"]) or "—")}</div></div>'
         f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Email</div>'
-        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["other_audience_email"] or "—"))}</div></div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(_safe_str(visit_row["other_audience_email"]) or "—")}</div></div>'
         f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Submitted By</div>'
         f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row["rep_name"]))} '
         f'({_esc(str(visit_row["rep_email"]))})</div></div>'
         f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Business Unit</div>'
-        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row.get("business_unit_name") or "—"))}</div></div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(_safe_str(visit_row.get("business_unit_name")) or "—")}</div></div>'
         f'</div></div>',
         unsafe_allow_html=True,
     )
@@ -480,12 +485,12 @@ def page_review_target_audiences():
         confirm_key     = f"{PAGE_NS}_confirm_new_{selected_visit_id}"
 
         # Prefill from visit (title/name/dept/pos/phone/email)
-        raw_title  = (visit_row.get("other_audience_title") or "").strip()
-        raw_name   = (visit_row.get("other_audience_name") or "")
-        raw_dept   = (visit_row.get("other_audience_department") or "").strip()
-        raw_pos    = (visit_row.get("other_audience_position") or "").strip()
-        raw_mobile = (visit_row.get("other_audience_phone") or "").strip()
-        raw_email  = (visit_row.get("other_audience_email") or "").strip()
+        raw_title  = _safe_str(visit_row.get("other_audience_title"))
+        raw_name   = _safe_str(visit_row.get("other_audience_name"))
+        raw_dept   = _safe_str(visit_row.get("other_audience_department"))
+        raw_pos    = _safe_str(visit_row.get("other_audience_position"))
+        raw_mobile = _safe_str(visit_row.get("other_audience_phone"))
+        raw_email  = _safe_str(visit_row.get("other_audience_email"))
 
         # Title (optional) — TITLE_OPTIONS defined globally
         if raw_title and raw_title in TITLE_OPTIONS:

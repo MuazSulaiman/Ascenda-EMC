@@ -698,6 +698,11 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
 
 # ── Nearby customer suggestions ─────────────────────────────────────────────
 
+def _safe_str(v) -> str:
+    """Return v as a stripped string; NaN/None becomes ''."""
+    return str(v).strip() if pd.notna(v) else ""
+
+
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0
     dlat = math.radians(lat2 - lat1)
@@ -813,14 +818,14 @@ def nearby_customers_block(
     for col, cust in zip(cols, chips):
         dist_m = cust["dist_km"] * 1000
         dist_str = f"{dist_m:.0f} m" if dist_m < 1000 else f"{cust['dist_km']:.1f} km"
-        sector = (cust.get("sector") or "").strip()
+        sector = _safe_str(cust.get("sector"))
         meta = f"{sector} · {dist_str}" if sector else dist_str
         label = f"{cust['account_name']}\n{meta}"
 
         def _fill(c=cust):
-            st.session_state[KEY_REGION] = (c["region"] or "")
-            st.session_state[KEY_CITY]   = (c["city"]   or "")
-            st.session_state[KEY_SECTOR] = (c["sector"] or "")
-            st.session_state[KEY_CUST]   = (c["account_name"] or "")
+            st.session_state[KEY_REGION] = _safe_str(c.get("region"))
+            st.session_state[KEY_CITY]   = _safe_str(c.get("city"))
+            st.session_state[KEY_SECTOR] = _safe_str(c.get("sector"))
+            st.session_state[KEY_CUST]   = _safe_str(c.get("account_name"))
 
         col.button(label, on_click=_fill, use_container_width=True)

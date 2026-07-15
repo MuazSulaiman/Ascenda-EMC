@@ -12,6 +12,11 @@ from db_ops import query_df
 from ui import section_header, visit_card, status_badge
 from widgets import set_current_page
 
+def _safe_str(v) -> str:
+    """Return v as a stripped string; NaN/None becomes ''."""
+    return str(v).strip() if pd.notna(v) else ""
+
+
 _EVAL_VARIANT = {
     "Positive": "success",
     "Negative": "danger",
@@ -132,7 +137,7 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         st.error(f"🗑️ **This visit has been deleted.** Reason: {deletion_note}")
 
     # ── Evaluation badge ──────────────────────────────────────────────────────
-    eval_val = (row.get("evaluation") or "").strip()
+    eval_val = _safe_str(row.get("evaluation"))
     variant  = _EVAL_VARIANT.get(eval_val, "neutral")
     label    = _EVAL_LABEL.get(eval_val, "Unrated")
     st.markdown(status_badge(label, variant), unsafe_allow_html=True)
@@ -185,7 +190,7 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         st.markdown(_detail_card("Product & Business", product_rows), unsafe_allow_html=True)
 
     # ── Notes card ────────────────────────────────────────────────────────────
-    notes = (row.get("notes") or "").strip()
+    notes = _safe_str(row.get("notes"))
     if notes:
         notes_html = (
             _CARD_WRAP
