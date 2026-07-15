@@ -285,6 +285,9 @@ CREATE TABLE IF NOT EXISTS visits (
     other_audience_phone      TEXT,
     other_audience_email      TEXT,
     other_customer_name       TEXT,
+    other_region               TEXT,
+    other_city                 TEXT,
+    other_sector               TEXT,
     is_other_customer         BOOLEAN NOT NULL DEFAULT FALSE,
     other_resolved_by         INTEGER REFERENCES users(user_id),
     other_resolved_at         TIMESTAMPTZ,
@@ -575,6 +578,9 @@ ALTER TABLE business_lines
 -- Add visit columns that were added after initial schema
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS version           INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS is_other_customer BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS other_region      TEXT;
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS other_city        TEXT;
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS other_sector      TEXT;
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS other_resolved_by INTEGER REFERENCES users(user_id);
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS other_resolved_at TIMESTAMPTZ;
 ALTER TABLE visits ALTER COLUMN customer_id DROP NOT NULL;

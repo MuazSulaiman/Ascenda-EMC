@@ -148,10 +148,16 @@ def page_check_in():
     city_choice   = (st.session_state.get(KEY_CITY) or "")
     sector_choice = (st.session_state.get(KEY_SECTOR) or "")
 
-    # ✅ NEW: other customer name required (stored into visits.other_customer_name)
+    # ✅ NEW: other customer name + region/city/sector (stored into visits.other_*)
     cust_choice = (st.session_state.get(KEY_CUST) or "")
     is_other_customer = bool(cust_choice and cust_choice.strip().lower() == "other")
     other_customer_name = None
+    other_region_sel  = ""
+    other_region_free = ""
+    other_city_sel    = ""
+    other_city_free   = ""
+    other_sector_sel  = ""
+    other_sector_free = ""
 
     if is_other_customer:
         st.markdown(form_subsection("New Customer Details"), unsafe_allow_html=True)
@@ -160,6 +166,59 @@ def page_check_in():
             key=k("other_customer_name"),
             help="Enter the real legal customer name when you selected 'Other'.",
         )
+
+        other_region_df = query_df(
+            "SELECT DISTINCT region FROM customers WHERE region IS NOT NULL AND region <> '' ORDER BY region"
+        )
+        other_region_options = [""] + [
+            str(r.region).strip() for r in other_region_df.itertuples(index=False) if str(r.region).strip()
+        ] + ["OTHER"]
+
+        other_sector_df = query_df(
+            "SELECT DISTINCT sector FROM customers WHERE sector IS NOT NULL AND sector <> '' ORDER BY sector"
+        )
+        other_sector_options = [""] + [
+            str(r.sector).strip() for r in other_sector_df.itertuples(index=False) if str(r.sector).strip()
+        ] + ["OTHER"]
+
+        other_region_sel = st.selectbox(
+            "Region *", other_region_options, index=0, key=k("other_region_opt")
+        )
+        if other_region_sel == "OTHER":
+            other_region_free = st.text_input(
+                "Specify region *", key=k("other_region_other"), placeholder="Specify region…"
+            )
+
+        if other_region_sel not in ("", "OTHER"):
+            other_city_df = query_df(
+                """
+                SELECT DISTINCT city FROM customers
+                WHERE region = :r AND city IS NOT NULL AND city <> ''
+                ORDER BY city
+                """,
+                {"r": other_region_sel},
+            )
+            other_city_options = [""] + [
+                str(r.city).strip() for r in other_city_df.itertuples(index=False) if str(r.city).strip()
+            ] + ["OTHER"]
+        else:
+            other_city_options = ["", "OTHER"]
+
+        other_city_sel = st.selectbox(
+            "City *", other_city_options, index=0, key=k("other_city_opt")
+        )
+        if other_city_sel == "OTHER":
+            other_city_free = st.text_input(
+                "Specify city *", key=k("other_city_other"), placeholder="Specify city…"
+            )
+
+        other_sector_sel = st.selectbox(
+            "Sector *", other_sector_options, index=0, key=k("other_sector_opt")
+        )
+        if other_sector_sel == "OTHER":
+            other_sector_free = st.text_input(
+                "Specify sector *", key=k("other_sector_other"), placeholder="Specify sector…"
+            )
 
     # =====================================================
     # SECTION 3 — Notes
@@ -204,10 +263,22 @@ def page_check_in():
         if not customer_id and not is_other_customer:
             errors.append("Please choose a **Customer**.")
 
-        # ✅ NEW: validate Other customer name
+        # ✅ NEW: validate Other customer name + region/city/sector
         if is_other_customer:
             if not other_customer_name or not other_customer_name.strip():
                 errors.append("For **Other Customer**, please enter **Customer Name**.")
+            if not other_region_sel:
+                errors.append("For **Other Customer**, please choose a **Region**.")
+            elif other_region_sel == "OTHER" and not other_region_free.strip():
+                errors.append("For **Other Customer**, please specify the **Region**.")
+            if not other_city_sel:
+                errors.append("For **Other Customer**, please choose a **City**.")
+            elif other_city_sel == "OTHER" and not other_city_free.strip():
+                errors.append("For **Other Customer**, please specify the **City**.")
+            if not other_sector_sel:
+                errors.append("For **Other Customer**, please choose a **Sector**.")
+            elif other_sector_sel == "OTHER" and not other_sector_free.strip():
+                errors.append("For **Other Customer**, please specify the **Sector**.")
 
         if locked:
             acct_now = (st.session_state.get(KEY_ACCT) or "").strip()
@@ -221,6 +292,10 @@ def page_check_in():
             st.session_state[busy_key] = False
             return
 
+        final_other_region = ((other_region_free.strip() if other_region_sel == "OTHER" else other_region_sel) or None) if is_other_customer else None
+        final_other_city   = ((other_city_free.strip()   if other_city_sel   == "OTHER" else other_city_sel)   or None) if is_other_customer else None
+        final_other_sector = ((other_sector_free.strip() if other_sector_sel == "OTHER" else other_sector_sel) or None) if is_other_customer else None
+
         visit_row = {
             "user_id":            uid,
             "submitted_at_utc":   _utcnow(),
@@ -228,13 +303,17 @@ def page_check_in():
             "latitude":           lat,
             "longitude":          lon,
             "accuracy_m":         acc,
-            "customer_id":        int(customer_id),
+            "customer_id":        int(customer_id) if customer_id is not None else None,  # bug fix: was crashing for Other customer
             "objective_id":       int(CHECKIN_OBJECTIVE_ID),
             "visit_type":         "Actual Visit",
             "notes":              (notes.strip() if notes else None),
 
-            # ✅ NEW: store typed name if customer == Other
+            "is_other_customer":  is_other_customer,  # bug fix: was never persisted before
+            # ✅ NEW: store typed name + region/city/sector if customer == Other
             "other_customer_name": (other_customer_name.strip() if (is_other_customer and other_customer_name) else None),
+            "other_region":        final_other_region,
+            "other_city":          final_other_city,
+            "other_sector":        final_other_sector,
         }
 
         try:
@@ -258,6 +337,12 @@ def page_check_in():
 
             # clear Other customer input after successful save
             st.session_state.pop(k("other_customer_name"), None)
+            st.session_state.pop(k("other_region_opt"), None)
+            st.session_state.pop(k("other_region_other"), None)
+            st.session_state.pop(k("other_city_opt"), None)
+            st.session_state.pop(k("other_city_other"), None)
+            st.session_state.pop(k("other_sector_opt"), None)
+            st.session_state.pop(k("other_sector_other"), None)
 
             st.rerun()
 

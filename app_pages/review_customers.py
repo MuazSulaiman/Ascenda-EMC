@@ -13,6 +13,11 @@ from widgets import set_current_page, _fetch_cascade_customers
 from ui import section_header, status_badge, html_table
 
 
+def _safe_str(v) -> str:
+    """Return v as a stripped string; NaN/None becomes ''."""
+    return str(v).strip() if pd.notna(v) else ""
+
+
 @st.cache_data(ttl=300)
 def _cached_sector_choices() -> list:
     df = query_df(
@@ -99,7 +104,7 @@ def page_review_other_customers():
             return 0.0
         return SequenceMatcher(None, a_norm, b_norm).ratio()
 
-    # ------------- Load unresolved visits (ONLY customer_id=807) -------------
+    # ------------- Load unresolved visits (is_other_customer = TRUE) -------------
     unresolved_df = query_df(
         """
         SELECT
@@ -112,9 +117,9 @@ def page_review_other_customers():
             v.user_id,
             u.name                      AS rep_name,
             u.email                     AS rep_email,
-            c.region,
-            c.city,
-            c.sector,
+            COALESCE(v.other_region, c.region) AS region,
+            COALESCE(v.other_city,   c.city)   AS city,
+            COALESCE(v.other_sector, c.sector) AS sector,
             bu.name                     AS business_unit_name
         FROM visits v
         LEFT JOIN customers c ON c.customer_id = v.customer_id
@@ -135,10 +140,10 @@ def page_review_other_customers():
 
     # Prefer structured other_customer_name, otherwise fallback to notes (legacy)
     def _resolved_other_name(row) -> str:
-        ocn = row.get("other_customer_name")
-        if ocn is not None and str(ocn).strip():
-            return str(ocn).strip()
-        return str(row.get("visit_notes") or "").strip()
+        ocn = _safe_str(row.get("other_customer_name"))
+        if ocn:
+            return ocn
+        return _safe_str(row.get("visit_notes"))
 
     unresolved_df["resolved_other_name"] = unresolved_df.apply(_resolved_other_name, axis=1)
 
@@ -409,9 +414,9 @@ def page_review_other_customers():
 
         # Optional: prefill sector/region/city from visit if they exist in customers table values
         # (won't affect similarity; just helps data quality)
-        visit_sector = (visit_row.get("sector") or "").strip()
-        visit_region = (visit_row.get("region") or "").strip()
-        visit_city   = (visit_row.get("city") or "").strip()
+        visit_sector = _safe_str(visit_row.get("sector"))
+        visit_region = _safe_str(visit_row.get("region"))
+        visit_city   = _safe_str(visit_row.get("city"))
 
         if st.session_state.get(sector_opt_key, "") == "" and visit_sector:
             st.session_state[sector_opt_key] = visit_sector if visit_sector in sector_options else "OTHER"
