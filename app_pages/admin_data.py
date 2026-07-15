@@ -421,10 +421,11 @@ def page_admin_data():
     with tab7:
         df = query_df("""
             SELECT i.product_id, i.article_number, i.description, i.is_active,
-                   bl.name AS business_line, bu.name AS business_unit
+                   bl.name AS business_line, pc.name AS product_category, bu.name AS business_unit
             FROM items i
             JOIN business_lines bl ON bl.business_line_id = i.business_line_id
             JOIN business_units bu ON bu.business_unit_id = bl.business_unit_id
+            LEFT JOIN product_categories pc ON pc.product_category_id = bl.product_category_id
             ORDER BY COALESCE(i.article_number, i.product_id)
         """)
         _reference_table(df, "search_items", "items.csv", "dl_items", "items")
