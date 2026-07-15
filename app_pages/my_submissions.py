@@ -56,7 +56,8 @@ def _detail_card(title: str, rows: list[tuple]) -> str:
     import html as _html
     out = _CARD_WRAP + _SECTION_TITLE.format(label=title)
     for key, val in rows:
-        out += _ROW.format(key=key, val=_html.escape(str(val)) if val else "—")
+        has_val = pd.notna(val) and val != ""
+        out += _ROW.format(key=key, val=_html.escape(str(val)) if has_val else "—")
     out += _CARD_CLOSE
     return out
 
@@ -129,11 +130,11 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
     row = df.iloc[0]
 
     # ── Header ────────────────────────────────────────────────────────────────
-    customer_display = row.get("other_customer_name") or row.get("customer") or "—"
+    customer_display = _safe_str(row.get("other_customer_name")) or _safe_str(row.get("customer")) or "—"
     section_header(f"V-{visit_id}", customer_display)
 
     if row.get("is_deleted"):
-        deletion_note = str(row.get("deletion_note") or "No reason provided.")
+        deletion_note = _safe_str(row.get("deletion_note")) or "No reason provided."
         st.error(f"🗑️ **This visit has been deleted.** Reason: {deletion_note}")
 
     # ── Evaluation badge ──────────────────────────────────────────────────────
@@ -160,13 +161,13 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
 
     # ── Customer card ─────────────────────────────────────────────────────────
     customer_rows = [
-        ("Name",       row.get("customer") or row.get("other_customer_name") or "Other (unresolved)"),
+        ("Name",       _safe_str(row.get("customer")) or _safe_str(row.get("other_customer_name")) or "Other (unresolved)"),
         ("Account ID", row.get("account_id")),
         ("Region",     row.get("customer_region")),
         ("City",       row.get("customer_city")),
         ("Sector",     row.get("customer_sector")),
     ]
-    if row.get("other_customer_name"):
+    if _safe_str(row.get("other_customer_name")):
         customer_rows.append(("Provided Name", row.get("other_customer_name")))
     st.markdown(_detail_card("Customer", customer_rows), unsafe_allow_html=True)
 
@@ -176,7 +177,7 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         ("Department", row.get("audience_department")),
         ("Position",   row.get("audience_position")),
     ]
-    if any(v for _, v in audience_rows):
+    if any(pd.notna(v) and v != "" for _, v in audience_rows):
         st.markdown(_detail_card("Audience", audience_rows), unsafe_allow_html=True)
 
     # ── Product & Business card ───────────────────────────────────────────────
@@ -186,7 +187,7 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         ("Product ID",           row.get("product_id")),
         ("Product Description",  row.get("product")),
     ]
-    if any(v for _, v in product_rows):
+    if any(pd.notna(v) and v != "" for _, v in product_rows):
         st.markdown(_detail_card("Product & Business", product_rows), unsafe_allow_html=True)
 
     # ── Notes card ────────────────────────────────────────────────────────────
@@ -201,7 +202,7 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         st.markdown(notes_html, unsafe_allow_html=True)
 
     # ── Home visit card ───────────────────────────────────────────────────────
-    if row.get("patient_name"):
+    if pd.notna(row.get("patient_name")):
         hv_rows = [
             ("Patient Name",  row.get("patient_name")),
             ("Phone",         row.get("patient_phone")),
@@ -251,9 +252,9 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
     lat = row.get("latitude")
     lon = row.get("longitude")
     acc = row.get("accuracy_m")
-    if lat and lon:
+    if pd.notna(lat) and pd.notna(lon):
         flat, flon = float(lat), float(lon)
-        facc = float(acc) if acc else None
+        facc = float(acc) if pd.notna(acc) else None
         maps_url = f"https://www.google.com/maps/search/{flat},{flon}"
         acc_label = f" · ±{facc:.0f}m" if facc is not None else ""
 
@@ -660,9 +661,9 @@ def page_my_submissions():
             variant  = _EVAL_VARIANT.get(eval_val, "neutral")
             label    = _EVAL_LABEL.get(eval_val, "Unrated")
 
-            audience_name = row.get("audience") or ""
-            audience_dept = row.get("audience_department") or ""
-            audience_pos  = row.get("audience_position") or ""
+            audience_name = _safe_str(row.get("audience"))
+            audience_dept = _safe_str(row.get("audience_department"))
+            audience_pos  = _safe_str(row.get("audience_position"))
             subtitle_parts = [p for p in [audience_name, audience_dept, audience_pos] if p]
             subtitle = " · ".join(subtitle_parts)
 
