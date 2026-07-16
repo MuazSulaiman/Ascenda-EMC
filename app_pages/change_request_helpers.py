@@ -16,6 +16,24 @@ def _norm(x) -> str:
     return str(x).strip()
 
 
+def _sql_val(x):
+    """
+    pd.read_sql_query reconstitutes a NULL cell as float('nan') instead of
+    None whenever the same result set has non-null strings in that column
+    (e.g. a target-audience change to "Other" nulls audience_id alongside
+    populated other_audience_* fields). Binding that raw nan into a SQL
+    UPDATE crashes psycopg with NumericValueOutOfRange on integer columns.
+    Call this on any DataFrame-sourced value before using it in a
+    comparison or as a query parameter.
+    """
+    try:
+        if pd.isna(x):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return x
+
+
 def _safe_int(x):
     try:
         s = str(x).strip()

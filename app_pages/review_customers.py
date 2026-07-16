@@ -451,17 +451,20 @@ def page_review_other_customers():
 
                 try:
                     with engine.begin() as conn:
-                        conn.execute(
+                        link_result = conn.execute(
                             text("""
                                 UPDATE visits
                                 SET customer_id       = :cid,
                                     is_other_customer = FALSE,
                                     other_resolved_by = :resolver_uid,
-                                    other_resolved_at = NOW()
-                                WHERE visit_id = :vid
+                                    other_resolved_at = NOW(),
+                                    version            = version + 1
+                                WHERE visit_id = :vid AND is_deleted = FALSE
                             """),
                             {"cid": new_customer_id, "vid": selected_visit_id, "resolver_uid": uid},
                         )
+                        if link_result.rowcount == 0:
+                            raise ValueError("Visit not found or has been deleted.")
 
                         location_set = False
                         if offer_set_location and set_location_checked:
@@ -754,19 +757,22 @@ def page_review_other_customers():
                     _fetch_cascade_customers.clear()
 
                     # Link visit to this customer
-                    conn.execute(
+                    link_result = conn.execute(
                         text(
                             """
                             UPDATE visits
                             SET customer_id       = :cid,
                                 is_other_customer = FALSE,
                                 other_resolved_by = :resolver_uid,
-                                other_resolved_at = NOW()
-                            WHERE visit_id  = :vid
+                                other_resolved_at = NOW(),
+                                version            = version + 1
+                            WHERE visit_id  = :vid AND is_deleted = FALSE
                             """
                         ),
                         {"cid": new_cid, "vid": selected_visit_id, "resolver_uid": uid},
                     )
+                    if link_result.rowcount == 0:
+                        raise ValueError("Visit not found or has been deleted.")
 
                 st.session_state[success_key] = (
                     f"Created new customer (ID {new_cid}) and linked visit #{selected_visit_id} ✅"

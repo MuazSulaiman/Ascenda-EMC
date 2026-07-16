@@ -12,7 +12,7 @@ from db_ops import query_df, exec_sql
 from ui import section_header, status_badge, compare_row
 from widgets import set_current_page, customer_quick_find_module, customer_cascading_selectors
 from app_pages.change_request_helpers import (
-    _norm, _safe_int, _add_detail,
+    _norm, _safe_int, _add_detail, _sql_val,
     _load_bu_options, _bu_id_from_name,
     _load_category_options, _load_bl_options, _bl_id_from_name,
     _load_product_options, _product_id_from_label,
@@ -80,7 +80,8 @@ def _apply_changes(request_id: int, visit_id: int, admin_uid: int):
 
     NULLABLE_VISIT_FIELDS = {"visits.notes", "visits.product_id", "visits.audience_id", "visits.project_id"}
     for _, r in detail_rows.iterrows():
-        if r["field"] not in NULLABLE_VISIT_FIELDS and (r["new_value"] is None or r["new_value"] == ""):
+        new_val = _sql_val(r["new_value"])
+        if r["field"] not in NULLABLE_VISIT_FIELDS and (new_val is None or new_val == ""):
             return False, f"Field '{r['field']}' cannot be set to an empty value."
 
     try:
@@ -97,7 +98,7 @@ def _apply_changes(request_id: int, visit_id: int, admin_uid: int):
                 col = FIELD_TO_COLUMN[r["field"]]
                 conn.execute(
                     text(f"UPDATE visits SET {col} = :val WHERE visit_id = :vid AND is_deleted = FALSE"),
-                    {"val": r["new_value"], "vid": visit_id},
+                    {"val": _sql_val(r["new_value"]), "vid": visit_id},
                 )
 
             bump = conn.execute(
@@ -107,16 +108,19 @@ def _apply_changes(request_id: int, visit_id: int, admin_uid: int):
             if bump.rowcount == 0:
                 raise ValueError("This visit was modified by another user. Refresh and try again.")
 
-            conn.execute(
+            resolved = conn.execute(
                 text(
                     """
                     UPDATE request_changes
-                    SET status = 'APPROVED', applied_at = NOW(), resolve_date = NOW(), changed_by = :admin_uid
-                    WHERE request_id = :rid
+                    SET status = 'APPROVED', applied_at = NOW(), resolve_date = NOW(),
+                        changed_by = :admin_uid, apply_error = NULL
+                    WHERE request_id = :rid AND status = 'IN_REVIEW'
                     """
                 ),
                 {"admin_uid": admin_uid, "rid": request_id},
             )
+            if resolved.rowcount == 0:
+                raise ValueError("This request was already resolved by another admin. Refresh and try again.")
         return True, None
     except Exception as e:
         # Record error in a separate connection (main transaction rolled back)
@@ -128,6 +132,28 @@ def _apply_changes(request_id: int, visit_id: int, admin_uid: int):
         except Exception:
             pass
         return False, str(e)
+
+
+def _reject_request(request_id: int, admin_uid: int, note: str) -> bool:
+    """
+    Reject an IN_REVIEW request. Returns False (no-op) if the request was
+    already resolved by someone else in the meantime.
+    """
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                """
+                UPDATE request_changes
+                SET status = 'REJECTED',
+                    reject_note = :note,
+                    resolve_date = NOW(),
+                    changed_by = :admin_uid
+                WHERE request_id = :rid AND status = 'IN_REVIEW'
+                """
+            ),
+            {"note": note, "admin_uid": admin_uid, "rid": request_id},
+        )
+    return result.rowcount > 0
 
 
 def _load_pending() -> pd.DataFrame:
@@ -1082,18 +1108,10 @@ def _render_review_pending_tab(admin_uid: int):
             if st.button("❌ Reject Request", type="secondary", key=f"{PAGE_NS}_reject_{request_id}"):
                 if not reject_note or not reject_note.strip():
                     st.error("Rejection reason is required.")
+                elif not _reject_request(request_id, admin_uid, reject_note.strip()):
+                    st.warning("Could not reject — request may already be resolved.")
+                    st.rerun()
                 else:
-                    exec_sql(
-                        """
-                        UPDATE request_changes
-                        SET status = 'REJECTED',
-                            reject_note = :note,
-                            resolve_date = NOW(),
-                            changed_by = :admin_uid
-                        WHERE request_id = :rid
-                        """,
-                        {"note": reject_note.strip(), "admin_uid": admin_uid, "rid": request_id},
-                    )
                     st.session_state[success_key] = f"Request #{request_id} rejected."
                     st.rerun()
 

@@ -440,22 +440,26 @@ def page_review_target_audiences():
 
                 try:
                     with engine.begin() as conn:
-                        conn.execute(
+                        result = conn.execute(
                             text(
                                 """
                                 UPDATE visits
                                 SET audience_id       = :aid,
                                     other_resolved_by = :resolver_uid,
-                                    other_resolved_at = NOW()
-                                WHERE visit_id = :vid
+                                    other_resolved_at = NOW(),
+                                    version            = version + 1
+                                WHERE visit_id = :vid AND is_deleted = FALSE
                                 """
                             ),
                             {"aid": audience_id, "vid": selected_visit_id, "resolver_uid": uid},
                         )
-                    st.session_state[success_key] = (
-                        f"Linked visit #{selected_visit_id} to existing Target Audience ID {audience_id} ✅"
-                    )
-                    st.rerun()
+                    if result.rowcount == 0:
+                        st.error("Visit not found or has been deleted.")
+                    else:
+                        st.session_state[success_key] = (
+                            f"Linked visit #{selected_visit_id} to existing Target Audience ID {audience_id} ✅"
+                        )
+                        st.rerun()
                 except Exception as e:
                     st.error("Failed to link visit to existing Target Audience.")
                     st.caption(str(e))
@@ -658,18 +662,21 @@ def page_review_target_audiences():
                     new_aid = res.scalar_one()
 
                     # Link visit to this new TA
-                    conn.execute(
+                    link_result = conn.execute(
                         text(
                             """
                             UPDATE visits
                             SET audience_id       = :aid,
                                 other_resolved_by = :resolver_uid,
-                                other_resolved_at = NOW()
-                            WHERE visit_id  = :vid
+                                other_resolved_at = NOW(),
+                                version            = version + 1
+                            WHERE visit_id  = :vid AND is_deleted = FALSE
                             """
                         ),
                         {"aid": new_aid, "vid": selected_visit_id, "resolver_uid": uid},
                     )
+                    if link_result.rowcount == 0:
+                        raise ValueError("Visit not found or has been deleted.")
 
                 _fetch_departments.clear()
                 _fetch_positions.clear()
