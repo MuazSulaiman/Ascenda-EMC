@@ -8,6 +8,7 @@ from sqlalchemy import text
 from auth import resolve_session_user
 from db import engine
 from db_ops import query_df, exec_sql
+from utils import safe_str
 from widgets import set_current_page
 from ui import section_header
 
@@ -40,12 +41,12 @@ def page_user_settings():
     )
     c1, c2 = st.columns(2)
     with c1:
-        st.text_input("Name", value=row.get("name") or "", disabled=True)
-        st.text_input("Email", value=row.get("email") or "", disabled=True)
-        st.text_input("Region", value=row.get("region") or "", disabled=True)
+        st.text_input("Name", value=safe_str(row.get("name")), disabled=True)
+        st.text_input("Email", value=safe_str(row.get("email")), disabled=True)
+        st.text_input("Region", value=safe_str(row.get("region")), disabled=True)
     with c2:
-        st.text_input("Role", value=row.get("role") or "", disabled=True)
-        st.text_input("Business Unit", value=row.get("business_unit") or "", disabled=True)
+        st.text_input("Role", value=safe_str(row.get("role")), disabled=True)
+        st.text_input("Business Unit", value=safe_str(row.get("business_unit")), disabled=True)
         st.text_input("Status", value=("Active" if bool(row.get("is_active", True)) else "Inactive"), disabled=True)
 
     st.divider()

@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 
 from ui import section_header, status_badge
+from utils import safe_str
 from widgets import set_current_page
 from app_pages.admin_targets_db import (
     get_all_years, get_year, create_year, update_year, transition_year_status,
@@ -491,7 +492,7 @@ def _render_add_row_form(u, selected_year, year_row, selected_rep_id, rep_row):
     if dims["business_line_id"]:
         art_df = get_articles(dims["business_line_id"])
         art_map = {"": None, **{
-            f"{r.article_number} — {r.description or ''}".strip(" —"): r.product_id
+            f"{safe_str(r.article_number)} — {safe_str(r.description)}".strip(" —"): r.product_id
             for r in art_df.itertuples(index=False)
         }}
         art_sel = st.selectbox("Article", list(art_map.keys()), key=f"{_bk}_art")

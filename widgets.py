@@ -18,7 +18,7 @@ except Exception:
 
 from db_ops import query_df
 from config import ACCURACY_METERS, TIMEZONE
-from utils import _local_now
+from utils import _local_now, safe_str
 
 
 # ====== dependency reset callbacks ======
@@ -244,10 +244,10 @@ def customer_quick_find_module(
             r = found.iloc[0]
 
             # Fill fields + lock
-            st.session_state[KEY_REGION] = (str(r["region"]) if r["region"] is not None else "").strip()
-            st.session_state[KEY_CITY]   = (str(r["city"])   if r["city"]   is not None else "").strip()
-            st.session_state[KEY_SECTOR] = (str(r["sector"]) if r["sector"] is not None else "").strip()
-            st.session_state[KEY_CUST]   = (str(r["account_name"]) if r["account_name"] is not None else "").strip()
+            st.session_state[KEY_REGION] = safe_str(r["region"])
+            st.session_state[KEY_CITY]   = safe_str(r["city"])
+            st.session_state[KEY_SECTOR] = safe_str(r["sector"])
+            st.session_state[KEY_CUST]   = safe_str(r["account_name"])
             st.session_state[KEY_CUSTID] = int(r["customer_id"])
             st.session_state[cid_locked_key] = True
 

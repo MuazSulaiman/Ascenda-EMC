@@ -1178,8 +1178,8 @@ def _visit_status_summary(visit_rows: pd.DataFrame) -> str:
 def _render_visit_groups(df: pd.DataFrame) -> None:
     for visit_id, group in df.groupby("visit_id", sort=False):
         first = group.iloc[0]
-        customer  = str(first.get("customer_name") or "—")
-        rep       = str(first.get("rep_name") or "—")
+        customer  = _norm(first.get("customer_name")) or "—"
+        rep       = _norm(first.get("rep_name")) or "—"
         visit_dt  = first.get("visit_date")
         visit_date_str = (
             pd.to_datetime(visit_dt, errors="coerce").strftime("%d %b %Y")
@@ -1251,7 +1251,7 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
         )
 
         # ── Rep note ──────────────────────────────────────────────────────────
-        req_note = str(row.get("request_note") or "").strip()
+        req_note = _norm(row.get("request_note"))
         if req_note:
             st.markdown(
                 f'<p style="font-size:0.85rem;color:var(--color-text-muted);'
@@ -1277,7 +1277,7 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
                 pd.to_datetime(row.get("applied_at"), errors="coerce").strftime("%d %b %Y, %H:%M")
                 if pd.notna(row.get("applied_at")) else "—"
             )
-            resolver = str(row.get("resolved_by") or "—")
+            resolver = _norm(row.get("resolved_by")) or "—"
             st.error(f"Deleted by {resolver} on {applied_str}")
 
         elif status_val == "APPROVED":
@@ -1285,11 +1285,11 @@ def _render_request_timeline(group: pd.DataFrame) -> None:
                 pd.to_datetime(row.get("applied_at"), errors="coerce").strftime("%d %b %Y, %H:%M")
                 if pd.notna(row.get("applied_at")) else "—"
             )
-            resolver = str(row.get("resolved_by") or "—")
+            resolver = _norm(row.get("resolved_by")) or "—"
             st.success(f"Approved by {resolver} on {applied_str}")
 
         elif status_val == "REJECTED":
-            reject_note = str(row.get("reject_note") or "").strip()
+            reject_note = _norm(row.get("reject_note"))
             if reject_note:
                 st.error(f"Rejected: {reject_note}")
             else:

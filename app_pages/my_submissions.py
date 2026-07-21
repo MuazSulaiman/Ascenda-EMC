@@ -614,7 +614,7 @@ def page_my_submissions():
         )
 
         if row.get("is_deleted"):
-            deletion_note = str(row.get("deletion_note") or "No reason provided.")
+            deletion_note = _safe_str(row.get("deletion_note")) or "No reason provided."
             try:
                 dt = pd.to_datetime(row.get("submitted_at_local"), errors="coerce")
                 day   = str(dt.day)               if dt is not None and not pd.isnull(dt) else "—"
@@ -622,7 +622,7 @@ def page_my_submissions():
                 year  = str(dt.year)               if dt is not None and not pd.isnull(dt) else ""
             except Exception:
                 day, month, year = "—", "—", ""
-            customer_name = html.escape(str(row.get("customer") or "—"))
+            customer_name = html.escape(_safe_str(row.get("customer")) or "—")
             deleted_badge = (
                 '<span style="font-size:0.72rem;font-weight:600;color:var(--status-danger-text);background:var(--status-danger-bg);'
                 'border:1px solid var(--color-border);border-radius:4px;padding:2px 7px;">🗑️ Deleted</span>'
@@ -657,7 +657,7 @@ def page_my_submissions():
                 f'</a>'
             )
         else:
-            eval_val = row.get("evaluation") or ""
+            eval_val = _safe_str(row.get("evaluation"))
             variant  = _EVAL_VARIANT.get(eval_val, "neutral")
             label    = _EVAL_LABEL.get(eval_val, "Unrated")
 
@@ -670,7 +670,7 @@ def page_my_submissions():
             cards_html += visit_card(
                 visit_id=vid,
                 date_obj=row.get("submitted_at_local"),
-                customer=row.get("customer") or "—",
+                customer=_safe_str(row.get("customer")) or "—",
                 subtitle=subtitle,
                 status=label,
                 status_variant=variant,

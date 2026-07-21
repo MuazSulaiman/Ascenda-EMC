@@ -5,7 +5,7 @@ import streamlit as st
 from passlib.hash import pbkdf2_sha256
 
 from db_ops import query_df, exec_sql
-from utils import _gen_tmp_pw
+from utils import _gen_tmp_pw, safe_str
 from widgets import set_current_page
 from ui import section_header, status_badge as _status_badge, html_table
 
@@ -357,8 +357,9 @@ def page_admin_users():
 
     def _fmt_user(r):
         status = "active" if bool(r.is_active) else "inactive"
-        bu = f" · {r.business_unit}" if pd.notna(r.business_unit) and str(r.business_unit).strip() else ""
-        return f"{r.name or r.email} ({r.role or '—'}) — {status}{bu}"
+        bu_str = safe_str(r.business_unit)
+        bu = f" · {bu_str}" if bu_str else ""
+        return f"{safe_str(r.name) or safe_str(r.email)} ({safe_str(r.role) or '—'}) — {status}{bu}"
 
     labels = [_fmt_user(r) for r in mdf.itertuples(index=False)]
     sel = st.selectbox("Select user", [""] + labels, index=0, key="mg_user_sel",
@@ -377,10 +378,10 @@ def page_admin_users():
     is_active = bool(row["is_active"])
 
     # ── User identity card ──────────────────────────────────────────────────
-    _name     = row["name"] or row["email"] or "User"
+    _name     = safe_str(row["name"]) or safe_str(row["email"]) or "User"
     _initials = "".join(w[0].upper() for w in _name.split()[:2])
-    _bu       = row["business_unit"] or "—"
-    _region   = row["region"] or "—"
+    _bu       = safe_str(row["business_unit"]) or "—"
+    _region   = safe_str(row["region"]) or "—"
     badge_variant = "success" if is_active else "neutral"
     status_text   = "Active" if is_active else "Inactive"
 
@@ -389,11 +390,11 @@ def page_admin_users():
         f'<div class="au-avatar" style="color:#fff !important;">{_initials}</div>'
         f'<div style="flex:1;min-width:0;">'
         f'<div class="au-user-name">{_name}</div>'
-        f'<div class="au-user-meta">{row["email"]}</div>'
+        f'<div class="au-user-meta">{safe_str(row["email"])}</div>'
         f'</div>'
         f'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
         f'{_status_badge(status_text, badge_variant)}'
-        f'{_status_badge(row["role"] or "—", "info")}'
+        f'{_status_badge(safe_str(row["role"]) or "—", "info")}'
         f'</div>'
         f'</div>',
         unsafe_allow_html=True,
@@ -439,14 +440,14 @@ def page_admin_users():
         with edit_box:
             bu_df2      = query_df("SELECT business_unit_id, name FROM business_units WHERE is_active IS TRUE ORDER BY name")
             bu_labels   = [""] + bu_df2["name"].tolist()
-            current_bu  = row["business_unit"] or ""
+            current_bu  = safe_str(row["business_unit"])
             bu_idx      = bu_labels.index(current_bu) if current_bu in bu_labels else 0
             role_opts   = ["", "rep", "admin", "sales manager", "biomedical manager", "maintenance"]
-            current_role = (row.get("role") or "").strip().lower()
+            current_role = safe_str(row.get("role")).lower()
             role_idx    = role_opts.index(current_role) if current_role in role_opts else 0
 
             with st.form(f"mg_user_edit_{uid}"):
-                current_region = row["region"] or ""
+                current_region = safe_str(row["region"])
                 new_region = st.selectbox(
                     "Region", _region_opts,
                     index=(_region_opts.index(current_region) if current_region in _region_opts else 0),

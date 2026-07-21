@@ -17,7 +17,7 @@ from streamlit_folium import st_folium
 from auth import resolve_session_user, set_url_param
 from config import TIMEZONE, DUP_MINUTES
 from db_ops import query_df, exec_sql, insert_visit_atomic, recent_visit_minutes
-from utils import _utcnow, _utcnow_iso, _local_now_str, push_visit_to_pbi, _client_ip
+from utils import _utcnow, _utcnow_iso, _local_now_str, push_visit_to_pbi, _client_ip, safe_str
 from widgets import (
     customer_quick_find_module,
     customer_cascading_selectors,
@@ -545,9 +545,9 @@ def page_submit_visit():
 
         prod_labels = [""] + [
             (
-                f"{(r.article_number or r.product_id)} — {r.description}"
+                f"{(safe_str(r.article_number) or r.product_id)} — {r.description}"
                 if pd.notna(r.description) and str(r.description).strip()
-                else f"{(r.article_number or r.product_id)}"
+                else f"{(safe_str(r.article_number) or r.product_id)}"
             )
             for r in prod_df.itertuples(index=False)
         ]
@@ -564,10 +564,11 @@ def page_submit_visit():
     if business_line_id and prod_choice:
         label_to_pid = {}
         for r in prod_df.itertuples(index=False):
+            art_or_pid = safe_str(r.article_number) or r.product_id
             label = (
-                f"{(r.article_number or r.product_id)} — {r.description}"
+                f"{art_or_pid} — {r.description}"
                 if pd.notna(r.description) and str(r.description).strip()
-                else f"{(r.article_number or r.product_id)}"
+                else f"{art_or_pid}"
             )
             label_to_pid[label] = r.product_id
         product_id = label_to_pid.get(prod_choice)

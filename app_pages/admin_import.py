@@ -17,7 +17,7 @@ from auth import resolve_session_user
 from config import TIMEZONE
 from db import engine
 from db_ops import query_df, exec_sql
-from utils import _utcnow_iso, _local_now_str, _utcnow
+from utils import _utcnow_iso, _local_now_str, _utcnow, safe_str as _safe_str
 from widgets import _fetch_cascade_customers, set_current_page
 from app_pages.submit_visit import (
     _fetch_business_units,
@@ -592,7 +592,7 @@ def page_admin_import():
                     # ----- Account Name FIRST -----
                     acc_edit = st.text_input(
                         "Account Name *",
-                        value=row["account_name"] or "",
+                        value=_safe_str(row["account_name"]),
                         key=f"{base_key}_acc"
                     )
 
@@ -600,7 +600,7 @@ def page_admin_import():
                     sec_key = base_key + "_sector_opt"
                     sec_other_key = base_key + "_sector_other"
 
-                    existing_sec = (row["sector"] or "").strip() if row["sector"] else ""
+                    existing_sec = _safe_str(row["sector"])
 
                     if sec_key not in st.session_state:
                         if existing_sec and existing_sec in sector_options:
@@ -629,7 +629,7 @@ def page_admin_import():
                     reg_key = base_key + "_region_opt"
                     reg_other_key = base_key + "_region_other"
 
-                    existing_reg = (row["region"] or "").strip() if row["region"] else ""
+                    existing_reg = _safe_str(row["region"])
 
                     if reg_key not in st.session_state:
                         if existing_reg and existing_reg in region_options:
@@ -673,7 +673,7 @@ def page_admin_import():
                     else:
                         city_options_edit = ["", "OTHER"]
 
-                    existing_city = (row["city"] or "").strip() if row["city"] else ""
+                    existing_city = _safe_str(row["city"])
 
                     if city_key not in st.session_state:
                         if existing_city and existing_city in city_options_edit:
@@ -1290,15 +1290,16 @@ def page_admin_import():
                         st.info("No target audiences for this customer yet.")
                     else:
                         def _fmt_aud_label(r):
+                            title_str = _safe_str(r.title)
                             title_name = (
-                                ((str(r.title).strip() + " ") if r.title else "")
-                                + (str(r.name).strip() if r.name else "")
+                                ((title_str + " ") if title_str else "")
+                                + _safe_str(r.name)
                             ).strip()
                             parts = [title_name]
-                            if r.department and str(r.department).strip():
-                                parts.append(str(r.department).strip())
-                            if r.position and str(r.position).strip():
-                                parts.append(str(r.position).strip())
+                            if _safe_str(r.department):
+                                parts.append(_safe_str(r.department))
+                            if _safe_str(r.position):
+                                parts.append(_safe_str(r.position))
                             base = " - ".join([p for p in parts if p])
                             return base + f" ({'active' if bool(r.is_active) else 'inactive'})"
 
@@ -1351,12 +1352,12 @@ def page_admin_import():
                             # ----- Name (required) -----
                             name_edit = st.text_input(
                                 "Name *",
-                                value=row["name"] or "",
+                                value=_safe_str(row["name"]),
                                 key=f"{base_key}_name",
                             )
 
                             # ----- Title dropdown -----
-                            current_title = (row["title"] or "").strip() if row["title"] else ""
+                            current_title = _safe_str(row["title"])
                             if current_title and current_title in TITLE_OPTIONS:
                                 title_idx = TITLE_OPTIONS.index(current_title)
                                 title_default_other = ""
@@ -1383,7 +1384,7 @@ def page_admin_import():
                                 )
 
                             # ----- Department dropdown -----
-                            current_dept = (row["department"] or "").strip() if row["department"] else ""
+                            current_dept = _safe_str(row["department"])
                             if current_dept and current_dept in dept_options:
                                 dept_idx = dept_options.index(current_dept)
                                 dept_default_other = ""
@@ -1410,7 +1411,7 @@ def page_admin_import():
                                 )
 
                             # ----- Position dropdown -----
-                            current_pos = (row["position"] or "").strip() if row["position"] else ""
+                            current_pos = _safe_str(row["position"])
                             if current_pos and current_pos in pos_options:
                                 pos_idx = pos_options.index(current_pos)
                                 pos_default_other = ""
@@ -1439,32 +1440,32 @@ def page_admin_import():
                             # ----- Other fields -----
                             pot_edit = st.text_input(
                                 "Potentiality",
-                                value=row["potentiality"] or "",
+                                value=_safe_str(row["potentiality"]),
                                 key=f"{base_key}_pot",
                             )
                             loy_edit = st.text_input(
                                 "Loyalty",
-                                value=row["loyalty"] or "",
+                                value=_safe_str(row["loyalty"]),
                                 key=f"{base_key}_loy",
                             )
                             mob_edit = st.text_input(
                                 "Mobile",
-                                value=row["mobile"] or "",
+                                value=_safe_str(row["mobile"]),
                                 key=f"{base_key}_mob",
                             )
                             land_edit = st.text_input(
                                 "Landline",
-                                value=row["landline"] or "",
+                                value=_safe_str(row["landline"]),
                                 key=f"{base_key}_land",
                             )
                             ext_edit = st.text_input(
                                 "External Number",
-                                value=row["external_number"] or "",
+                                value=_safe_str(row["external_number"]),
                                 key=f"{base_key}_ext",
                             )
                             email_edit = st.text_input(
                                 "Email",
-                                value=row["email"] or "",
+                                value=_safe_str(row["email"]),
                                 key=f"{base_key}_email",
                             )
 
@@ -1844,7 +1845,7 @@ def page_admin_import():
 
                     bu_name_edit = st.text_input(
                         "Business Unit Name *",
-                        value=row["name"] or "",
+                        value=_safe_str(row["name"]),
                         key=f"{base_key}_name",
                     )
 
@@ -2346,8 +2347,8 @@ def page_admin_import():
                         [
                             str(r.business_unit),
                             str(r.name),
-                            str(r.category or ""),
-                            str(r.product_group or ""),
+                            _safe_str(r.category),
+                            _safe_str(r.product_group),
                         ]
                     ).replace(" - None", "").replace("None", "").strip(" -")
 
@@ -2438,7 +2439,7 @@ def page_admin_import():
                     # ---- Name ----
                     bl_name_edit = st.text_input(
                         "Business Line Name *",
-                        value=row["name"] or "",
+                        value=_safe_str(row["name"]),
                         key=f"{base_key}_name",
                     )
 
@@ -2447,7 +2448,7 @@ def page_admin_import():
                     sup_other_key = base_key + "_supplier_other"
 
                     if sup_key not in st.session_state:
-                        existing_sup = (row["supplier"] or "").strip() if row["supplier"] else ""
+                        existing_sup = _safe_str(row["supplier"])
                         if existing_sup and existing_sup in supplier_options:
                             st.session_state[sup_key] = existing_sup
                         elif existing_sup:
@@ -2476,7 +2477,7 @@ def page_admin_import():
                     cat_other_key = base_key + "_category_other"
 
                     if cat_key not in st.session_state:
-                        existing_cat = (row["category"] or "").strip() if row["category"] else ""
+                        existing_cat = _safe_str(row["category"])
                         if existing_cat and existing_cat in category_options:
                             st.session_state[cat_key] = existing_cat
                         elif existing_cat:
@@ -2506,7 +2507,7 @@ def page_admin_import():
                     pg_other_key = base_key + "_pg_other"
 
                     if pg_key not in st.session_state:
-                        existing_pg = (row["product_group"] or "").strip() if row["product_group"] else ""
+                        existing_pg = _safe_str(row["product_group"])
                         if existing_pg and existing_pg in prod_group_options:
                             st.session_state[pg_key] = existing_pg
                         elif existing_pg:
@@ -2867,7 +2868,7 @@ def page_admin_import():
             _bl_lookup = {
                 (
                     str(r.bu_name).strip().lower(),
-                    str(r.pc_name).strip().lower() if r.pc_name else "",
+                    _safe_str(r.pc_name).lower(),
                     str(r.bl_name).strip().lower(),
                 ): int(r.bl_id)
                 for r in _bl_map_df.itertuples(index=False)
@@ -3101,12 +3102,12 @@ def page_admin_import():
                     # ---- Account / article / description ----
                     art_edit = st.text_input(
                         "Article Number (unique)",
-                        value=row["article_number"] or "",
+                        value=_safe_str(row["article_number"]),
                         key=f"{base_key}_article",
                     )
                     desc_edit = st.text_input(
                         "Description",
-                        value=row["description"] or "",
+                        value=_safe_str(row["description"]),
                         key=f"{base_key}_desc",
                     )
 
@@ -3568,7 +3569,7 @@ def page_admin_import():
                     # ---- Name ----
                     name_edit = st.text_input(
                         "Objective name *",
-                        value=row["name"] or "",
+                        value=_safe_str(row["name"]),
                         key=f"{base_key}_name"
                     )
 
@@ -3576,7 +3577,7 @@ def page_admin_import():
                     cat_key = f"{base_key}_cat_opt"
                     cat_other_key = f"{base_key}_cat_other"
 
-                    existing_cat = (row["category"] or "").strip()
+                    existing_cat = _safe_str(row["category"])
 
                     if cat_key not in st.session_state:
                         if existing_cat and existing_cat in category_options:

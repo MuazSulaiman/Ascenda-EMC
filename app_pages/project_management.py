@@ -12,7 +12,7 @@ from auth import resolve_session_user
 from config import TIMEZONE
 from db import engine
 from db_ops import query_df, exec_sql
-from utils import _utcnow_iso, _utcnow
+from utils import _utcnow_iso, _utcnow, safe_str
 from widgets import set_current_page
 from ui import section_header
 
@@ -417,7 +417,7 @@ def page_project_management():
         st.markdown(
             f"""
             **Project Name:** {cur['name']}
-            **Assigned By:** {cur.get('assigned_by_name') or '—'}
+            **Assigned By:** {safe_str(cur.get('assigned_by_name')) or '—'}
             **Assigned To:** {row.rep_name if row is not None else '—'}
             **Customer:** {row.customer_name if row is not None else '—'}
             **Business Line:** {row.business_line_name if row is not None else '—'}
@@ -464,7 +464,7 @@ def page_project_management():
 
         new_desc = st.text_area(
             "Description",
-            value=cur.get("description") or "",
+            value=safe_str(cur.get("description")),
             key=desc_key,
         )
 

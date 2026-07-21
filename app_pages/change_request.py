@@ -951,7 +951,7 @@ def page_change_request():
                 group = df[df["visit_id"] == visit_id_val]
                 first = group.iloc[0]
 
-                customer   = str(first.get("customer_name") or "—")
+                customer   = _norm(first.get("customer_name")) or "—"
                 visit_dt   = first.get("visit_date")
                 visit_date_str = (
                     pd.to_datetime(visit_dt, errors="coerce").strftime("%d %b %Y")
@@ -1042,7 +1042,7 @@ def page_change_request():
                                         st.rerun()
 
                         # Rep note
-                        req_note_val = str(row.get("request_note") or "").strip()
+                        req_note_val = _norm(row.get("request_note"))
                         if req_note_val:
                             st.markdown(
                                 f'<p style="font-size:0.85rem;color:var(--color-text-muted);'
@@ -1097,7 +1097,7 @@ def page_change_request():
                                 pd.to_datetime(row.get("applied_at"), errors="coerce").strftime("%d %b %Y, %H:%M")
                                 if pd.notna(row.get("applied_at")) else "—"
                             )
-                            deletion_note = str(row.get("request_note") or "").strip()
+                            deletion_note = _norm(row.get("request_note"))
                             msg = f"Deleted on {applied_str}"
                             if deletion_note:
                                 msg += f" — {deletion_note}"
@@ -1109,7 +1109,7 @@ def page_change_request():
                             )
                             st.success(f"Approved on {applied_str}")
                         elif status_val == "REJECTED":
-                            reject_note_val = str(row.get("reject_note") or "").strip()
+                            reject_note_val = _norm(row.get("reject_note"))
                             if reject_note_val:
                                 st.error(f"Rejected: {reject_note_val}")
                             else:

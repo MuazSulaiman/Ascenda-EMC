@@ -13,7 +13,7 @@ from streamlit_folium import st_folium
 from auth import resolve_session_user
 from config import TIMEZONE
 from db_ops import query_df, exec_sql, insert_project
-from utils import _utcnow_iso, _local_now_str, _utcnow
+from utils import _utcnow_iso, _local_now_str, _utcnow, safe_str
 from widgets import (
     customer_quick_find_module,
     customer_cascading_selectors,
@@ -303,10 +303,11 @@ def page_create_project():
             ORDER BY COALESCE(article_number, product_id)
         """, {"blid": business_line_id})
         for r in prod_df.itertuples(index=False):
+            art_or_pid = safe_str(r.article_number) or r.product_id
             label = (
-                f"{(r.article_number or r.product_id)} — {r.description}"
+                f"{art_or_pid} — {r.description}"
                 if pd.notna(r.description) and str(r.description).strip()
-                else f"{(r.article_number or r.product_id)}"
+                else f"{art_or_pid}"
             )
             prod_labels.append(label)
 
@@ -321,10 +322,11 @@ def page_create_project():
     if business_line_id and prod_choice:
         label_to_pid = {}
         for r in prod_df.itertuples(index=False):
+            art_or_pid = safe_str(r.article_number) or r.product_id
             label = (
-                f"{(r.article_number or r.product_id)} — {r.description}"
+                f"{art_or_pid} — {r.description}"
                 if pd.notna(r.description) and str(r.description).strip()
-                else f"{(r.article_number or r.product_id)}"
+                else f"{art_or_pid}"
             )
             label_to_pid[label] = r.product_id
         product_id = label_to_pid.get(prod_choice)  # may be None (optional)

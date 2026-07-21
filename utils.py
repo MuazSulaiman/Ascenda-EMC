@@ -7,11 +7,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 
+import pandas as pd
 import requests
 import streamlit as st
 from dateutil import tz
 
 from config import TIMEZONE, PBI_PUSH_URL
+
+
+def safe_str(v) -> str:
+    """Coerce a DB/dataframe value to a stripped string, treating None and
+    NaN (pandas' representation of SQL NULL, e.g. from itertuples/.iloc on a
+    nullable column) as empty. Plain truthy/`is not None` checks misfire on
+    NaN because NaN is truthy and is not None, so it slips through and gets
+    stringified as the literal text "nan"."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    return str(v).strip()
 
 
 def _get_secret(name: str, default: str = "") -> str:

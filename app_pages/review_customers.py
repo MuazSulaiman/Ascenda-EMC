@@ -242,7 +242,7 @@ def page_review_other_customers():
     visit_labels = []
     visit_id_map = {}
     for _, row in unresolved_df.iterrows():
-        label = f"{int(row['visit_id'])} — {row['resolved_other_name'] or '(no name provided)'} — {row['submitted_at_local']}"
+        label = f"{int(row['visit_id'])} — {_safe_str(row['resolved_other_name']) or '(no name provided)'} — {row['submitted_at_local']}"
         visit_labels.append(label)
         visit_id_map[label] = int(row["visit_id"])
 
@@ -275,7 +275,7 @@ def page_review_other_customers():
     selected_visit_id = visit_id_map[selected_label]
     visit_row = unresolved_df.loc[unresolved_df["visit_id"] == selected_visit_id].iloc[0]
 
-    other_name = (visit_row.get("resolved_other_name") or "").strip()
+    other_name = _safe_str(visit_row.get("resolved_other_name"))
 
     _esc = _html.escape
     st.markdown(
@@ -292,11 +292,11 @@ def page_review_other_customers():
         f'({_esc(str(visit_row["rep_email"]))})</div></div>'
         f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Location</div>'
         f'<div style="font-size:.875rem;color:var(--color-text);">'
-        f'{_esc(str(visit_row.get("region") or "—"))} / '
-        f'{_esc(str(visit_row.get("city") or "—"))} / '
-        f'{_esc(str(visit_row.get("sector") or "—"))}</div></div>'
+        f'{_esc(_safe_str(visit_row.get("region")) or "—")} / '
+        f'{_esc(_safe_str(visit_row.get("city")) or "—")} / '
+        f'{_esc(_safe_str(visit_row.get("sector")) or "—")}</div></div>'
         f'<div><div style="font-size:.7rem;color:var(--color-text-subtle);">Business Unit</div>'
-        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(str(visit_row.get("business_unit_name") or "—"))}</div></div>'
+        f'<div style="font-size:.875rem;color:var(--color-text);">{_esc(_safe_str(visit_row.get("business_unit_name")) or "—")}</div></div>'
         f'</div></div>',
         unsafe_allow_html=True,
     )
