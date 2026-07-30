@@ -162,7 +162,6 @@ def qids():
 def _base_header(customer_id: int, vat_rate=15, **overrides) -> dict:
     header = {
         "customer_id": customer_id,
-        "request_source": "Direct Request",
         "quotation_date": date.today(),
         "vat_rate": vat_rate,
         "remarks": TEST_MARKER,

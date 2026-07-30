@@ -1,6 +1,7 @@
 # app_pages/quotation_request.py
 """Rep-facing Quotations page: submit new quotations, track/withdraw/resubmit own ones."""
 import datetime
+import uuid
 from decimal import Decimal
 
 import pandas as pd
@@ -14,7 +15,7 @@ from app_pages.admin_targets_db import (
 )
 from app_pages.change_request_helpers import _norm
 from app_pages.quotation_helpers import (
-    REQUEST_SOURCE_OPTIONS, VALIDITY_OPTIONS, DELIVERY_OPTIONS, PAYMENT_TERMS_OPTIONS,
+    VALIDITY_OPTIONS, DELIVERY_OPTIONS, PAYMENT_TERMS_OPTIONS,
     compute_line_total, compute_header_totals,
     submit_quotation, resubmit_quotation, withdraw_quotation,
     render_quotation_detail, render_revision_diff,
@@ -194,32 +195,43 @@ def _infer_bu_cat_bl_for_product(product_id: str):
     }
 
 
-def _line_count_key(ns: str) -> str:
-    return f"{ns}_line_count"
+def _line_row_ids_key(ns: str) -> str:
+    return f"{ns}_row_ids"
 
 
-def _line_row_keys(ns: str, idx: int) -> dict:
+def _new_row_id() -> str:
+    return uuid.uuid4().hex[:8]
+
+
+def _line_row_keys(ns: str, row_id: str) -> dict:
     return {
-        "bu": f"{ns}_row{idx}_bu",
-        "cat": f"{ns}_row{idx}_cat",
-        "bl": f"{ns}_row{idx}_bl",
-        "prod": f"{ns}_row{idx}_prod",
-        "qty": f"{ns}_row{idx}_qty",
-        "price": f"{ns}_row{idx}_price",
-        "disc": f"{ns}_row{idx}_disc",
+        "bu": f"{ns}_row{row_id}_bu",
+        "cat": f"{ns}_row{row_id}_cat",
+        "bl": f"{ns}_row{row_id}_bl",
+        "prod": f"{ns}_row{row_id}_prod",
+        "qty": f"{ns}_row{row_id}_qty",
+        "price": f"{ns}_row{row_id}_price",
+        "disc": f"{ns}_row{row_id}_disc",
     }
 
 
-def _clear_line_row_state(ns: str, idx: int) -> None:
-    for key in _line_row_keys(ns, idx).values():
+def _clear_line_row_state(ns: str, row_id: str) -> None:
+    for key in _line_row_keys(ns, row_id).values():
         st.session_state.pop(key, None)
 
 
 def _prefill_line_rows(ns: str, lines: list) -> None:
-    """Prefill row widget state from prior line dicts (product_id/quantity/unit_price/discount_pct)."""
-    st.session_state[_line_count_key(ns)] = max(1, min(MAX_LINES, len(lines))) if lines else 1
-    for idx, line in enumerate(lines[:MAX_LINES]):
-        keys = _line_row_keys(ns, idx)
+    """Prefill row widget state from prior line dicts (product_id/quantity/unit_price/discount_pct).
+
+    Builds a fresh list of stable row IDs (one per prior line, at least one),
+    then seeds each row's widget-backed session-state keys by that row's own
+    ID — never by position, so there is nothing to shift later.
+    """
+    row_ids = [_new_row_id() for _ in range(max(1, min(MAX_LINES, len(lines))) if lines else 1)]
+    st.session_state[_line_row_ids_key(ns)] = row_ids
+
+    for row_id, line in zip(row_ids, lines[:MAX_LINES]):
+        keys = _line_row_keys(ns, row_id)
         product_id = line.get("product_id")
         infer = _infer_bu_cat_bl_for_product(product_id) if product_id else None
         if infer:
@@ -241,23 +253,20 @@ def _prefill_line_rows(ns: str, lines: list) -> None:
             st.session_state[keys["disc"]] = 0.0
 
 
-def _remove_line_row(ns: str, idx: int, count: int) -> None:
-    for i in range(idx, count - 1):
-        src = _line_row_keys(ns, i + 1)
-        dst = _line_row_keys(ns, i)
-        for name, dst_key in dst.items():
-            src_key = src[name]
-            if src_key in st.session_state:
-                st.session_state[dst_key] = st.session_state[src_key]
-            else:
-                st.session_state.pop(dst_key, None)
-    _clear_line_row_state(ns, count - 1)
-    st.session_state[_line_count_key(ns)] = count - 1
+def _remove_line_row(ns: str, row_id: str) -> None:
+    """Remove a single row by its stable ID. Every other row keeps its own
+    untouched widget keys — no shifting of values between positional slots,
+    so this never writes into a key whose widget was already instantiated
+    earlier in this script run."""
+    ids_key = _line_row_ids_key(ns)
+    row_ids = st.session_state.get(ids_key, [])
+    st.session_state[ids_key] = [rid for rid in row_ids if rid != row_id]
+    _clear_line_row_state(ns, row_id)
 
 
-def _render_product_picker_row(ns: str, idx: int):
+def _render_product_picker_row(ns: str, row_id: str):
     """Renders BU -> Category -> Business Line -> Product cascading selects. Returns product_id or None."""
-    keys = _line_row_keys(ns, idx)
+    keys = _line_row_keys(ns, row_id)
 
     def _reset_below_bu():
         st.session_state.pop(keys["cat"], None)
@@ -336,17 +345,19 @@ def _render_product_picker_row(ns: str, idx: int):
 
 
 def _render_line_items_editor(ns: str):
-    """Dynamic 1-14 row line-items editor. Returns (lines: list[dict], all_valid: bool)."""
-    count_key = _line_count_key(ns)
-    st.session_state.setdefault(count_key, 1)
-    count = st.session_state[count_key]
+    """Dynamic 1-14 row line-items editor, keyed by stable per-row IDs (not
+    positional index) so removing a row never has to shift another row's
+    already-instantiated widget state. Returns (lines: list[dict], all_valid: bool)."""
+    ids_key = _line_row_ids_key(ns)
+    st.session_state.setdefault(ids_key, [_new_row_id()])
+    row_ids = st.session_state[ids_key]
 
     lines = []
     rows_valid = True
-    for idx in range(count):
-        st.markdown(f"**Line {idx + 1}**")
-        product_id = _render_product_picker_row(ns, idx)
-        keys = _line_row_keys(ns, idx)
+    for display_no, row_id in enumerate(row_ids, start=1):
+        st.markdown(f"**Line {display_no}**")
+        product_id = _render_product_picker_row(ns, row_id)
+        keys = _line_row_keys(ns, row_id)
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -378,15 +389,15 @@ def _render_line_items_editor(ns: str):
                 "discount_pct": Decimal(str(disc)),
             })
 
-        if count > 1:
-            if st.button("Remove Line", key=f"{ns}_remove_{idx}"):
-                _remove_line_row(ns, idx, count)
+        if len(row_ids) > 1:
+            if st.button("Remove Line", key=f"{ns}_remove_{row_id}"):
+                _remove_line_row(ns, row_id)
                 st.rerun()
         st.markdown("---")
 
-    if count < MAX_LINES:
+    if len(row_ids) < MAX_LINES:
         if st.button("+ Add Line", key=f"{ns}_add_line"):
-            st.session_state[count_key] = count + 1
+            st.session_state[ids_key] = row_ids + [_new_row_id()]
             st.rerun()
     else:
         st.caption(f"Maximum {MAX_LINES} lines reached.")
@@ -428,18 +439,17 @@ def _render_new_quotation_tab(u):
     st.markdown(form_section(2, "Quotation Details"), unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
-        request_source = st.selectbox("Request Source *", REQUEST_SOURCE_OPTIONS, key=f"{ns}_request_source")
         quotation_date = st.date_input("Quotation Date *", value=datetime.date.today(), key=f"{ns}_quotation_date")
         vat_rate = st.number_input(
-            "VAT Rate (%) *", min_value=0.0, max_value=100.0, value=15.00, step=0.5,
+            "VAT Rate (%) *", min_value=0.0, max_value=100.0, value=0.0, step=0.5,
             format="%.2f", key=f"{ns}_vat_rate",
         )
     with c2:
         validity_choice = st.selectbox(
-            "Validity (days)", [""] + [str(v) for v in VALIDITY_OPTIONS], key=f"{ns}_validity",
+            "Validity (days) *", [str(v) for v in VALIDITY_OPTIONS], key=f"{ns}_validity",
         )
-        delivery_terms = st.selectbox("Delivery Terms", [""] + DELIVERY_OPTIONS, key=f"{ns}_delivery")
-        payment_terms = st.selectbox("Payment Terms", [""] + PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
+        delivery_terms = st.selectbox("Delivery Terms *", DELIVERY_OPTIONS, key=f"{ns}_delivery")
+        payment_terms = st.selectbox("Payment Terms *", PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     st.markdown(form_section(3, "Line Items"), unsafe_allow_html=True)
@@ -449,20 +459,22 @@ def _render_new_quotation_tab(u):
     vat_rate_dec = Decimal(str(vat_rate))
     _render_totals_preview(lines, vat_rate_dec)
 
-    can_submit = bool(customer_id) and lines_valid
+    can_submit = (
+        bool(customer_id) and lines_valid
+        and bool(validity_choice) and bool(delivery_terms) and bool(payment_terms)
+    )
     if not can_submit:
         st.caption("Select a customer and complete at least one line item to enable submission.")
 
     if st.button("Submit Quotation", key=f"{ns}_submit_btn", type="primary", disabled=not can_submit):
         header = {
             "customer_id": customer_id,
-            "request_source": request_source,
             "quotation_date": quotation_date,
             "vat_rate": vat_rate_dec,
             "remarks": remarks,
-            "validity_days": int(validity_choice) if validity_choice else None,
-            "delivery_terms": delivery_terms or None,
-            "payment_terms": payment_terms or None,
+            "validity_days": int(validity_choice),
+            "delivery_terms": delivery_terms,
+            "payment_terms": payment_terms,
         }
         try:
             quotation_id, quotation_number = submit_quotation(header, lines, actor_uid=uid)
@@ -546,8 +558,6 @@ def _prefill_resubmit_form(ns: str, qid: int, header: dict) -> None:
         latest = revisions_df.iloc[-1].to_dict()
         prior_lines = _load_revision_lines(int(latest["revision_id"])).to_dict("records")
 
-    st.session_state[f"{ns}_request_source"] = _norm(latest.get("request_source")) or REQUEST_SOURCE_OPTIONS[0]
-
     qd_raw = latest.get("quotation_date")
     if isinstance(qd_raw, str):
         qd = datetime.date.fromisoformat(qd_raw)
@@ -564,16 +574,16 @@ def _prefill_resubmit_form(ns: str, qid: int, header: dict) -> None:
     _vat_rate = latest.get("vat_rate")
     _vat_rate_is_na = _vat_rate is None or (isinstance(_vat_rate, float) and pd.isna(_vat_rate))
     try:
-        st.session_state[f"{ns}_vat_rate"] = 15.0 if _vat_rate_is_na else float(_vat_rate)
+        st.session_state[f"{ns}_vat_rate"] = 0.0 if _vat_rate_is_na else float(_vat_rate)
     except (TypeError, ValueError):
-        st.session_state[f"{ns}_vat_rate"] = 15.0
+        st.session_state[f"{ns}_vat_rate"] = 0.0
     st.session_state[f"{ns}_remarks"] = _norm(latest.get("remarks"))
 
     validity = latest.get("validity_days")
     validity_norm = _norm(validity)
-    st.session_state[f"{ns}_validity"] = validity_norm.split(".")[0] if validity_norm else ""
-    st.session_state[f"{ns}_delivery"] = _norm(latest.get("delivery_terms"))
-    st.session_state[f"{ns}_payment"] = _norm(latest.get("payment_terms"))
+    st.session_state[f"{ns}_validity"] = validity_norm.split(".")[0] if validity_norm else str(VALIDITY_OPTIONS[0])
+    st.session_state[f"{ns}_delivery"] = _norm(latest.get("delivery_terms")) or DELIVERY_OPTIONS[0]
+    st.session_state[f"{ns}_payment"] = _norm(latest.get("payment_terms")) or PAYMENT_TERMS_OPTIONS[0]
 
     customer_id = latest.get("customer_id")
     if customer_id is None or (isinstance(customer_id, float) and pd.isna(customer_id)):
@@ -605,17 +615,16 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
 
     c1, c2 = st.columns(2)
     with c1:
-        request_source = st.selectbox("Request Source *", REQUEST_SOURCE_OPTIONS, key=f"{ns}_request_source")
         quotation_date = st.date_input("Quotation Date *", key=f"{ns}_quotation_date")
         vat_rate = st.number_input(
             "VAT Rate (%) *", min_value=0.0, max_value=100.0, step=0.5, format="%.2f", key=f"{ns}_vat_rate",
         )
     with c2:
         validity_choice = st.selectbox(
-            "Validity (days)", [""] + [str(v) for v in VALIDITY_OPTIONS], key=f"{ns}_validity",
+            "Validity (days) *", [str(v) for v in VALIDITY_OPTIONS], key=f"{ns}_validity",
         )
-        delivery_terms = st.selectbox("Delivery Terms", [""] + DELIVERY_OPTIONS, key=f"{ns}_delivery")
-        payment_terms = st.selectbox("Payment Terms", [""] + PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
+        delivery_terms = st.selectbox("Delivery Terms *", DELIVERY_OPTIONS, key=f"{ns}_delivery")
+        payment_terms = st.selectbox("Payment Terms *", PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     lines, lines_valid = _render_line_items_editor(ns)
@@ -623,20 +632,22 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
     vat_rate_dec = Decimal(str(vat_rate))
     _render_totals_preview(lines, vat_rate_dec)
 
-    can_submit = bool(customer_id) and lines_valid
+    can_submit = (
+        bool(customer_id) and lines_valid
+        and bool(validity_choice) and bool(delivery_terms) and bool(payment_terms)
+    )
 
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("Resubmit", key=f"{ns}_resubmit_btn", type="primary", disabled=not can_submit):
             new_header = {
                 "customer_id": customer_id,
-                "request_source": request_source,
                 "quotation_date": quotation_date,
                 "vat_rate": vat_rate_dec,
                 "remarks": remarks,
-                "validity_days": int(validity_choice) if validity_choice else None,
-                "delivery_terms": delivery_terms or None,
-                "payment_terms": payment_terms or None,
+                "validity_days": int(validity_choice),
+                "delivery_terms": delivery_terms,
+                "payment_terms": payment_terms,
             }
             ok, err = resubmit_quotation(
                 qid, new_header, lines, actor_uid=uid, expected_version=int(header.get("version") or 0),

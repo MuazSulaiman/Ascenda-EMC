@@ -15,7 +15,6 @@ from app_pages.change_request_helpers import _norm, _sql_val
 from ui import compare_row, status_badge
 
 
-REQUEST_SOURCE_OPTIONS = ["Purchasing Dept.", "Procurement Dept.", "Sales Dept.", "Direct Request"]
 VALIDITY_OPTIONS = [30, 60, 90, 180, 365]
 DELIVERY_OPTIONS = ["Immediate", "15 Days", "30 Days", "45 Days", "60 Days", "90 Days", "120 Days"]
 PAYMENT_TERMS_OPTIONS = [
@@ -168,11 +167,11 @@ def submit_quotation(header: dict, lines: list[dict], actor_uid: int) -> tuple[i
         quotation_id = conn.execute(
             text("""
                 INSERT INTO quotation_requests
-                    (quotation_number, customer_id, rep_user_id, request_source, quotation_date,
+                    (quotation_number, customer_id, rep_user_id, quotation_date,
                      vat_rate, remarks, validity_days, delivery_terms, payment_terms,
                      status, version, submitted_by)
                 VALUES
-                    (:quotation_number, :customer_id, :actor_uid, :request_source, :quotation_date,
+                    (:quotation_number, :customer_id, :actor_uid, :quotation_date,
                      :vat_rate, :remarks, :validity_days, :delivery_terms, :payment_terms,
                      'IN_REVIEW', 0, :actor_uid)
                 RETURNING quotation_id
@@ -181,7 +180,6 @@ def submit_quotation(header: dict, lines: list[dict], actor_uid: int) -> tuple[i
                 "quotation_number": quotation_number,
                 "customer_id": header.get("customer_id"),
                 "actor_uid": actor_uid,
-                "request_source": header.get("request_source"),
                 "quotation_date": header.get("quotation_date"),
                 "vat_rate": vat_rate,
                 "remarks": _norm(header.get("remarks")) or None,
@@ -211,11 +209,11 @@ def submit_quotation(header: dict, lines: list[dict], actor_uid: int) -> tuple[i
         revision_id = conn.execute(
             text("""
                 INSERT INTO quotation_revisions
-                    (quotation_id, revision_no, created_by, customer_id, request_source, quotation_date,
+                    (quotation_id, revision_no, created_by, customer_id, quotation_date,
                      vat_rate, remarks, validity_days, delivery_terms, payment_terms,
                      subtotal, vat_amount, grand_total)
                 VALUES
-                    (:qid, 1, :actor_uid, :customer_id, :request_source, :quotation_date,
+                    (:qid, 1, :actor_uid, :customer_id, :quotation_date,
                      :vat_rate, :remarks, :validity_days, :delivery_terms, :payment_terms,
                      :subtotal, :vat_amount, :grand_total)
                 RETURNING revision_id
@@ -224,7 +222,6 @@ def submit_quotation(header: dict, lines: list[dict], actor_uid: int) -> tuple[i
                 "qid": quotation_id,
                 "actor_uid": actor_uid,
                 "customer_id": header.get("customer_id"),
-                "request_source": header.get("request_source"),
                 "quotation_date": header.get("quotation_date"),
                 "vat_rate": vat_rate,
                 "remarks": _norm(header.get("remarks")) or None,
@@ -329,7 +326,7 @@ def resubmit_quotation(
             conn.execute(
                 text("""
                     UPDATE quotation_requests
-                    SET customer_id = :customer_id, request_source = :request_source,
+                    SET customer_id = :customer_id,
                         quotation_date = :quotation_date, vat_rate = :vat_rate, remarks = :remarks,
                         validity_days = :validity_days, delivery_terms = :delivery_terms,
                         payment_terms = :payment_terms
@@ -338,7 +335,6 @@ def resubmit_quotation(
                 {
                     "qid": quotation_id,
                     "customer_id": header.get("customer_id"),
-                    "request_source": header.get("request_source"),
                     "quotation_date": header.get("quotation_date"),
                     "vat_rate": vat_rate,
                     "remarks": _norm(header.get("remarks")) or None,
@@ -353,11 +349,11 @@ def resubmit_quotation(
             revision_id = conn.execute(
                 text("""
                     INSERT INTO quotation_revisions
-                        (quotation_id, revision_no, created_by, customer_id, request_source, quotation_date,
+                        (quotation_id, revision_no, created_by, customer_id, quotation_date,
                          vat_rate, remarks, validity_days, delivery_terms, payment_terms,
                          subtotal, vat_amount, grand_total)
                     VALUES
-                        (:qid, :revision_no, :actor_uid, :customer_id, :request_source, :quotation_date,
+                        (:qid, :revision_no, :actor_uid, :customer_id, :quotation_date,
                          :vat_rate, :remarks, :validity_days, :delivery_terms, :payment_terms,
                          :subtotal, :vat_amount, :grand_total)
                     RETURNING revision_id
@@ -367,7 +363,6 @@ def resubmit_quotation(
                     "revision_no": revision_no,
                     "actor_uid": actor_uid,
                     "customer_id": header.get("customer_id"),
-                    "request_source": header.get("request_source"),
                     "quotation_date": header.get("quotation_date"),
                     "vat_rate": vat_rate,
                     "remarks": _norm(header.get("remarks")) or None,
@@ -662,7 +657,6 @@ def coordinator_mark_done(
 # ─────────────────────────────────────────────────────────────────────────────
 
 _REVISION_HEADER_FIELDS = [
-    ("request_source", "Request Source"),
     ("quotation_date", "Quotation Date"),
     ("vat_rate", "VAT Rate (%)"),
     ("remarks", "Remarks"),
@@ -774,7 +768,6 @@ def render_quotation_detail(quotation_id: int) -> None:
     col1, col2 = st.columns(2)
     with col1:
         st.write(f"**Customer:** {_norm(cust_name) or '—'}")
-        st.write(f"**Request Source:** {_norm(header.get('request_source')) or '—'}")
         st.write(f"**Quotation Date:** {header.get('quotation_date') or '—'}")
         st.write(f"**VAT Rate:** {header.get('vat_rate')}%")
     with col2:

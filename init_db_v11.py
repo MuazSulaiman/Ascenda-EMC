@@ -452,22 +452,19 @@ CREATE TABLE IF NOT EXISTS quotation_requests (
     quotation_number  TEXT    NOT NULL UNIQUE,
     customer_id       INTEGER NOT NULL REFERENCES customers(customer_id),
     rep_user_id       INTEGER NOT NULL REFERENCES users(user_id),
-    request_source    TEXT    NOT NULL CHECK (request_source IN (
-                           'Purchasing Dept.', 'Procurement Dept.', 'Sales Dept.', 'Direct Request'
-                       )),
     quotation_date    DATE    NOT NULL DEFAULT CURRENT_DATE,
-    vat_rate          NUMERIC(5,2) NOT NULL DEFAULT 15.00 CHECK (vat_rate BETWEEN 0 AND 100),
+    vat_rate          NUMERIC(5,2) NOT NULL DEFAULT 0 CHECK (vat_rate BETWEEN 0 AND 100),
 
     remarks           TEXT,
-    validity_days     INTEGER CHECK (validity_days IN (30, 60, 90, 180, 365)),
+    validity_days     INTEGER CHECK (validity_days IN (30, 60, 90, 180, 365)) NOT NULL,
     delivery_terms    TEXT CHECK (delivery_terms IN (
                            'Immediate', '15 Days', '30 Days', '45 Days',
                            '60 Days', '90 Days', '120 Days'
-                       )),
+                       )) NOT NULL,
     payment_terms     TEXT CHECK (payment_terms IN (
                            'Cash in Advance', 'Cash on Delivery', '15 Days', '30 Days',
                            '60 Days', '90 Days', '120 Days', 'As per Agreed Policy'
-                       )),
+                       )) NOT NULL,
 
     status    TEXT NOT NULL DEFAULT 'IN_REVIEW' CHECK (status IN (
                    'IN_REVIEW', 'EDIT_REQUESTED', 'REJECTED', 'APPROVED', 'DONE', 'WITHDRAWN'
@@ -515,13 +512,12 @@ CREATE TABLE IF NOT EXISTS quotation_revisions (
     created_by      INTEGER NOT NULL REFERENCES users(user_id),
 
     customer_id     INTEGER NOT NULL REFERENCES customers(customer_id),
-    request_source  TEXT NOT NULL,
     quotation_date  DATE NOT NULL,
     vat_rate        NUMERIC(5,2) NOT NULL,
     remarks         TEXT,
-    validity_days   INTEGER,
-    delivery_terms  TEXT,
-    payment_terms   TEXT,
+    validity_days   INTEGER NOT NULL,
+    delivery_terms  TEXT NOT NULL,
+    payment_terms   TEXT NOT NULL,
 
     subtotal        NUMERIC(16,2) NOT NULL,
     vat_amount      NUMERIC(16,2) NOT NULL,
@@ -793,6 +789,27 @@ DO $$ BEGIN
         ALTER TABLE users ALTER COLUMN name SET NOT NULL;
     END IF;
 END $$;
+
+-- Quotations QA fixes: drop request_source, require validity/delivery/payment
+-- terms, zero-default VAT rate.
+ALTER TABLE quotation_requests  DROP COLUMN IF EXISTS request_source;
+ALTER TABLE quotation_revisions DROP COLUMN IF EXISTS request_source;
+
+UPDATE quotation_requests  SET validity_days  = 30                    WHERE validity_days  IS NULL;
+UPDATE quotation_requests  SET delivery_terms = 'Immediate'           WHERE delivery_terms IS NULL;
+UPDATE quotation_requests  SET payment_terms  = 'Cash on Delivery'    WHERE payment_terms  IS NULL;
+UPDATE quotation_revisions SET validity_days  = 30                    WHERE validity_days  IS NULL;
+UPDATE quotation_revisions SET delivery_terms = 'Immediate'           WHERE delivery_terms IS NULL;
+UPDATE quotation_revisions SET payment_terms  = 'Cash on Delivery'    WHERE payment_terms  IS NULL;
+
+ALTER TABLE quotation_requests  ALTER COLUMN validity_days  SET NOT NULL;
+ALTER TABLE quotation_requests  ALTER COLUMN delivery_terms SET NOT NULL;
+ALTER TABLE quotation_requests  ALTER COLUMN payment_terms  SET NOT NULL;
+ALTER TABLE quotation_revisions ALTER COLUMN validity_days  SET NOT NULL;
+ALTER TABLE quotation_revisions ALTER COLUMN delivery_terms SET NOT NULL;
+ALTER TABLE quotation_revisions ALTER COLUMN payment_terms  SET NOT NULL;
+
+ALTER TABLE quotation_requests ALTER COLUMN vat_rate SET DEFAULT 0;
 """
 
 FUNCTIONS_SQL = """
