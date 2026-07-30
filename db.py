@@ -107,5 +107,13 @@ def _run_migrations() -> None:
         with engine.begin() as conn:
             conn.execute(text(_targets_sql))
 
+    # Quotations Workflow — schema migration
+    _quotations_migration_path = os.path.join(os.path.dirname(__file__), "migrations", "quotations_schema.sql")
+    if os.path.exists(_quotations_migration_path):
+        with open(_quotations_migration_path, "r") as _f:
+            _quotations_sql = _f.read()
+        with engine.begin() as conn:
+            conn.execute(text(_quotations_sql))
+
 
 _run_migrations()
