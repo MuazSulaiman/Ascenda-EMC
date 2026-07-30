@@ -32,6 +32,9 @@ from app_pages.change_request import page_change_request
 from app_pages.admin_change_requests import page_admin_change_requests
 from app_pages.app_settings import page_app_settings
 from app_pages.analytics import page_analytics
+from app_pages.quotation_request import page_quotation_request
+from app_pages.quotation_review import page_quotation_review
+from app_pages.quotation_handoff import page_quotation_handoff
 
 st.set_page_config(
     page_title=APP_TITLE,
@@ -382,6 +385,9 @@ else:
         "My Change Requests":        page_change_request,
         "Review Change Requests":   page_admin_change_requests,
         "App Settings":             page_app_settings,
+        "Quotations":               page_quotation_request,
+        "Review Quotations":        page_quotation_review,
+        "Quotation Handoff (Odoo)": page_quotation_handoff,
     }
 
     PAGE_ROLES = {
@@ -393,6 +399,9 @@ else:
         "Review Target Audiences": ["admin"],
         "Review Other Customers":  ["admin"],
         "Review Change Requests":  ["admin"],
+        "Quotations":               ["rep", "sales manager", "biomedical manager", "admin"],
+        "Review Quotations":        ["sales manager", "admin"],
+        "Quotation Handoff (Odoo)": ["sales coordinator", "admin"],
     }
 
     def route_page(page_name: str, page_fn):

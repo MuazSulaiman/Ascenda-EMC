@@ -493,6 +493,8 @@ def sidebar_nav():
     field_pages = ["Submit Visit", "Check-In", "My Visits"]
     if role in ("rep", "maintenance", "sales manager", "biomedical manager", "admin"):
         field_pages.append("My Change Requests")
+    if role in ("rep", "sales manager", "biomedical manager", "admin"):
+        field_pages.append("Quotations")
 
     project_pages: list = []
     # project pages hidden for all users
@@ -504,6 +506,10 @@ def sidebar_nav():
     review_pages: list = []
     if role == "admin":
         review_pages = ["Review Target Audiences", "Review Other Customers", "Review Change Requests"]
+    if role in ("sales manager", "admin"):
+        review_pages.append("Review Quotations")
+    if role in ("sales coordinator", "admin"):
+        review_pages.append("Quotation Handoff (Odoo)")
 
     admin_pages: list = []
     if role == "admin":
