@@ -273,25 +273,43 @@ def _render_product_picker_row(ns: str, idx: int):
 
     c1, c2, c3, c4 = st.columns(4)
 
+    # Each level's prefilled session-state value (set by _prefill_line_rows from a prior
+    # revision snapshot) may reference a BU/Category/Business Line/Product that has since
+    # been deactivated or renamed. get_business_units/get_product_categories/
+    # get_business_lines/get_articles all filter WHERE is_active = TRUE, so a stale value
+    # would not appear in `options` and Streamlit would raise StreamlitAPIException on that
+    # selectbox. Guard every level the same way admin_change_requests.py does for
+    # cat_sel/bl_sel/prod_sel (~lines 768-787): reset to "" if the current session-state
+    # value isn't among the live options, before the widget is instantiated.
+
     bu_df = get_business_units()
+    bu_options = [""] + bu_df["name"].tolist()
+    if st.session_state.get(keys["bu"]) not in bu_options:
+        st.session_state[keys["bu"]] = ""
     with c1:
         bu_choice = st.selectbox(
-            "Business Unit", [""] + bu_df["name"].tolist(), key=keys["bu"], on_change=_reset_below_bu,
+            "Business Unit", bu_options, key=keys["bu"], on_change=_reset_below_bu,
         )
     bu_id = _resolve_id(bu_df, "name", "business_unit_id", bu_choice)
 
     cat_df = get_product_categories(bu_id) if bu_id else pd.DataFrame(columns=["product_category_id", "name"])
+    cat_options = [""] + cat_df["name"].tolist()
+    if st.session_state.get(keys["cat"]) not in cat_options:
+        st.session_state[keys["cat"]] = ""
     with c2:
         cat_choice = st.selectbox(
-            "Category", [""] + cat_df["name"].tolist(), key=keys["cat"],
+            "Category", cat_options, key=keys["cat"],
             disabled=not bu_id, on_change=_reset_below_cat,
         )
     cat_id = _resolve_id(cat_df, "name", "product_category_id", cat_choice)
 
     bl_df = get_business_lines(cat_id) if cat_id else pd.DataFrame(columns=["business_line_id", "name"])
+    bl_options = [""] + bl_df["name"].tolist()
+    if st.session_state.get(keys["bl"]) not in bl_options:
+        st.session_state[keys["bl"]] = ""
     with c3:
         bl_choice = st.selectbox(
-            "Business Line", [""] + bl_df["name"].tolist(), key=keys["bl"],
+            "Business Line", bl_options, key=keys["bl"],
             disabled=not cat_id, on_change=_reset_below_bl,
         )
     bl_id = _resolve_id(bl_df, "name", "business_line_id", bl_choice)
@@ -302,9 +320,12 @@ def _render_product_picker_row(ns: str, idx: int):
         art_df["label"] = [
             _product_label(r["article_number"], r["description"]) for _, r in art_df.iterrows()
         ]
+    prod_options = [""] + (art_df["label"].tolist() if not art_df.empty else [])
+    if st.session_state.get(keys["prod"]) not in prod_options:
+        st.session_state[keys["prod"]] = ""
     with c4:
         prod_choice = st.selectbox(
-            "Product", [""] + (art_df["label"].tolist() if not art_df.empty else []),
+            "Product", prod_options,
             key=keys["prod"], disabled=not bl_id,
         )
 
