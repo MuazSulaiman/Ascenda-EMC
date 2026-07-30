@@ -507,6 +507,7 @@ def _render_my_quotation_card(u, header: dict) -> None:
     uid = int(u.get("user_id") or u.get("id"))
     qid = int(header["quotation_id"])
     status = _norm(header.get("status"))
+    is_owner = int(header.get("rep_user_id")) == uid
 
     label = f"{_norm(header.get('quotation_number'))} — {_STATUS_LABELS.get(status, status)}"
     with st.expander(label, expanded=False):
@@ -525,13 +526,15 @@ def _render_my_quotation_card(u, header: dict) -> None:
             manager_comment = _norm(header.get("manager_comment"))
             if manager_comment:
                 st.warning(f"**Manager comment:** {manager_comment}")
+            if is_owner:
+                st.markdown("---")
+                _render_edit_resubmit_section(uid, header)
+                _render_withdraw_section(uid, qid)
+        elif status == "IN_REVIEW" and is_owner:
             st.markdown("---")
-            _render_edit_resubmit_section(uid, header)
             _render_withdraw_section(uid, qid)
-        elif status == "IN_REVIEW":
-            st.markdown("---")
-            _render_withdraw_section(uid, qid)
-        # APPROVED / DONE / REJECTED / WITHDRAWN — read-only, no action buttons.
+        # APPROVED / DONE / REJECTED / WITHDRAWN, or a non-owner viewing (e.g. admin
+        # browsing another rep's quotation) — read-only, no action buttons.
 
 
 def _prefill_resubmit_form(ns: str, qid: int, header: dict) -> None:
@@ -558,8 +561,10 @@ def _prefill_resubmit_form(ns: str, qid: int, header: dict) -> None:
         qd = datetime.date.today()
     st.session_state[f"{ns}_quotation_date"] = qd
 
+    _vat_rate = latest.get("vat_rate")
+    _vat_rate_is_na = _vat_rate is None or (isinstance(_vat_rate, float) and pd.isna(_vat_rate))
     try:
-        st.session_state[f"{ns}_vat_rate"] = float(latest.get("vat_rate") or 15.0)
+        st.session_state[f"{ns}_vat_rate"] = 15.0 if _vat_rate_is_na else float(_vat_rate)
     except (TypeError, ValueError):
         st.session_state[f"{ns}_vat_rate"] = 15.0
     st.session_state[f"{ns}_remarks"] = _norm(latest.get("remarks"))
