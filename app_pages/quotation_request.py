@@ -19,7 +19,7 @@ from app_pages.quotation_helpers import (
     compute_line_total, compute_header_totals,
     submit_quotation, resubmit_quotation, withdraw_quotation,
     render_quotation_detail, render_revision_diff,
-    render_quotation_list,
+    render_quotation_list, render_print_button,
     _load_quotation_header, _load_revisions, _load_revision_lines,
 )
 
@@ -73,13 +73,20 @@ def _show_my_quotation_detail(qid_param: str, u) -> None:
         st.error("Invalid quotation ID.")
         return
 
-    if st.button("← Back to My Quotations", key=f"{PAGE_NS}_detail_back"):
-        st.query_params.pop("quotation_id", None)
-        st.rerun()
-
     uid = int(u.get("user_id") or u.get("id"))
     header = _load_quotation_header(qid)
-    if not header or int(header.get("rep_user_id") or -1) != uid:
+    access_ok = bool(header) and int(header.get("rep_user_id") or -1) == uid
+
+    back_col, print_col = st.columns([5, 1])
+    with back_col:
+        if st.button("← Back to My Quotations", key=f"{PAGE_NS}_detail_back"):
+            st.query_params.pop("quotation_id", None)
+            st.rerun()
+    if access_ok:
+        with print_col:
+            render_print_button(header, ns=f"{PAGE_NS}_detail_{qid}")
+
+    if not access_ok:
         st.error("Quotation not found or you don't have permission to view it.")
         return
 
@@ -389,16 +396,21 @@ def _render_line_items_editor(ns: str):
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             qty = st.number_input(
-                "Quantity", min_value=0, step=1, key=keys["qty"],
+                "Quantity", min_value=0, step=1, value=None, placeholder="e.g. 2", key=keys["qty"],
             )
         with c2:
             price = st.number_input(
-                "Unit Price", min_value=0.0, step=0.01, format="%.2f", key=keys["price"],
+                "Unit Price", min_value=0.0, step=0.01, format="%.2f",
+                value=None, placeholder="e.g. 100.00", key=keys["price"],
             )
         with c3:
             disc = st.number_input(
-                "Discount %", min_value=0.0, max_value=100.0, step=0.5, format="%.2f", key=keys["disc"],
+                "Discount %", min_value=0.0, max_value=100.0, step=0.5, format="%.2f",
+                value=None, placeholder="e.g. 0.00", key=keys["disc"],
             )
+        qty = qty or 0
+        price = price or 0.0
+        disc = disc or 0.0
         with c4:
             if product_id and qty > 0:
                 line_total = compute_line_total(Decimal(str(qty)), Decimal(str(price)), Decimal(str(disc)))
@@ -473,10 +485,10 @@ def _render_new_quotation_tab(u):
         )
     with c2:
         validity_choice = st.selectbox(
-            "Validity (days) *", [str(v) for v in VALIDITY_OPTIONS], key=f"{ns}_validity",
+            "Validity (days) *", [""] + [str(v) for v in VALIDITY_OPTIONS], key=f"{ns}_validity",
         )
-        delivery_terms = st.selectbox("Delivery Terms *", DELIVERY_OPTIONS, key=f"{ns}_delivery")
-        payment_terms = st.selectbox("Payment Terms *", PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
+        delivery_terms = st.selectbox("Delivery Terms *", [""] + DELIVERY_OPTIONS, key=f"{ns}_delivery")
+        payment_terms = st.selectbox("Payment Terms *", [""] + PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     st.markdown(form_section(3, "Line Items"), unsafe_allow_html=True)
@@ -645,10 +657,10 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
         )
     with c2:
         validity_choice = st.selectbox(
-            "Validity (days) *", [str(v) for v in VALIDITY_OPTIONS], key=f"{ns}_validity",
+            "Validity (days) *", [""] + [str(v) for v in VALIDITY_OPTIONS], key=f"{ns}_validity",
         )
-        delivery_terms = st.selectbox("Delivery Terms *", DELIVERY_OPTIONS, key=f"{ns}_delivery")
-        payment_terms = st.selectbox("Payment Terms *", PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
+        delivery_terms = st.selectbox("Delivery Terms *", [""] + DELIVERY_OPTIONS, key=f"{ns}_delivery")
+        payment_terms = st.selectbox("Payment Terms *", [""] + PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     lines, lines_valid = _render_line_items_editor(ns)

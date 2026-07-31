@@ -8,7 +8,7 @@ from db_ops import query_df
 from app_pages.change_request_helpers import _norm
 from app_pages.quotation_helpers import (
     manager_approve, manager_reject, manager_request_edit, manager_return_for_revision,
-    render_quotation_detail, render_revision_diff, render_quotation_list,
+    render_quotation_detail, render_revision_diff, render_quotation_list, render_print_button,
     _load_quotation_header, _load_revisions, _load_revision_lines,
 )
 
@@ -61,11 +61,17 @@ def _show_quotation_detail(qid_param: str, uid: int, role: str) -> None:
         st.error("Invalid quotation ID.")
         return
 
-    if st.button("← Back", key=f"{PAGE_NS}_detail_back"):
-        st.query_params.pop("quotation_id", None)
-        st.rerun()
-
     header = _load_quotation_header(qid)
+
+    back_col, print_col = st.columns([5, 1])
+    with back_col:
+        if st.button("← Back", key=f"{PAGE_NS}_detail_back"):
+            st.query_params.pop("quotation_id", None)
+            st.rerun()
+    if header:
+        with print_col:
+            render_print_button(header, ns=f"{PAGE_NS}_detail_{qid}")
+
     if not header:
         st.warning("Quotation not found.")
         return

@@ -1,12 +1,18 @@
 # app_pages/quotation_helpers.py
+import base64
+import os
+import tempfile
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from typing import Iterable, Mapping
 from urllib.parse import quote_plus
 
 from datetime import datetime, timezone
 
+import fitz  # PyMuPDF
 import pandas as pd
 import streamlit as st
+from num2words import num2words
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
@@ -899,7 +905,7 @@ def render_quotation_detail(quotation_id: int) -> None:
 
     lines_df = query_df(
         """
-        SELECT ql.line_no, ql.product_id, i.article_number, i.description,
+        SELECT ql.line_no, ql.product_id, i.article_number, i.description, i.unit_of_measurement,
                ql.quantity, ql.unit_price, ql.discount_pct
         FROM quotation_lines ql
         JOIN items i ON i.product_id = ql.product_id
@@ -946,12 +952,15 @@ def render_quotation_detail(quotation_id: int) -> None:
             )
             for _, r in display_df.iterrows()
         ]
+        display_df["unit_of_measurement"] = display_df["unit_of_measurement"].fillna("")
         st.dataframe(
             display_df[
-                ["line_no", "article_number", "description", "quantity", "unit_price", "discount_pct", "line_total"]
+                ["line_no", "article_number", "description", "unit_of_measurement",
+                 "quantity", "unit_price", "discount_pct", "line_total"]
             ],
             use_container_width=True,
             hide_index=True,
+            column_config={"unit_of_measurement": "Unit"},
         )
 
     st.markdown(
@@ -1015,3 +1024,365 @@ def _status_badge_variant(status: str) -> str:
         "DONE": "success",
         "WITHDRAWN": "neutral",
     }.get(status, "neutral")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PDF export — print-ready quotation (Design C: compact/invoice-style)
+# ─────────────────────────────────────────────────────────────────────────────
+
+PDF_PRINTABLE_STATUSES = ("APPROVED", "DONE")
+
+_PDF_COMPANY = {
+    "name_en": "Excellence Medical Care Co.",
+    "name_ar": "شركة تميز الرعاية الطبية",
+    "addr_en": "(Wasel) P.O.Box 9397 Al Amir - Prince Mohammed bin Fahd Road - Al Tubayshi - Unit No: 2 - Dammam 32233 - 2325 - K.S.A",
+    "phone1": "+966 13 8335536",
+    "phone2": "+966 13 8333269",
+    "email": "info@tamiozmed.com",
+    "website": "www.tamiozmed.com",
+    "vat": "310211040600003",
+}
+
+
+def _pdf_logo_b64() -> str:
+    logo_path = Path(__file__).resolve().parent.parent / "static" / "EMC LOGO.png"
+    try:
+        with open(logo_path, "rb") as f:
+            return base64.b64encode(f.read()).decode("ascii")
+    except Exception:
+        return ""
+
+
+def _amount_in_words(amount: Decimal) -> tuple[str, str]:
+    """(English, Arabic) sentence for a Decimal SAR amount, e.g.
+    ("Seventeen Thousand, Five Hundred And Thirty-Seven Saudi Riyals and
+    Fifty Halalas Only", "سبعة عشر ألفاً ... ريال سعودي وخمسون هللة فقط")."""
+    q = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    riyals = int(q)
+    halalas = int((q - riyals) * 100)
+
+    en = f"{num2words(riyals, lang='en').title()} Saudi Riyals"
+    ar = f"{num2words(riyals, lang='ar')} ريال سعودي"
+    if halalas:
+        en += f" and {num2words(halalas, lang='en').title()} Halalas"
+        ar += f" و{num2words(halalas, lang='ar')} هللة"
+    en += " Only"
+    ar += " فقط"
+    return en, ar
+
+
+def render_print_button(header: dict, ns: str) -> None:
+    """
+    Print/download button for a quotation's detail view — enabled only when
+    status is APPROVED or DONE, disabled (with an explanatory tooltip)
+    otherwise. Shared across all 3 quotation pages so the gate and PDF
+    generation call live in exactly one place.
+    """
+    status_val = _norm(header.get("status"))
+    if status_val in PDF_PRINTABLE_STATUSES:
+        pdf_bytes = generate_quotation_pdf(int(header["quotation_id"]))
+        st.download_button(
+            "🖶 Print",
+            data=pdf_bytes,
+            file_name=f"{_norm(header.get('quotation_number')) or 'quotation'}.pdf",
+            mime="application/pdf",
+            key=f"{ns}_print_btn",
+            use_container_width=True,
+        )
+    else:
+        st.button(
+            "🖶 Print",
+            disabled=True,
+            key=f"{ns}_print_btn_disabled",
+            use_container_width=True,
+            help="Print is available once the quotation is Approved or Done.",
+        )
+
+
+def generate_quotation_pdf(quotation_id: int) -> bytes:
+    """
+    Render a quotation as a print-ready PDF (Design C layout). Callers are
+    responsible for only offering this to the user when
+    status in PDF_PRINTABLE_STATUSES — this function itself doesn't enforce
+    that gate, it just renders whatever the quotation's current state is.
+    """
+    header = _load_quotation_header(quotation_id)
+    if not header:
+        raise ValueError("Quotation not found.")
+
+    customer = query_df(
+        "SELECT account_name, region, city, sector FROM customers WHERE customer_id = :cid",
+        {"cid": header.get("customer_id")},
+    )
+    customer_name = _norm(customer.iloc[0]["account_name"]) if not customer.empty else ""
+    customer_region = _norm(customer.iloc[0]["region"]) if not customer.empty else ""
+    customer_city = _norm(customer.iloc[0]["city"]) if not customer.empty else ""
+    customer_sector = _norm(customer.iloc[0]["sector"]) if not customer.empty else ""
+
+    rep_name = query_scalar(
+        "SELECT name FROM users WHERE user_id = :uid", {"uid": header.get("rep_user_id")}
+    )
+    manager_name = (
+        query_scalar("SELECT name FROM users WHERE user_id = :uid", {"uid": header.get("manager_user_id")})
+        if header.get("manager_user_id")
+        else None
+    )
+
+    lines_df = query_df(
+        """
+        SELECT ql.line_no, i.article_number, i.description, i.unit_of_measurement,
+               ql.quantity, ql.unit_price, ql.discount_pct
+        FROM quotation_lines ql
+        JOIN items i ON i.product_id = ql.product_id
+        WHERE ql.quotation_id = :id
+        ORDER BY ql.line_no
+        """,
+        {"id": quotation_id},
+    )
+
+    vat_rate = Decimal(str(header.get("vat_rate") or 0))
+    totals = compute_header_totals(lines_df.to_dict("records") if not lines_df.empty else [], vat_rate)
+    amount_words_en, amount_words_ar = _amount_in_words(totals["grand_total"])
+
+    rows_html = ""
+    for _, l in lines_df.iterrows():
+        line_total = compute_line_total(
+            Decimal(str(l["quantity"])), Decimal(str(l["unit_price"])), Decimal(str(l["discount_pct"]))
+        )
+        rows_html += f"""
+        <tr>
+          <td style="text-align:center; color:#8a93a6;">{int(l['line_no'])}</td>
+          <td style="font-weight:700;">{_norm(l['article_number'])}</td>
+          <td>{_norm(l['description'])}</td>
+          <td style="text-align:center;">{_norm(l['unit_of_measurement'])}</td>
+          <td style="text-align:center;">{l['quantity']}</td>
+          <td style="text-align:right;">{Decimal(str(l['unit_price'])):.2f}</td>
+          <td style="text-align:center;">{Decimal(str(l['discount_pct'])):.2f}%</td>
+          <td style="text-align:right; font-weight:700;">{line_total:.2f}</td>
+        </tr>"""
+
+    quotation_date = header.get("quotation_date")
+    quotation_date_str = quotation_date.strftime("%d %b %Y") if hasattr(quotation_date, "strftime") else _norm(quotation_date)
+
+    odoo_ref = _norm(header.get("odoo_reference"))
+    odoo_line = f"Odoo Ref: <b>{odoo_ref}</b>" if odoo_ref else ""
+
+    status_val = _norm(header.get("status"))
+    logo_b64 = _pdf_logo_b64()
+    c = _PDF_COMPANY
+
+    html = f"""
+<html><head><style>
+  * {{ box-sizing: border-box; }}
+  body {{ font-family: Arial, sans-serif; font-size: 8.6pt; color: #14171f; margin: 0; }}
+  .ar {{ direction: rtl; text-align: right; font-family: Arial, sans-serif; }}
+  table {{ width: 100%; border-collapse: collapse; }}
+
+  .band {{ background: #12213E; padding: 10px 16px; }}
+  .band td {{ vertical-align: middle; }}
+  .band .name {{ color: #fff; font-size: 13pt; font-weight: 800; }}
+  .band .name-ar {{ color: #B9C4DE; font-size: 8.5pt; margin-top: 1px; }}
+  .band .detail {{ color: #8FA0C7; font-size: 7pt; margin-top: 3px; line-height: 1.4; }}
+  .band .logo {{ width: 40px; height: auto; }}
+
+  .strip {{ background: #E8ECF5; padding: 6px 16px; }}
+  .strip td {{ font-size: 7.6pt; color: #4a5568; padding-top: 2px; }}
+  .strip .qtitle {{ color: #12213E; font-weight: 800; font-size: 10pt; }}
+  .strip .pill {{ display: inline-block; font-size: 7pt; font-weight: 700; color: #fff; background: #1c9a5b;
+                  padding: 1px 8px; border-radius: 3px; }}
+
+  .body {{ padding: 10px 16px 0; }}
+
+  .meta {{ width: 100%; }}
+  .meta td {{ padding: 1px 10px 1px 0; font-size: 7.8pt; white-space: nowrap; }}
+  .meta .k {{ color: #8a93a6; }}
+  .meta .v {{ font-weight: 700; }}
+
+  .items {{ margin-top: 10px; }}
+  .items th {{ border-top: 1.5px solid #12213E; border-bottom: 1.5px solid #12213E; padding: 4px 5px;
+               font-size: 6.9pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; text-align: left; color: #12213E; }}
+  .items td {{ padding: 4px 5px; border-bottom: 1px solid #E8ECF5; font-size: 8pt; }}
+
+  .bottomwrap {{ margin-top: 8px; }}
+  .bottomwrap td {{ vertical-align: top; }}
+  .words {{ font-size: 7.4pt; color: #8a93a6; font-style: italic; width: 55%; }}
+  .words .ar {{ margin-top: 1px; }}
+  .totalbox {{ width: 45%; background: #12213E; border-radius: 6px; padding: 8px 12px; }}
+  .totalbox table {{ width: 100%; }}
+  .totalbox td {{ padding: 2px 0; font-size: 8pt; color: #B9C4DE; }}
+  .totalbox .val {{ text-align: right; color: #fff; }}
+  .totalbox .grandrow td {{ border-top: 1px solid #35426b; padding-top: 5px; font-size: 10.5pt; font-weight: 800; color: #fff; }}
+
+  .footwrap {{ margin-top: 10px; }}
+  .footwrap td {{ vertical-align: top; width: 50%; padding-right: 12px; }}
+  .terms table {{ width: 100%; }}
+  .terms td {{ padding: 1px 0; font-size: 7.6pt; }}
+  .terms .lbl {{ color: #8a93a6; white-space: nowrap; }}
+  .terms .val {{ text-align: right; font-weight: 700; }}
+  .remarksbox {{ font-size: 7.4pt; color: #4a5568; background: #F7F8FB; border: 1px solid #E8ECF5; border-radius: 4px; padding: 5px 7px; margin-top: 4px; }}
+
+  .sig {{ margin-top: 6px; }}
+  .sig table {{ width: 100%; }}
+  .sig td {{ font-size: 7.6pt; padding: 0 8px 0 0; width: 50%; }}
+  .sig .lbl {{ color: #8a93a6; font-size: 6.8pt; text-transform: uppercase; }}
+  .sig .name {{ font-weight: 700; margin-top: 12px; border-top: 1px solid #14171f; padding-top: 3px; font-size: 7.8pt; }}
+
+  .footer {{ margin-top: 10px; padding: 6px 16px; background: #12213E; color: #8FA0C7; text-align: center; font-size: 6.8pt; }}
+</style></head>
+<body>
+
+  <table class="band">
+    <tr>
+      <td style="width:80%;">
+        <div class="name">{c['name_en']}</div>
+        <div class="name-ar ar">{c['name_ar']}</div>
+        <div class="detail">
+          <div>{c['addr_en']}</div>
+          <div>{c['phone1']} | {c['phone2']} | {c['email']} | {c['website']} | VAT {c['vat']}</div>
+        </div>
+      </td>
+      <td style="width:20%; text-align:right;">
+        <img class="logo" src="data:image/png;base64,{logo_b64}" />
+      </td>
+    </tr>
+  </table>
+
+  <table class="strip">
+    <tr>
+      <td style="width:60%;"><span class="qtitle">QUOTATION / عرض اسعار</span></td>
+      <td style="width:40%; text-align:right;"><b>{_norm(header.get('quotation_number'))}</b> &nbsp;&middot;&nbsp; {quotation_date_str}</td>
+    </tr>
+    <tr>
+      <td style="width:60%;"><span class="pill">{status_val}</span></td>
+      <td style="width:40%; text-align:right;">{odoo_line}</td>
+    </tr>
+  </table>
+
+  <div class="body">
+
+    <table>
+      <tr>
+        <td style="width:55%; vertical-align:top;">
+          <div style="font-size:7.2pt; color:#8a93a6; font-weight:700;">CUSTOMER</div>
+          <div style="font-size:10.5pt; font-weight:800; margin-top:1px;">{customer_name}</div>
+          <div style="font-size:7.8pt; color:#8a93a6;">{customer_city} &middot; {customer_region} &middot; {customer_sector}</div>
+        </td>
+        <td style="width:45%; vertical-align:top;">
+          <table class="meta">
+            <tr><td class="k">Sales Rep / مندوب المبيعات</td><td class="v">{_norm(rep_name)}</td></tr>
+            <tr><td class="k">VAT Rate / نسبة الضريبة</td><td class="v">{vat_rate}%</td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <table class="items">
+      <tr>
+        <th style="width:3%;">#</th>
+        <th style="width:10%;">Model</th>
+        <th style="width:33%;">Description</th>
+        <th style="width:6%;">Unit</th>
+        <th style="width:6%;">Qty</th>
+        <th style="width:12%;">Price</th>
+        <th style="width:9%;">Disc.</th>
+        <th style="width:21%; text-align:right;">Total</th>
+      </tr>
+      {rows_html}
+    </table>
+
+    <table class="bottomwrap">
+      <tr>
+        <td class="words">
+          <div>Amount In Words: {amount_words_en}</div>
+          <div class="ar">المبلغ بالكلمات: {amount_words_ar}</div>
+        </td>
+        <td style="width:5%;"></td>
+        <td style="width:45%;">
+          <div class="totalbox">
+            <table>
+              <tr><td>Subtotal</td><td class="val">{totals['subtotal']}</td></tr>
+              <tr><td>VAT ({vat_rate}%)</td><td class="val">{totals['vat_amount']}</td></tr>
+              <tr class="grandrow"><td>Grand Total</td><td class="val">{totals['grand_total']} SAR</td></tr>
+            </table>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <table class="footwrap">
+      <tr>
+        <td>
+          <div class="terms">
+            <table>
+              <tr><td class="lbl">Validity / صلاحية العرض</td><td class="val">{header.get('validity_days') or '—'} Days</td></tr>
+              <tr><td class="lbl">Delivery / مدة التوصيل</td><td class="val">{_norm(header.get('delivery_terms')) or '—'}</td></tr>
+              <tr><td class="lbl">Payment / طريقة السداد</td><td class="val">{_norm(header.get('payment_terms')) or '—'}</td></tr>
+            </table>
+            <div class="remarksbox"><b>Remarks:</b> {_norm(header.get('remarks')) or '—'}</div>
+          </div>
+        </td>
+        <td>
+          <div class="sig">
+            <table>
+              <tr>
+                <td>
+                  <div class="lbl">Prepared By / أُعد بواسطة</div>
+                  <div class="name">{_norm(rep_name)}</div>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="lbl" style="margin-top:8px;">Approved By / اعتمد بواسطة</div>
+                  <div class="name">{_norm(manager_name) or '—'}</div>
+                </td>
+              </tr>
+            </table>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+  </div>
+
+  <div class="footer">
+    {c['name_en']} &nbsp;&middot;&nbsp; {c['phone1']} &nbsp;&middot;&nbsp; {c['email']} &nbsp;&middot;&nbsp; {c['website']}
+  </div>
+
+</body></html>
+"""
+
+    story = fitz.Story(html=html)
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf", prefix=f"quotation_{quotation_id}_")
+    os.close(tmp_fd)
+    writer = fitz.DocumentWriter(tmp_path)
+    mediabox = fitz.paper_rect("a4")
+    where = mediabox + (24, 16, -24, -16)
+    more = True
+    while more:
+        dev = writer.begin_page(mediabox)
+        more, _ = story.place(where)
+        story.draw(dev)
+        writer.end_page()
+    writer.close()
+
+    doc = fitz.open(tmp_path)
+    total_pages = len(doc)
+    for i, page in enumerate(doc, start=1):
+        rect = page.rect
+        page.insert_textbox(
+            fitz.Rect(0, rect.height - 20, rect.width, rect.height - 6),
+            f"Page {i} of {total_pages}",
+            fontsize=7, fontname="helv", color=(0.5, 0.5, 0.5),
+            align=fitz.TEXT_ALIGN_CENTER,
+        )
+    doc.saveIncr()
+    doc.close()
+
+    with open(tmp_path, "rb") as f:
+        pdf_bytes = f.read()
+    try:
+        os.remove(tmp_path)
+    except OSError:
+        pass
+
+    return pdf_bytes

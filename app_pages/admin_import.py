@@ -185,6 +185,51 @@ def page_admin_import():
 
         return st.button(f"Confirm Import ({valid_count} rows) ✅", key=f"{key}_confirm")
 
+    def _unit_picker(key_prefix: str, current_value: str = "") -> str:
+        """
+        Dropdown of units already used on other items, plus an "Other" option
+        that reveals a free-text input for a brand-new unit. Returns the
+        resolved unit string (empty string if none chosen) — the units list
+        grows organically from whatever's actually been typed, matching the
+        Region/City/Sector "Other" pattern used elsewhere in this app.
+        """
+        existing_units = query_df(
+            """
+            SELECT DISTINCT unit_of_measurement AS u
+            FROM items
+            WHERE unit_of_measurement IS NOT NULL AND TRIM(unit_of_measurement) <> ''
+            ORDER BY u
+            """
+        )["u"].tolist()
+
+        options = [""] + existing_units + ["Other (type new unit)"]
+        current_value = (current_value or "").strip()
+        if current_value and current_value in existing_units:
+            default_idx = options.index(current_value)
+        elif current_value:
+            default_idx = len(options) - 1  # not in list yet -> show as "Other"
+        else:
+            default_idx = 0
+
+        choice = st.selectbox(
+            "Unit of Measurement",
+            options,
+            index=default_idx,
+            key=f"{key_prefix}_unit_choice",
+            help="e.g. PCS, BOX, SET — leave blank if not yet known.",
+        )
+
+        if choice == "Other (type new unit)":
+            typed_default = current_value if (current_value and current_value not in existing_units) else ""
+            return st.text_input(
+                "New unit",
+                value=typed_default,
+                key=f"{key_prefix}_unit_new",
+                placeholder="Type a new unit, e.g. VIAL",
+            ).strip()
+
+        return choice
+
     # =====================================================================
     # MAIN TABS FOR ENTITIES
     # =====================================================================
@@ -2780,6 +2825,7 @@ def page_admin_import():
                 pid = st.text_input("Product ID * (must be unique)", key="item_add_pid")
                 article = st.text_input("Article Number *", key="item_add_article")
                 desc = st.text_input("Description", key="item_add_desc")
+                unit = _unit_picker("item_add")
 
                 if st.button("Save Item", type="primary", key="item_add_save"):
                     if not pid.strip():
@@ -2799,9 +2845,9 @@ def page_admin_import():
                                     text(
                                         """
                                         INSERT INTO items(
-                                            product_id, article_number, description, business_line_id, is_active
+                                            product_id, article_number, description, unit_of_measurement, business_line_id, is_active
                                         ) VALUES (
-                                            :pid, :article, :desc, :blid, TRUE
+                                            :pid, :article, :desc, :unit, :blid, TRUE
                                         )
                                         ON CONFLICT (product_id) DO NOTHING
                                         """
@@ -2810,6 +2856,7 @@ def page_admin_import():
                                         "pid": pid.strip(),
                                         "article": article.strip(),
                                         "desc": (desc.strip() or None),
+                                        "unit": (unit or None),
                                         "blid": int(selected_bl_id),
                                     },
                                 )
@@ -2823,6 +2870,8 @@ def page_admin_import():
                                     "item_add_bu_idx",
                                     "item_add_pc_idx",
                                     "item_add_bl_idx",
+                                    "item_add_unit_choice",
+                                    "item_add_unit_new",
                                 ):
                                     st.session_state.pop(key, None)
                                 st.success("Item added ✅")
@@ -2846,7 +2895,8 @@ def page_admin_import():
                 "- **product_category** *(required)* — must exactly match an existing Product Category name\n"
                 "- **business_line** *(required)* — must exactly match an existing Business Line name\n"
                 "- **article_number** *(optional)* — internal article / SKU number\n"
-                "- **description** *(optional)* — item description\n\n"
+                "- **description** *(optional)* — item description\n"
+                "- **unit_of_measurement** *(optional)* — e.g. PCS, BOX, SET\n\n"
                 "Rows with unrecognized `business_unit`, `product_category`, or `business_line` are skipped."
             )
             # Build resolver map: (bu_name, pc_name, bl_name) → business_line_id
@@ -2878,7 +2928,7 @@ def page_admin_import():
                 st.markdown("**Step 1 — Download Template**")
                 st.download_button(
                     "Download Template",
-                    data=_make_template(["product_id", "article_number", "business_unit", "product_category", "business_line", "description"], example_rows=[["PROD-001", "ART-12345", "North Region", "Medical Devices", "Cardiology Devices", "Cardiac Monitor Pro 3000"]]),
+                    data=_make_template(["product_id", "article_number", "business_unit", "product_category", "business_line", "description", "unit_of_measurement"], example_rows=[["PROD-001", "ART-12345", "North Region", "Medical Devices", "Cardiology Devices", "Cardiac Monitor Pro 3000", "PCS"]]),
                     file_name="items_template.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="item_tmpl_dl",
@@ -2963,20 +3013,26 @@ def page_admin_import():
                                         if hasattr(r, "description") and pd.notna(getattr(r, "description"))
                                         else None
                                     )
+                                    unit_v = (
+                                        str(getattr(r, "unit_of_measurement")).strip()
+                                        if hasattr(r, "unit_of_measurement") and pd.notna(getattr(r, "unit_of_measurement"))
+                                        else None
+                                    )
 
                                     conn.execute(
                                         text(
                                             """
-                                            INSERT INTO items(product_id, article_number, description, business_line_id, is_active)
-                                            VALUES (:pid, :article, :desc, :blid, TRUE)
+                                            INSERT INTO items(product_id, article_number, description, unit_of_measurement, business_line_id, is_active)
+                                            VALUES (:pid, :article, :desc, :unit, :blid, TRUE)
                                             ON CONFLICT (product_id) DO UPDATE
-                                            SET article_number   = EXCLUDED.article_number,
-                                                description      = EXCLUDED.description,
-                                                business_line_id = EXCLUDED.business_line_id,
-                                                is_active        = TRUE
+                                            SET article_number       = EXCLUDED.article_number,
+                                                description          = EXCLUDED.description,
+                                                unit_of_measurement  = EXCLUDED.unit_of_measurement,
+                                                business_line_id     = EXCLUDED.business_line_id,
+                                                is_active             = TRUE
                                             """
                                         ),
-                                        {"pid": pid, "article": article_v, "desc": desc_v, "blid": int(bl_id)},
+                                        {"pid": pid, "article": article_v, "desc": desc_v, "unit": unit_v, "blid": int(bl_id)},
                                     )
 
                                     if pid in existing:
@@ -3015,6 +3071,7 @@ def page_admin_import():
                 SELECT i.product_id,
                        i.article_number,
                        i.description,
+                       i.unit_of_measurement,
                        COALESCE(i.is_active, TRUE) AS is_active,
                        bl.business_line_id,
                        bl.name AS business_line,
@@ -3110,6 +3167,7 @@ def page_admin_import():
                         value=_safe_str(row["description"]),
                         key=f"{base_key}_desc",
                     )
+                    unit_edit = _unit_picker(base_key, current_value=_safe_str(row["unit_of_measurement"]))
 
                     # ---- Business Unit dropdown ----
                     bu_df = query_df(
@@ -3204,6 +3262,7 @@ def page_admin_import():
                                             UPDATE items
                                             SET article_number=:a,
                                                 description=:d,
+                                                unit_of_measurement=:u,
                                                 business_line_id=:bl,
                                                 is_active=:b
                                             WHERE product_id=:pid
@@ -3211,6 +3270,7 @@ def page_admin_import():
                                             {
                                                 "a": art_edit.strip(),
                                                 "d": (desc_edit.strip() or None),
+                                                "u": (unit_edit or None),
                                                 "bl": sel_bl_id,
                                                 "b": bool(active_flag),
                                                 "pid": pid,
@@ -3225,12 +3285,14 @@ def page_admin_import():
                                         UPDATE items
                                         SET article_number=NULL,
                                             description=:d,
+                                            unit_of_measurement=:u,
                                             business_line_id=:bl,
                                             is_active=:b
                                         WHERE product_id=:pid
                                         """,
                                         {
                                             "d": (desc_edit.strip() or None),
+                                            "u": (unit_edit or None),
                                             "bl": sel_bl_id,
                                             "b": bool(active_flag),
                                             "pid": pid,

@@ -17,3 +17,5 @@ streamlit-searchbox
 streamlit-autorefresh
 streamlit-js-eval
 pytest>=8.0
+PyMuPDF>=1.24
+num2words>=0.5.12

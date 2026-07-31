@@ -182,11 +182,12 @@ CREATE TABLE IF NOT EXISTS target_audiences (
 );
 
 CREATE TABLE IF NOT EXISTS items (
-    product_id       TEXT    PRIMARY KEY,
-    article_number   TEXT    UNIQUE,
-    description      TEXT,
-    business_line_id INTEGER NOT NULL REFERENCES business_lines(business_line_id),
-    is_active        BOOLEAN DEFAULT TRUE
+    product_id           TEXT    PRIMARY KEY,
+    article_number       TEXT    UNIQUE,
+    description          TEXT,
+    unit_of_measurement   TEXT,
+    business_line_id     INTEGER NOT NULL REFERENCES business_lines(business_line_id),
+    is_active             BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -702,6 +703,9 @@ END $$;
 ALTER TABLE business_lines
     ADD COLUMN IF NOT EXISTS product_category_id INTEGER
     REFERENCES product_categories(product_category_id);
+
+-- Add unit_of_measurement to items if it predates this column
+ALTER TABLE items ADD COLUMN IF NOT EXISTS unit_of_measurement TEXT;
 
 -- Add visit columns that were added after initial schema
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS version           INTEGER NOT NULL DEFAULT 0;

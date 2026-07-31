@@ -91,6 +91,19 @@ def _run_migrations() -> None:
                 END IF;
             END $$;
         """))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name   = 'items'
+                      AND column_name  = 'unit_of_measurement'
+                ) THEN
+                    ALTER TABLE items ADD COLUMN unit_of_measurement TEXT;
+                END IF;
+            END $$;
+        """))
         # Backfill: old DELETE-source records become FORCE source + DELETED status.
         conn.execute(text("""
             UPDATE request_changes
