@@ -19,7 +19,8 @@ from app_pages.quotation_helpers import (
     compute_line_total, compute_header_totals,
     submit_quotation, resubmit_quotation, withdraw_quotation,
     render_quotation_detail, render_revision_diff,
-    _load_revisions, _load_revision_lines,
+    render_quotation_list,
+    _load_quotation_header, _load_revisions, _load_revision_lines,
 )
 
 
@@ -50,6 +51,11 @@ def page_quotation_request():
 
     section_header("Quotations", "Submit and track your quotation requests")
 
+    qid_param = st.query_params.get("quotation_id")
+    if qid_param:
+        _show_my_quotation_detail(qid_param, u)
+        return
+
     active_tab = st.radio(
         "Quotations Section", ["New Quotation", "My Quotations"],
         key=f"{PAGE_NS}_active_tab", horizontal=True, label_visibility="collapsed",
@@ -58,6 +64,26 @@ def page_quotation_request():
         _render_new_quotation_tab(u)
     else:
         _render_my_quotations_tab(u)
+
+
+def _show_my_quotation_detail(qid_param: str, u) -> None:
+    try:
+        qid = int(qid_param)
+    except (ValueError, TypeError):
+        st.error("Invalid quotation ID.")
+        return
+
+    if st.button("← Back to My Quotations", key=f"{PAGE_NS}_detail_back"):
+        st.query_params.pop("quotation_id", None)
+        st.rerun()
+
+    uid = int(u.get("user_id") or u.get("id"))
+    header = _load_quotation_header(qid)
+    if not header or int(header.get("rep_user_id") or -1) != uid:
+        st.error("Quotation not found or you don't have permission to view it.")
+        return
+
+    _render_my_quotation_detail_body(u, header)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -124,6 +150,7 @@ def _render_customer_picker(ns: str):
         cid_locked_key=keys["cid_locked_key"],
         qf_msg_key=keys["qf_msg_key"],
         qf_msg_type_key=keys["qf_msg_type_key"],
+        allow_other=False,
     )
 
 
@@ -492,61 +519,58 @@ def _render_new_quotation_tab(u):
 
 def _render_my_quotations_tab(u):
     uid = int(u.get("user_id") or u.get("id"))
-    role = (u.get("role") or "").lower().strip()
 
-    if role == "admin":
-        df = query_df("SELECT * FROM quotation_requests ORDER BY submitted_at DESC")
-    else:
-        df = query_df(
-            "SELECT * FROM quotation_requests WHERE rep_user_id = :uid ORDER BY submitted_at DESC",
-            {"uid": uid},
-        )
+    df = query_df(
+        """
+        SELECT qr.*, c.account_name
+        FROM quotation_requests qr
+        JOIN customers c ON c.customer_id = qr.customer_id
+        WHERE qr.rep_user_id = :uid
+        ORDER BY qr.submitted_at DESC
+        """,
+        {"uid": uid},
+    )
 
-    if df.empty:
-        st.info("You haven't submitted any quotations yet.")
-        return
-
-    for status in _STATUS_ORDER:
-        sub = df[df["status"] == status]
-        if sub.empty:
-            continue
-        st.markdown(f"#### {_STATUS_LABELS.get(status, status)} ({len(sub)})")
-        for _, row in sub.iterrows():
-            _render_my_quotation_card(u, row.to_dict())
+    render_quotation_list(
+        f"{PAGE_NS}_my_quotations", df,
+        page_name="Quotations",
+        status_labels=_STATUS_LABELS,
+        status_order=_STATUS_ORDER,
+        search_text_cols=("quotation_number", "account_name"),
+        date_col="submitted_at",
+        search_placeholder="Search by quotation # or customer…",
+    )
 
 
-def _render_my_quotation_card(u, header: dict) -> None:
+def _render_my_quotation_detail_body(u, header: dict) -> None:
     uid = int(u.get("user_id") or u.get("id"))
     qid = int(header["quotation_id"])
     status = _norm(header.get("status"))
     is_owner = int(header.get("rep_user_id")) == uid
 
-    label = f"{_norm(header.get('quotation_number'))} — {_STATUS_LABELS.get(status, status)}"
-    with st.expander(label, expanded=False):
-        render_quotation_detail(qid)
+    render_quotation_detail(qid)
 
-        revisions_df = _load_revisions(qid)
-        if len(revisions_df) >= 2:
-            st.markdown("##### Revision Comparison (latest two)")
-            rev_a = revisions_df.iloc[-2].to_dict()
-            rev_b = revisions_df.iloc[-1].to_dict()
-            rev_a["lines"] = _load_revision_lines(int(rev_a["revision_id"])).to_dict("records")
-            rev_b["lines"] = _load_revision_lines(int(rev_b["revision_id"])).to_dict("records")
-            render_revision_diff(rev_a, rev_b)
+    revisions_df = _load_revisions(qid)
+    if len(revisions_df) >= 2:
+        st.markdown("##### Revision Comparison (latest two)")
+        rev_a = revisions_df.iloc[-2].to_dict()
+        rev_b = revisions_df.iloc[-1].to_dict()
+        rev_a["lines"] = _load_revision_lines(int(rev_a["revision_id"])).to_dict("records")
+        rev_b["lines"] = _load_revision_lines(int(rev_b["revision_id"])).to_dict("records")
+        render_revision_diff(rev_a, rev_b)
 
-        if status == "EDIT_REQUESTED":
-            manager_comment = _norm(header.get("manager_comment"))
-            if manager_comment:
-                st.warning(f"**Manager comment:** {manager_comment}")
-            if is_owner:
-                st.markdown("---")
-                _render_edit_resubmit_section(uid, header)
-                _render_withdraw_section(uid, qid)
-        elif status == "IN_REVIEW" and is_owner:
+    if status == "EDIT_REQUESTED":
+        manager_comment = _norm(header.get("manager_comment"))
+        if manager_comment:
+            st.warning(f"**Manager comment:** {manager_comment}")
+        if is_owner:
             st.markdown("---")
+            _render_edit_resubmit_section(uid, header)
             _render_withdraw_section(uid, qid)
-        # APPROVED / DONE / REJECTED / WITHDRAWN, or a non-owner viewing (e.g. admin
-        # browsing another rep's quotation) — read-only, no action buttons.
+    elif status == "IN_REVIEW" and is_owner:
+        st.markdown("---")
+        _render_withdraw_section(uid, qid)
+    # APPROVED / DONE / REJECTED / WITHDRAWN — read-only, no action buttons.
 
 
 def _prefill_resubmit_form(ns: str, qid: int, header: dict) -> None:
@@ -654,7 +678,7 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
             )
             if ok:
                 _clear_ns_state(ns)
-                st.success("Quotation resubmitted for review.")
+                st.toast("Quotation resubmitted for review.", icon="✅")
                 st.rerun()
             else:
                 st.error(err)
@@ -678,7 +702,7 @@ def _render_withdraw_section(uid: int, qid: int) -> None:
             ok, err = withdraw_quotation(qid, rep_uid=uid, reason=(reason or "").strip())
             if ok:
                 _clear_ns_state(ns)
-                st.success("Quotation withdrawn.")
+                st.toast("Quotation withdrawn.", icon="✅")
                 st.rerun()
             else:
                 st.error(err)

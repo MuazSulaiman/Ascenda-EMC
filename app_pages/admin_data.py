@@ -251,10 +251,10 @@ def page_admin_data():
     _rep_names  = query_df("SELECT name FROM users ORDER BY name")["name"].tolist()
     _cust_names = query_df("SELECT account_name FROM customers ORDER BY account_name")["account_name"].tolist()
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
         "Visits", "Users", "Customers", "Target Audiences",
         "Business Units", "Business Lines",
-        "Items", "Objectives", "Home Visits", "Shelf Movement",
+        "Items", "Objectives", "Home Visits", "Shelf Movement", "Quotations",
     ])
 
     # ------------------------------------------------------------------ Visits
@@ -562,6 +562,169 @@ def page_admin_data():
                 chunk       = _CHUNK_LINES,
                 dl_filename = "shelf_movement_lines.csv",
                 dl_key      = "dl_sm_lines",
+            )
+
+    # --------------------------------------------------------------- Quotations
+    with tab11:
+        sub_h, sub_l = st.tabs(["Header", "Line Items"])
+
+        with sub_h:
+            q_search = st.text_input(
+                "Search", placeholder="quotation #, customer, rep, or Odoo reference…",
+                key="q_search", label_visibility="collapsed",
+            )
+
+            fc1, fc2, fc3 = st.columns([2, 2, 2])
+            with fc1:
+                q_statuses = st.multiselect(
+                    "Status",
+                    ["IN_REVIEW", "EDIT_REQUESTED", "APPROVED", "REJECTED", "DONE", "WITHDRAWN"],
+                    key="q_filter_status",
+                )
+            with fc2:
+                q_date_from = st.date_input("From", value=None, key="q_date_from")
+            with fc3:
+                q_date_to = st.date_input("To", value=None, key="q_date_to")
+
+            where_parts, params = [], {}
+            if q_statuses:
+                for i, s in enumerate(q_statuses):
+                    params[f"st_{i}"] = s
+                ph = ", ".join(f":st_{i}" for i in range(len(q_statuses)))
+                where_parts.append(f"qr.status IN ({ph})")
+            if q_date_from:
+                where_parts.append("qr.submitted_at >= :qdf")
+                params["qdf"] = str(q_date_from)
+            if q_date_to:
+                where_parts.append("qr.submitted_at < :qdt")
+                params["qdt"] = str(q_date_to + timedelta(days=1))
+            if q_search:
+                params["q_search"] = f"%{q_search}%"
+                where_parts.append(
+                    "(qr.quotation_number ILIKE :q_search OR c.account_name ILIKE :q_search "
+                    "OR rep.name ILIKE :q_search OR qr.odoo_reference ILIKE :q_search)"
+                )
+            where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+            fkey = hashlib.md5(json.dumps(
+                {"s": sorted(q_statuses), "f": str(q_date_from), "t": str(q_date_to), "q": q_search},
+                sort_keys=True,
+            ).encode()).hexdigest()
+            if st.session_state.get("q_fkey") != fkey:
+                st.session_state["q_fkey"]     = fkey
+                st.session_state["q_load_all"] = False
+
+            _transactional_table(
+                key_prefix  = "q",
+                count_sql   = f"""
+                    SELECT COUNT(*) AS n
+                    FROM quotation_requests qr
+                    JOIN customers c ON c.customer_id = qr.customer_id
+                    JOIN users rep  ON rep.user_id    = qr.rep_user_id
+                    {where_sql}
+                """,
+                data_sql    = f"""
+                    SELECT
+                        qr.quotation_number,
+                        qr.status,
+                        c.account_name      AS customer,
+                        rep.name            AS rep,
+                        qr.submitted_at,
+                        mgr.name            AS manager,
+                        qr.manager_decided_at,
+                        coord.name          AS coordinator,
+                        qr.coordinator_done_at,
+                        qr.odoo_reference,
+                        (
+                            SELECT r.grand_total FROM quotation_revisions r
+                            WHERE r.quotation_id = qr.quotation_id
+                            ORDER BY r.revision_no DESC LIMIT 1
+                        ) AS grand_total
+                    FROM quotation_requests qr
+                    JOIN customers c      ON c.customer_id = qr.customer_id
+                    JOIN users rep        ON rep.user_id   = qr.rep_user_id
+                    LEFT JOIN users mgr   ON mgr.user_id   = qr.manager_user_id
+                    LEFT JOIN users coord ON coord.user_id = qr.coordinator_user_id
+                    {where_sql}
+                    ORDER BY qr.submitted_at DESC
+                """,
+                params      = params,
+                chunk       = _CHUNK,
+                dl_filename = "quotations.csv",
+                dl_key      = "dl_quotations",
+            )
+
+        with sub_l:
+            ql_search = st.text_input(
+                "Search", placeholder="quotation #, customer, rep, or article…",
+                key="ql_search", label_visibility="collapsed",
+            )
+
+            gc1, gc2 = st.columns(2)
+            with gc1:
+                ql_date_from = st.date_input("From", value=None, key="ql_date_from")
+            with gc2:
+                ql_date_to = st.date_input("To", value=None, key="ql_date_to")
+
+            l_where_parts, l_params = [], {}
+            if ql_date_from:
+                l_where_parts.append("qr.submitted_at >= :qldf")
+                l_params["qldf"] = str(ql_date_from)
+            if ql_date_to:
+                l_where_parts.append("qr.submitted_at < :qldt")
+                l_params["qldt"] = str(ql_date_to + timedelta(days=1))
+            if ql_search:
+                l_params["ql_search"] = f"%{ql_search}%"
+                l_where_parts.append(
+                    "(qr.quotation_number ILIKE :ql_search OR c.account_name ILIKE :ql_search "
+                    "OR rep.name ILIKE :ql_search OR i.article_number ILIKE :ql_search "
+                    "OR i.description ILIKE :ql_search)"
+                )
+            l_where_sql = ("WHERE " + " AND ".join(l_where_parts)) if l_where_parts else ""
+
+            l_fkey = hashlib.md5(json.dumps(
+                {"f": str(ql_date_from), "t": str(ql_date_to), "q": ql_search}, sort_keys=True,
+            ).encode()).hexdigest()
+            if st.session_state.get("ql_fkey") != l_fkey:
+                st.session_state["ql_fkey"]     = l_fkey
+                st.session_state["ql_load_all"] = False
+
+            _transactional_table(
+                key_prefix  = "ql",
+                count_sql   = f"""
+                    SELECT COUNT(*) AS n
+                    FROM quotation_lines ql
+                    JOIN quotation_requests qr ON qr.quotation_id = ql.quotation_id
+                    JOIN customers c           ON c.customer_id   = qr.customer_id
+                    JOIN users rep             ON rep.user_id     = qr.rep_user_id
+                    LEFT JOIN items i          ON i.product_id    = ql.product_id
+                    {l_where_sql}
+                """,
+                data_sql    = f"""
+                    SELECT
+                        qr.quotation_number,
+                        qr.status,
+                        c.account_name                          AS customer,
+                        rep.name                                AS rep,
+                        ql.line_no,
+                        COALESCE(i.article_number, ql.product_id) AS article_number,
+                        i.description,
+                        ql.quantity,
+                        ql.unit_price,
+                        ql.discount_pct,
+                        ROUND(ql.quantity * ql.unit_price * (1 - ql.discount_pct / 100.0), 2) AS line_total
+                    FROM quotation_lines ql
+                    JOIN quotation_requests qr ON qr.quotation_id = ql.quotation_id
+                    JOIN customers c           ON c.customer_id   = qr.customer_id
+                    JOIN users rep             ON rep.user_id     = qr.rep_user_id
+                    LEFT JOIN items i          ON i.product_id    = ql.product_id
+                    {l_where_sql}
+                    ORDER BY qr.quotation_id DESC, ql.line_no
+                """,
+                params      = l_params,
+                chunk       = _CHUNK_LINES,
+                dl_filename = "quotation_lines.csv",
+                dl_key      = "dl_quotation_lines",
             )
 
     # ---------------------------------------------------------------- Export all

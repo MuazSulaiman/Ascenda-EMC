@@ -446,6 +446,9 @@ def sidebar_nav():
         "Admin: Data Browser":     '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
         "Admin: Users":            '<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
         "Admin: Targets":          '<svg viewBox="0 0 24 24"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>',
+        "Quotations":              '<svg viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="16" y2="15"/><line x1="8" y1="19" x2="12" y2="19"/></svg>',
+        "Review Quotations":       '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h6"/><polyline points="14 2 14 8 20 8"/><circle cx="17" cy="17" r="3"/><line x1="19.5" y1="19.5" x2="22" y2="22"/></svg>',
+        "Quotation Handoff (Odoo)": '<svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
         "App Settings":            '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
     }
     _ICON_DEFAULT = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg>'
@@ -490,7 +493,9 @@ def sidebar_nav():
     if role == "admin":
         main_pages.append("Analytics")
 
-    field_pages = ["Submit Visit", "Check-In", "My Visits"]
+    field_pages: list = []
+    if role != "sales coordinator":
+        field_pages = ["Submit Visit", "Check-In", "My Visits"]
     if role in ("rep", "maintenance", "sales manager", "biomedical manager", "admin"):
         field_pages.append("My Change Requests")
     if role in ("rep", "sales manager", "biomedical manager", "admin"):
@@ -517,7 +522,9 @@ def sidebar_nav():
 
     settings_pages = ["App Settings"]
 
-    sections = [("MAIN", main_pages), ("FIELD ACTIVITY", field_pages)]
+    sections = [("MAIN", main_pages)]
+    if field_pages:
+        sections.append(("FIELD ACTIVITY", field_pages))
     if project_pages:
         sections.append(("PROJECTS", project_pages))
     if review_pages:

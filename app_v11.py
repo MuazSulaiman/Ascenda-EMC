@@ -390,6 +390,8 @@ else:
         "Quotation Handoff (Odoo)": page_quotation_handoff,
     }
 
+    _NON_COORDINATOR_ROLES = ["admin", "rep", "sales manager", "biomedical manager", "maintenance", "supervisor"]
+
     PAGE_ROLES = {
         "Analytics":               ["admin"],
         "Admin: Import Lookups":   ["admin"],
@@ -402,6 +404,9 @@ else:
         "Quotations":               ["rep", "sales manager", "biomedical manager", "admin"],
         "Review Quotations":        ["sales manager", "admin"],
         "Quotation Handoff (Odoo)": ["sales coordinator", "admin"],
+        "Submit Visit":             _NON_COORDINATOR_ROLES,
+        "Check-In":                 _NON_COORDINATOR_ROLES,
+        "My Visits":                _NON_COORDINATOR_ROLES,
     }
 
     def route_page(page_name: str, page_fn):

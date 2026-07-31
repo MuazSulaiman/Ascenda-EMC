@@ -1,6 +1,7 @@
 # app_pages/quotation_helpers.py
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable, Mapping
+from urllib.parse import quote_plus
 
 from datetime import datetime, timezone
 
@@ -12,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from db import engine
 from db_ops import query_df, query_scalar, exec_sql
 from app_pages.change_request_helpers import _norm, _sql_val
-from ui import compare_row, status_badge
+from ui import compare_row, status_badge, visit_card
 
 
 VALIDITY_OPTIONS = [30, 60, 90, 180, 365]
@@ -656,6 +657,164 @@ def coordinator_mark_done(
 # Shared rendering helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def render_search_date_filter(ns: str, *, search_placeholder: str = "Search…", show_date: bool = True):
+    """
+    Shared search + optional date-range controls, matching the pattern already
+    used in app_pages/my_submissions.py (text_input + two date_input(value=None)).
+    Returns (search_q, date_from, date_to) for use with filter_quotations_df.
+    """
+    search_q = st.text_input(
+        "", placeholder=search_placeholder, key=f"{ns}_search", label_visibility="collapsed"
+    )
+    date_from = date_to = None
+    if show_date:
+        c1, c2 = st.columns(2)
+        with c1:
+            date_from = st.date_input("From", value=None, key=f"{ns}_date_from")
+        with c2:
+            date_to = st.date_input("To", value=None, key=f"{ns}_date_to")
+    return search_q, date_from, date_to
+
+
+def filter_quotations_df(
+    df: pd.DataFrame,
+    *,
+    search_q: str = "",
+    date_from=None,
+    date_to=None,
+    date_col: str = "submitted_at",
+    text_cols: tuple = ("quotation_number", "account_name"),
+) -> pd.DataFrame:
+    """Client-side filter of an already-loaded quotations DataFrame — no new queries."""
+    if df.empty:
+        return df
+    out = df
+
+    if (date_from or date_to) and date_col in out.columns:
+        flt_date = pd.to_datetime(out[date_col], errors="coerce").dt.date
+        if date_from:
+            out = out[flt_date >= date_from]
+            flt_date = flt_date[out.index]
+        if date_to:
+            out = out[flt_date <= date_to]
+
+    q = (search_q or "").strip().lower()
+    if q:
+        mask = pd.Series(False, index=out.index)
+        for col in text_cols:
+            if col in out.columns:
+                mask = mask | out[col].astype(str).str.lower().str.contains(q, na=False, regex=False)
+        out = out[mask]
+
+    return out
+
+
+def quotation_detail_href(page_name: str, quotation_id: int) -> str:
+    """URL to a single quotation's routed detail view (?page=...&quotation_id=...)."""
+    return f"?page={quote_plus(page_name)}&quotation_id={int(quotation_id)}"
+
+
+def render_quotation_list(
+    ns: str,
+    df: pd.DataFrame,
+    *,
+    page_name: str,
+    status_labels: dict,
+    status_order: list,
+    search_text_cols: tuple = ("quotation_number", "account_name"),
+    date_col: str = "submitted_at",
+    search_placeholder: str = "Search…",
+    page_size: int = 10,
+) -> None:
+    """
+    Shared paginated list view for a quotations queue: search + date filter,
+    counted status tabs, and card rows (reusing ui.visit_card, which is fully
+    generic) linking to a routed detail view via quotation_detail_href.
+    Matches the pattern already established in app_pages/my_submissions.py.
+    """
+    if df.empty:
+        st.info("No quotations to show.")
+        return
+
+    search_q, date_from, date_to = render_search_date_filter(ns, search_placeholder=search_placeholder)
+    filtered = filter_quotations_df(
+        df, search_q=search_q, date_from=date_from, date_to=date_to,
+        date_col=date_col, text_cols=search_text_cols,
+    )
+
+    tab_labels = [f"All  {len(filtered)}"]
+    for status in status_order:
+        cnt = int((filtered["status"] == status).sum()) if "status" in filtered.columns else 0
+        tab_labels.append(f"{status_labels.get(status, status)}  {cnt}")
+
+    chosen_label = st.radio(
+        "Status", tab_labels, key=f"{ns}_status_tab", horizontal=True, label_visibility="collapsed",
+    )
+    chosen = chosen_label.rsplit("  ", 1)[0].strip()
+
+    if chosen == "All":
+        visible = filtered
+    else:
+        inv_labels = {v: k for k, v in status_labels.items()}
+        status_key = inv_labels.get(chosen, chosen)
+        visible = filtered[filtered["status"] == status_key]
+
+    if visible.empty:
+        st.caption("No results — try a different search, date range, or status.")
+        return
+
+    total = len(visible)
+    filter_key = (search_q, date_from, date_to, chosen_label)
+    page_state_key = f"{ns}_page"
+    filter_state_key = f"{ns}_filter_key"
+    if st.session_state.get(filter_state_key) != filter_key:
+        st.session_state[filter_state_key] = filter_key
+        st.session_state[page_state_key] = 0
+
+    current_page = st.session_state.get(page_state_key, 0)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    current_page = min(current_page, total_pages - 1)
+
+    start_idx = current_page * page_size
+    end_idx = min(start_idx + page_size, total)
+    page_df = visible.iloc[start_idx:end_idx]
+
+    st.caption(f"Showing {start_idx + 1}–{end_idx} of {total:,} quotation{'s' if total != 1 else ''}")
+
+    cards_html = ""
+    for _, row in page_df.iterrows():
+        qid = int(row["quotation_id"])
+        status_val = _norm(row.get("status"))
+        status_label = status_labels.get(status_val, status_val)
+        cards_html += visit_card(
+            _norm(row.get("rep_name")),
+            row.get(date_col),
+            _norm(row.get("account_name")) or "—",
+            subtitle=_norm(row.get("quotation_number")),
+            status=status_label,
+            status_variant=_status_badge_variant(status_val),
+            href=quotation_detail_href(page_name, qid),
+        )
+    st.markdown(cards_html, unsafe_allow_html=True)
+
+    if total_pages > 1:
+        pcol1, pcol2, pcol3 = st.columns([1, 2, 1])
+        with pcol1:
+            if st.button("← Prev", key=f"{ns}_prev_btn", disabled=current_page <= 0, use_container_width=True):
+                st.session_state[page_state_key] = current_page - 1
+                st.rerun()
+        with pcol2:
+            st.markdown(
+                f'<p style="text-align:center;color:var(--color-text-subtle);font-size:0.85rem;margin-top:0.4rem;">'
+                f'Page {current_page + 1} of {total_pages}</p>',
+                unsafe_allow_html=True,
+            )
+        with pcol3:
+            if st.button("Next →", key=f"{ns}_next_btn", disabled=current_page >= total_pages - 1, use_container_width=True):
+                st.session_state[page_state_key] = current_page + 1
+                st.rerun()
+
+
 _REVISION_HEADER_FIELDS = [
     ("quotation_date", "Quotation Date"),
     ("vat_rate", "VAT Rate (%)"),
@@ -800,6 +959,18 @@ def render_quotation_detail(quotation_id: int) -> None:
         f"**VAT:** {totals['vat_amount']} &nbsp;·&nbsp; "
         f"**Grand Total:** {totals['grand_total']}"
     )
+
+    if status_val in ("APPROVED", "DONE"):
+        odoo_ref = _norm(header.get("odoo_reference"))
+        coord_note = _norm(header.get("coordinator_note"))
+        st.markdown("##### Handoff to Odoo")
+        if odoo_ref or coord_note:
+            if odoo_ref:
+                st.write(f"**Odoo Reference:** {odoo_ref}")
+            if coord_note:
+                st.write(f"**Coordinator Note:** {coord_note}")
+        else:
+            st.caption("No Odoo reference recorded yet.")
 
     st.markdown("##### Status Timeline")
     events_df = _load_status_events(quotation_id)
