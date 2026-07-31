@@ -240,9 +240,9 @@ def _prefill_line_rows(ns: str, lines: list) -> None:
             st.session_state[keys["bl"]] = infer["bl_name"]
             st.session_state[keys["prod"]] = infer["prod_label"]
         try:
-            st.session_state[keys["qty"]] = float(line.get("quantity") or 0)
+            st.session_state[keys["qty"]] = int(line.get("quantity") or 0)
         except (TypeError, ValueError):
-            st.session_state[keys["qty"]] = 0.0
+            st.session_state[keys["qty"]] = 0
         try:
             st.session_state[keys["price"]] = float(line.get("unit_price") or 0)
         except (TypeError, ValueError):
@@ -362,7 +362,7 @@ def _render_line_items_editor(ns: str):
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             qty = st.number_input(
-                "Quantity", min_value=0.0, step=1.0, format="%.3f", key=keys["qty"],
+                "Quantity", min_value=0, step=1, key=keys["qty"],
             )
         with c2:
             price = st.number_input(

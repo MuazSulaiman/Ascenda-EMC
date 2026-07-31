@@ -497,7 +497,7 @@ CREATE TABLE IF NOT EXISTS quotation_lines (
     quotation_id  BIGINT NOT NULL REFERENCES quotation_requests(quotation_id) ON DELETE CASCADE,
     line_no       SMALLINT NOT NULL CHECK (line_no BETWEEN 1 AND 14),
     product_id    TEXT NOT NULL REFERENCES items(product_id),
-    quantity      NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+    quantity      INTEGER NOT NULL CHECK (quantity > 0),
     unit_price    NUMERIC(14,2) NOT NULL CHECK (unit_price >= 0),
     discount_pct  NUMERIC(5,2)  NOT NULL DEFAULT 0 CHECK (discount_pct BETWEEN 0 AND 100),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -533,7 +533,7 @@ CREATE TABLE IF NOT EXISTS quotation_revision_lines (
     product_id               TEXT NOT NULL REFERENCES items(product_id),
     article_number_snapshot  TEXT,
     description_snapshot     TEXT,
-    quantity                 NUMERIC(14,3) NOT NULL,
+    quantity                 INTEGER NOT NULL,
     unit_price                NUMERIC(14,2) NOT NULL,
     discount_pct               NUMERIC(5,2) NOT NULL,
     line_total                  NUMERIC(16,2) NOT NULL
