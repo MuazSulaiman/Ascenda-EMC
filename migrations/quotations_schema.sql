@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS quotation_lines (
     unit_price    NUMERIC(14,2) NOT NULL CHECK (unit_price >= 0),
     discount_pct  NUMERIC(5,2)  NOT NULL DEFAULT 0 CHECK (discount_pct BETWEEN 0 AND 100),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (quotation_id, line_no)
+    UNIQUE (quotation_id, line_no),
+    UNIQUE (quotation_id, product_id)
 );
 
 CREATE TABLE IF NOT EXISTS quotation_revisions (
@@ -183,3 +184,19 @@ ALTER TABLE quotation_requests ALTER COLUMN vat_rate SET DEFAULT 0;
 -- ── via the implicit int->numeric cast, so this never errors on rerun).
 ALTER TABLE quotation_lines          ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity)::INTEGER;
 ALTER TABLE quotation_revision_lines ALTER COLUMN quantity TYPE INTEGER USING ROUND(quantity)::INTEGER;
+
+-- ── A quotation must never have two lines for the same product — the UI
+-- ── now blocks this too, but this is the DB-level backstop (matches the
+-- ── existing UNIQUE(quotation_id, line_no) precedent above).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'quotation_lines'::regclass
+          AND conname  = 'quotation_lines_quotation_id_product_id_key'
+    ) THEN
+        ALTER TABLE quotation_lines
+            ADD CONSTRAINT quotation_lines_quotation_id_product_id_key
+            UNIQUE (quotation_id, product_id);
+    END IF;
+END $$;

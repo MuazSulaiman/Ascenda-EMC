@@ -57,6 +57,12 @@ def compute_header_totals(lines: Iterable[Mapping], vat_rate: Decimal) -> dict:
     return {"subtotal": subtotal, "vat_amount": vat_amount, "grand_total": grand_total}
 
 
+def fmt_money(value) -> str:
+    """Comma-grouped 2dp display string, e.g. Decimal('50000') -> '50,000.00'.
+    Display-only — never use this for stored or computed amounts."""
+    return f"{Decimal(value):,.2f}"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Authorization / duplicate-reference guards
 # ─────────────────────────────────────────────────────────────────────────────
@@ -964,9 +970,9 @@ def render_quotation_detail(quotation_id: int) -> None:
         )
 
     st.markdown(
-        f"**Subtotal:** {totals['subtotal']} &nbsp;·&nbsp; "
-        f"**VAT:** {totals['vat_amount']} &nbsp;·&nbsp; "
-        f"**Grand Total:** {totals['grand_total']}"
+        f"**Subtotal:** {fmt_money(totals['subtotal'])} &nbsp;·&nbsp; "
+        f"**VAT:** {fmt_money(totals['vat_amount'])} &nbsp;·&nbsp; "
+        f"**Grand Total:** {fmt_money(totals['grand_total'])}"
     )
 
     if status_val in ("APPROVED", "DONE"):
@@ -1156,9 +1162,9 @@ def generate_quotation_pdf(quotation_id: int) -> bytes:
           <td>{_norm(l['description'])}</td>
           <td style="text-align:center;">{_norm(l['unit_of_measurement'])}</td>
           <td style="text-align:center;">{l['quantity']}</td>
-          <td style="text-align:right;">{Decimal(str(l['unit_price'])):.2f}</td>
+          <td style="text-align:right;">{fmt_money(l['unit_price'])}</td>
           <td style="text-align:center;">{Decimal(str(l['discount_pct'])):.2f}%</td>
-          <td style="text-align:right; font-weight:700;">{line_total:.2f}</td>
+          <td style="text-align:right; font-weight:700;">{fmt_money(line_total)}</td>
         </tr>"""
 
     quotation_date = header.get("quotation_date")
@@ -1207,11 +1213,11 @@ def generate_quotation_pdf(quotation_id: int) -> bytes:
   .bottomwrap td {{ vertical-align: top; }}
   .words {{ font-size: 7.4pt; color: #8a93a6; font-style: italic; width: 55%; }}
   .words .ar {{ margin-top: 1px; }}
-  .totalbox {{ width: 45%; background: #12213E; border-radius: 6px; padding: 8px 12px; }}
+  .totalbox {{ width: 100%; background: #12213E; border-radius: 6px; padding: 8px 12px; }}
   .totalbox table {{ width: 100%; }}
-  .totalbox td {{ padding: 2px 0; font-size: 8pt; color: #B9C4DE; }}
+  .totalbox td {{ padding: 2px 0; font-size: 8pt; color: #B9C4DE; white-space: nowrap; }}
   .totalbox .val {{ text-align: right; color: #fff; }}
-  .totalbox .grandrow td {{ border-top: 1px solid #35426b; padding-top: 5px; font-size: 10.5pt; font-weight: 800; color: #fff; }}
+  .totalbox .grandrow td {{ border-top: 1px solid #35426b; padding-top: 6px; font-size: 10.5pt; font-weight: 800; color: #fff; white-space: nowrap; }}
 
   .footwrap {{ margin-top: 10px; }}
   .footwrap td {{ vertical-align: top; width: 50%; padding-right: 12px; }}
@@ -1292,17 +1298,17 @@ def generate_quotation_pdf(quotation_id: int) -> bytes:
 
     <table class="bottomwrap">
       <tr>
-        <td class="words">
+        <td class="words" style="width:40%;">
           <div>Amount In Words: {amount_words_en}</div>
           <div class="ar">المبلغ بالكلمات: {amount_words_ar}</div>
         </td>
-        <td style="width:5%;"></td>
-        <td style="width:45%;">
+        <td style="width:3%;"></td>
+        <td style="width:57%;">
           <div class="totalbox">
             <table>
-              <tr><td>Subtotal</td><td class="val">{totals['subtotal']}</td></tr>
-              <tr><td>VAT ({vat_rate}%)</td><td class="val">{totals['vat_amount']}</td></tr>
-              <tr class="grandrow"><td>Grand Total</td><td class="val">{totals['grand_total']} SAR</td></tr>
+              <tr><td>Subtotal</td><td class="val">{fmt_money(totals['subtotal'])}</td></tr>
+              <tr><td>VAT ({vat_rate}%)</td><td class="val">{fmt_money(totals['vat_amount'])}</td></tr>
+              <tr class="grandrow"><td>Grand Total</td><td class="val">{fmt_money(totals['grand_total'])} SAR</td></tr>
             </table>
           </div>
         </td>

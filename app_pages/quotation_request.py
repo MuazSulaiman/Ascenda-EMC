@@ -16,7 +16,7 @@ from app_pages.admin_targets_db import (
 from app_pages.change_request_helpers import _norm
 from app_pages.quotation_helpers import (
     VALIDITY_OPTIONS, DELIVERY_OPTIONS, PAYMENT_TERMS_OPTIONS,
-    compute_line_total, compute_header_totals,
+    compute_line_total, compute_header_totals, fmt_money,
     submit_quotation, resubmit_quotation, withdraw_quotation,
     render_quotation_detail, render_revision_diff,
     render_quotation_list, render_print_button,
@@ -388,9 +388,22 @@ def _render_line_items_editor(ns: str):
 
     lines = []
     rows_valid = True
+    seen_products: dict = {}
+    duplicate_found = False
     for display_no, row_id in enumerate(row_ids, start=1):
         st.markdown(f"**Line {display_no}**")
         product_id = _render_product_picker_row(ns, row_id)
+
+        if product_id:
+            if product_id in seen_products:
+                duplicate_found = True
+                st.warning(
+                    f"⚠️ Same product as Line {seen_products[product_id]} — "
+                    f"remove or change one before submitting."
+                )
+            else:
+                seen_products[product_id] = display_no
+
         keys = _line_row_keys(ns, row_id)
 
         c1, c2, c3, c4 = st.columns(4)
@@ -414,7 +427,7 @@ def _render_line_items_editor(ns: str):
         with c4:
             if product_id and qty > 0:
                 line_total = compute_line_total(Decimal(str(qty)), Decimal(str(price)), Decimal(str(disc)))
-                st.metric("Line Total", f"{line_total}")
+                st.metric("Line Total", fmt_money(line_total))
             else:
                 st.metric("Line Total", "—")
 
@@ -441,7 +454,7 @@ def _render_line_items_editor(ns: str):
     else:
         st.caption(f"Maximum {MAX_LINES} lines reached.")
 
-    all_valid = rows_valid and len(lines) > 0
+    all_valid = rows_valid and len(lines) > 0 and not duplicate_found
     return lines, all_valid
 
 
@@ -454,9 +467,9 @@ def _clear_ns_state(ns: str) -> None:
 def _render_totals_preview(lines: list, vat_rate: Decimal) -> None:
     totals = compute_header_totals(lines, vat_rate) if lines else _ZERO_TOTALS
     st.markdown(
-        f"**Subtotal:** {totals['subtotal']} &nbsp;·&nbsp; "
-        f"**VAT:** {totals['vat_amount']} &nbsp;·&nbsp; "
-        f"**Grand Total:** {totals['grand_total']}"
+        f"**Subtotal:** {fmt_money(totals['subtotal'])} &nbsp;·&nbsp; "
+        f"**VAT:** {fmt_money(totals['vat_amount'])} &nbsp;·&nbsp; "
+        f"**Grand Total:** {fmt_money(totals['grand_total'])}"
     )
 
 
