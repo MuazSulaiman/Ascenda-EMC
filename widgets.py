@@ -329,11 +329,17 @@ def customer_cascading_selectors(
     qf_msg_type_key: str,
     # db table
     customers_table: str = "customers",
+    # allow the synthetic "Other" (unlisted customer) option
+    allow_other: bool = True,
 ):
     """
     Reusable Region/City/Sector/Customer cascading selectors.
     Respects the lock state set by Quick-Find.
     Returns resolved customer_id (locked uses KEY_CUSTID, otherwise resolves from selected customer name).
+
+    When allow_other is False, the synthetic "Other" option is never added to
+    any of the four dropdowns — used by flows where an unlisted customer must
+    already exist via the visit/check-in "Other" approval path instead.
     """
 
     def _clear_qf_msg():
@@ -387,10 +393,11 @@ def customer_cascading_selectors(
             st.session_state[KEY_CUST] = ""
         st.session_state.pop(KEY_CUSTID, None)
 
-    # Region options — always include "Other" so users can log unknown customers
+    # Region options — include "Other" so users can log unknown customers,
+    # unless the caller disallows it (allow_other=False)
     reg_raw = _fetch_cascade_regions(customers_table)
     region_opts = [""] + _order_with_other_last(reg_raw)
-    if not any(str(v).strip().lower() == "other" for v in reg_raw):
+    if allow_other and not any(str(v).strip().lower() == "other" for v in reg_raw):
         region_opts.append("Other")
 
     region_choice = st.selectbox(
@@ -411,7 +418,7 @@ def customer_cascading_selectors(
     elif region_choice:
         city_raw = _fetch_cascade_cities(customers_table, region_choice)
         city_opts = [""] + _order_with_other_last(city_raw)
-        if not any(str(v).strip().lower() == "other" for v in city_raw):
+        if allow_other and not any(str(v).strip().lower() == "other" for v in city_raw):
             city_opts.append("Other")
     else:
         city_opts = [""]
@@ -437,7 +444,7 @@ def customer_cascading_selectors(
     elif region_choice and city_choice:
         sec_raw = _fetch_cascade_sectors(customers_table, region_choice, city_choice)
         sector_opts = [""] + _order_with_other_last(sec_raw)
-        if not any(str(v).strip().lower() == "other" for v in sec_raw):
+        if allow_other and not any(str(v).strip().lower() == "other" for v in sec_raw):
             sector_opts.append("Other")
     else:
         sector_opts = [""]
@@ -460,13 +467,13 @@ def customer_cascading_selectors(
     # Customer options — locked to "Other" when any cascade level is "Other"
     cust_df = pd.DataFrame(columns=["customer_id", "account_name"])
     if cascade_other:
-        cust_names = ["Other"]
+        cust_names = ["Other"] if allow_other else [""]
     elif region_choice and city_choice and sector_choice:
         cust_df = _fetch_cascade_customers(customers_table, region_choice, city_choice, sector_choice)
         cust_names = (
             [""]
             + [n for n in cust_df["account_name"].tolist() if str(n).strip().lower() != "other"]
-            + ["Other"]
+            + (["Other"] if allow_other else [])
         )
     else:
         cust_names = [""]
