@@ -128,5 +128,13 @@ def _run_migrations() -> None:
         with engine.begin() as conn:
             conn.execute(text(_quotations_sql))
 
+    # Notifications — schema migration
+    _notifications_migration_path = os.path.join(os.path.dirname(__file__), "migrations", "notifications_schema.sql")
+    if os.path.exists(_notifications_migration_path):
+        with open(_notifications_migration_path, "r") as _f:
+            _notifications_sql = _f.read()
+        with engine.begin() as conn:
+            conn.execute(text(_notifications_sql))
+
 
 _run_migrations()
