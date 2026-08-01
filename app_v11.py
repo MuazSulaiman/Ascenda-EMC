@@ -35,6 +35,7 @@ from app_pages.analytics import page_analytics
 from app_pages.quotation_request import page_quotation_request
 from app_pages.quotation_review import page_quotation_review
 from app_pages.quotation_handoff import page_quotation_handoff
+from app_pages.notifications import page_notifications
 
 st.set_page_config(
     page_title=APP_TITLE,
@@ -388,6 +389,7 @@ else:
         "Quotations":               page_quotation_request,
         "Review Quotations":        page_quotation_review,
         "Quotation Handoff (Odoo)": page_quotation_handoff,
+        "Notifications":            page_notifications,
     }
 
     _NON_COORDINATOR_ROLES = ["admin", "rep", "sales manager", "biomedical manager", "maintenance", "supervisor"]

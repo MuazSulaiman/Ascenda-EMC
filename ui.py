@@ -410,6 +410,14 @@ def sidebar_nav():
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;
         }
 
+        /* ── Notification bell badge ─────────────────────────────────────────── */
+        .sidebar-bell-badge {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+            background: var(--status-danger-text); color: #ffffff !important;
+            font-size: 0.7rem; font-weight: 700; line-height: 1; flex-shrink: 0;
+        }
+
         /* ── Sign out button ─────────────────────────────────────────────────── */
         section[data-testid="stSidebar"] .stButton > button {
             background: transparent !important; border: none !important;
@@ -478,15 +486,12 @@ def sidebar_nav():
     if uid:
         if time.time() - st.session_state.get("_nav_counts_ts", 0) > 60:
             try:
-                from db_ops import query_df as _qdf
-                _r = _qdf("SELECT COUNT(*) AS cnt FROM visits WHERE user_id = :u", {"u": int(uid)})
-                st.session_state["_nav_mv_count"] = int(_r.iloc[0]["cnt"]) if not _r.empty else 0
-                if role == "admin":
-                    _cr = _qdf("SELECT COUNT(*) AS cnt FROM request_changes WHERE status = 'IN_REVIEW'")
-                    st.session_state["_nav_cr_pending"] = int(_cr.iloc[0]["cnt"]) if not _cr.empty else 0
+                from app_pages import notification_helpers as _notif
+                st.session_state["_nav_unread_count"] = _notif.get_unread_count(int(uid))
             except Exception:
                 pass
             st.session_state["_nav_counts_ts"] = time.time()
+    unread_count = st.session_state.get("_nav_unread_count", 0) if uid else 0
 
     # ── Build grouped page sections by role ──────────────────────────────────
     main_pages = ["Dashboard"]
@@ -543,8 +548,9 @@ def sidebar_nav():
         st.session_state.get("_goto_user_settings", False)
         or url_page == "User Settings"
     )
+    _on_notifications = (url_page == "Notifications")
 
-    if _on_settings:
+    if _on_settings or _on_notifications:
         current = prev_page if prev_page in all_pages else all_pages[0]
     elif url_page in all_pages:
         current = url_page
@@ -559,7 +565,8 @@ def sidebar_nav():
 
     # ── Update session / URL state ────────────────────────────────────────────
     _goto_settings = bool(st.session_state.pop("_goto_user_settings", False)) or _on_settings
-    if not _goto_settings:
+    _goto_special = _goto_settings or _on_notifications
+    if not _goto_special:
         st.session_state["_current_page"] = current
         if get_url_param("page") != current:
             set_url_param("page", current)
@@ -577,12 +584,32 @@ def sidebar_nav():
         nav_html += '<div class="nav-section-items">'
         for page in sec_pages:
             icon       = _ICONS.get(page, _ICON_DEFAULT)
-            is_active  = (page == current) and not _on_settings
+            is_active  = (page == current) and not _on_settings and not _on_notifications
             cls        = "nav-item active" if is_active else "nav-item"
             page_param = page.replace(" ", "+")
             href       = f"?page={page_param}&_sid={_nav_sid}" if _nav_sid else f"?page={page_param}"
             nav_html  += f'<a href="{href}" target="_self" class="{cls}">{icon}<span>{page}</span></a>'
         nav_html += '</div>'
+
+    # ── Notification bell (rendered as its own unlabeled nav row) ────────────
+    if user:
+        _bell_href = f"?page=Notifications&_sid={_nav_sid}" if _nav_sid else "?page=Notifications"
+        _bell_active = "nav-item active" if _on_notifications else "nav-item"
+        _bell_badge = (
+            f'<span class="sidebar-bell-badge">{unread_count if unread_count < 100 else "99+"}</span>'
+            if unread_count > 0 else ""
+        )
+        nav_html += (
+            f'<div class="nav-section-items" style="margin-top:2px;">'
+            f'<a href="{_bell_href}" target="_self" class="{_bell_active}">'
+            f'<svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>'
+            f'<path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>'
+            f'<span style="flex:1;">Notifications</span>'
+            f'{_bell_badge}'
+            f'</a>'
+            f'</div>'
+        )
+
     nav_html += '</nav>'
     st.sidebar.markdown(nav_html, unsafe_allow_html=True)
 
@@ -645,6 +672,9 @@ def sidebar_nav():
     if _goto_settings:
         st.session_state["_current_page"] = "User Settings"
         return "User Settings"
+    if _on_notifications:
+        st.session_state["_current_page"] = "Notifications"
+        return "Notifications"
     return current
 
 
