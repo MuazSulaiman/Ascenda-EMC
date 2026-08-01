@@ -99,6 +99,11 @@ def _delete_test_user(uid: int):
     users have no ON DELETE CASCADE — a plain `DELETE FROM users` would 23503
     if a `qids`-fixture cleanup hasn't already run (fixture teardown order
     between independent fixtures is not guaranteed). Safe no-op otherwise.
+
+    Also removes any notifications rows referencing this user (as recipient
+    or actor) — Task 3 wired the quotation transition functions to insert
+    notification rows via notify_users/notify_role, and notifications.
+    recipient_user_id/actor_user_id also have no ON DELETE CASCADE to users.
     """
     exec_sql(
         """
@@ -106,6 +111,10 @@ def _delete_test_user(uid: int):
         WHERE rep_user_id = :uid OR manager_user_id = :uid
            OR coordinator_user_id = :uid OR submitted_by = :uid OR withdrawn_by = :uid
         """,
+        {"uid": uid},
+    )
+    exec_sql(
+        "DELETE FROM notifications WHERE recipient_user_id = :uid OR actor_user_id = :uid",
         {"uid": uid},
     )
     exec_sql("DELETE FROM users WHERE user_id = :uid", {"uid": uid})
@@ -152,10 +161,21 @@ def qids():
     regardless of test outcome. quotation_lines / quotation_revisions /
     quotation_revision_lines / quotation_status_events all reference
     quotation_requests.quotation_id with ON DELETE CASCADE, so deleting the
-    header row cascades to every child row for that quotation."""
+    header row cascades to every child row for that quotation.
+
+    notifications has no FK to quotation_requests (it only carries
+    quotation_id inside the JSONB link_params column), so it isn't reached
+    by that cascade — Task 3's notify_users/notify_role calls leave rows
+    behind here that must be cleaned up explicitly, or they'd persist in
+    the live dev DB (and reference real, non-test rep/manager/admin users,
+    unlike the throwaway users _delete_test_user cleans up)."""
     ids: list[int] = []
     yield ids
     for qid in ids:
+        exec_sql(
+            "DELETE FROM notifications WHERE (link_params->>'quotation_id')::int = :qid",
+            {"qid": qid},
+        )
         exec_sql("DELETE FROM quotation_requests WHERE quotation_id = :qid", {"qid": qid})
 
 

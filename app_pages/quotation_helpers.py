@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from db import engine
 from db_ops import query_df, query_scalar, exec_sql
 from app_pages.change_request_helpers import _norm, _sql_val
+from app_pages.notification_helpers import notify_role, notify_users
 from ui import compare_row, status_badge, visit_card
 
 
@@ -286,6 +287,14 @@ def submit_quotation(header: dict, lines: list[dict], actor_uid: int) -> tuple[i
             {"qid": quotation_id, "actor_uid": actor_uid, "rid": revision_id},
         )
 
+        notify_role(
+            conn, ["sales manager", "admin"], exclude_user_id=actor_uid,
+            category="quotation", event_type="SUBMITTED",
+            title=f"New quotation {quotation_number} awaiting review",
+            link_page="Review Quotations", link_params={"quotation_id": quotation_id},
+            actor_user_id=actor_uid,
+        )
+
     return int(quotation_id), quotation_number
 
 
@@ -307,7 +316,7 @@ def resubmit_quotation(
                     SET version = version + 1, status = 'IN_REVIEW'
                     WHERE quotation_id = :qid AND status = 'EDIT_REQUESTED'
                       AND version = :expected_version AND rep_user_id = :actor_uid
-                    RETURNING version
+                    RETURNING version, quotation_number
                 """),
                 {"qid": quotation_id, "expected_version": expected_version, "actor_uid": actor_uid},
             )
@@ -315,6 +324,7 @@ def resubmit_quotation(
             if row is None:
                 raise ValueError("This quotation was already changed elsewhere. Refresh and try again.")
             new_version = row[0]
+            quotation_number = row[1]
 
             conn.execute(text("DELETE FROM quotation_lines WHERE quotation_id = :qid"), {"qid": quotation_id})
 
@@ -426,6 +436,14 @@ def resubmit_quotation(
                 """),
                 {"qid": quotation_id, "actor_uid": actor_uid, "rid": revision_id},
             )
+
+            notify_role(
+                conn, ["sales manager", "admin"], exclude_user_id=actor_uid,
+                category="quotation", event_type="RESUBMITTED",
+                title=f"Quotation {quotation_number} resubmitted for review",
+                link_page="Review Quotations", link_params={"quotation_id": quotation_id},
+                actor_user_id=actor_uid,
+            )
         return True, None
     except Exception as e:
         return False, str(e)
@@ -441,15 +459,17 @@ def manager_approve(quotation_id: int, manager_uid: int) -> tuple[bool, str | No
                     UPDATE quotation_requests
                     SET status = 'APPROVED', manager_user_id = :actor_uid, manager_decided_at = NOW()
                     WHERE quotation_id = :qid AND status = 'IN_REVIEW' {self_review_clause}
-                    RETURNING quotation_id
+                    RETURNING quotation_id, rep_user_id, quotation_number
                 """),
                 {"qid": quotation_id, "actor_uid": manager_uid},
             )
-            if result.fetchone() is None:
+            row = result.fetchone()
+            if row is None:
                 raise ValueError(
                     "This quotation was already resolved elsewhere, or you cannot review your "
                     "own submission. Refresh and try again."
                 )
+            rep_user_id, quotation_number = row[1], row[2]
             conn.execute(
                 text("""
                     INSERT INTO quotation_status_events
@@ -457,6 +477,19 @@ def manager_approve(quotation_id: int, manager_uid: int) -> tuple[bool, str | No
                     VALUES (:qid, 'APPROVED', :actor_uid, 'IN_REVIEW', 'APPROVED', NULL)
                 """),
                 {"qid": quotation_id, "actor_uid": manager_uid},
+            )
+
+            notify_users(
+                conn, [rep_user_id], category="quotation", event_type="APPROVED",
+                title=f"Your quotation {quotation_number} was approved",
+                link_page="Quotations", link_params={"quotation_id": quotation_id},
+                actor_user_id=manager_uid,
+            )
+            notify_role(
+                conn, ["sales coordinator", "admin"], category="quotation", event_type="APPROVED",
+                title=f"Quotation {quotation_number} approved, ready for handoff",
+                link_page="Quotation Handoff (Odoo)", link_params={"quotation_id": quotation_id},
+                actor_user_id=manager_uid,
             )
         return True, None
     except Exception as e:
@@ -476,15 +509,17 @@ def manager_reject(quotation_id: int, manager_uid: int, reason: str) -> tuple[bo
                     SET status = 'REJECTED', manager_user_id = :actor_uid, manager_decided_at = NOW(),
                         manager_comment = :comment
                     WHERE quotation_id = :qid AND status = 'IN_REVIEW' {self_review_clause}
-                    RETURNING quotation_id
+                    RETURNING quotation_id, rep_user_id, quotation_number
                 """),
                 {"qid": quotation_id, "actor_uid": manager_uid, "comment": reason.strip()},
             )
-            if result.fetchone() is None:
+            row = result.fetchone()
+            if row is None:
                 raise ValueError(
                     "This quotation was already resolved elsewhere, or you cannot review your "
                     "own submission. Refresh and try again."
                 )
+            rep_user_id, quotation_number = row[1], row[2]
             conn.execute(
                 text("""
                     INSERT INTO quotation_status_events
@@ -492,6 +527,13 @@ def manager_reject(quotation_id: int, manager_uid: int, reason: str) -> tuple[bo
                     VALUES (:qid, 'REJECTED', :actor_uid, 'IN_REVIEW', 'REJECTED', :comment, NULL)
                 """),
                 {"qid": quotation_id, "actor_uid": manager_uid, "comment": reason.strip()},
+            )
+
+            notify_users(
+                conn, [rep_user_id], category="quotation", event_type="REJECTED",
+                title=f"Your quotation {quotation_number} was rejected",
+                link_page="Quotations", link_params={"quotation_id": quotation_id},
+                actor_user_id=manager_uid,
             )
         return True, None
     except Exception as e:
@@ -511,15 +553,17 @@ def manager_request_edit(quotation_id: int, manager_uid: int, comment: str) -> t
                     SET status = 'EDIT_REQUESTED', manager_user_id = :actor_uid, manager_decided_at = NOW(),
                         manager_comment = :comment
                     WHERE quotation_id = :qid AND status = 'IN_REVIEW' {self_review_clause}
-                    RETURNING quotation_id
+                    RETURNING quotation_id, rep_user_id, quotation_number
                 """),
                 {"qid": quotation_id, "actor_uid": manager_uid, "comment": comment.strip()},
             )
-            if result.fetchone() is None:
+            row = result.fetchone()
+            if row is None:
                 raise ValueError(
                     "This quotation was already resolved elsewhere, or you cannot review your "
                     "own submission. Refresh and try again."
                 )
+            rep_user_id, quotation_number = row[1], row[2]
             conn.execute(
                 text("""
                     INSERT INTO quotation_status_events
@@ -527,6 +571,13 @@ def manager_request_edit(quotation_id: int, manager_uid: int, comment: str) -> t
                     VALUES (:qid, 'EDIT_REQUESTED', :actor_uid, 'IN_REVIEW', 'EDIT_REQUESTED', :comment, NULL)
                 """),
                 {"qid": quotation_id, "actor_uid": manager_uid, "comment": comment.strip()},
+            )
+
+            notify_users(
+                conn, [rep_user_id], category="quotation", event_type="EDIT_REQUESTED",
+                title=f"Edit requested on your quotation {quotation_number}",
+                link_page="Quotations", link_params={"quotation_id": quotation_id},
+                actor_user_id=manager_uid,
             )
         return True, None
     except Exception as e:
@@ -546,15 +597,17 @@ def manager_return_for_revision(quotation_id: int, manager_uid: int, reason: str
                     SET status = 'EDIT_REQUESTED', manager_user_id = :actor_uid, manager_decided_at = NOW(),
                         manager_comment = :comment
                     WHERE quotation_id = :qid AND status = 'APPROVED' {self_review_clause}
-                    RETURNING quotation_id
+                    RETURNING quotation_id, rep_user_id, quotation_number
                 """),
                 {"qid": quotation_id, "actor_uid": manager_uid, "comment": reason.strip()},
             )
-            if result.fetchone() is None:
+            row = result.fetchone()
+            if row is None:
                 raise ValueError(
                     "This quotation was already resolved elsewhere, or you cannot review your "
                     "own submission. Refresh and try again."
                 )
+            rep_user_id, quotation_number = row[1], row[2]
             conn.execute(
                 text("""
                     INSERT INTO quotation_status_events
@@ -562,6 +615,13 @@ def manager_return_for_revision(quotation_id: int, manager_uid: int, reason: str
                     VALUES (:qid, 'RETURNED_FOR_REVISION', :actor_uid, 'APPROVED', 'EDIT_REQUESTED', :comment, NULL)
                 """),
                 {"qid": quotation_id, "actor_uid": manager_uid, "comment": reason.strip()},
+            )
+
+            notify_users(
+                conn, [rep_user_id], category="quotation", event_type="RETURNED_FOR_REVISION",
+                title=f"Your quotation {quotation_number} was returned for revision",
+                link_page="Quotations", link_params={"quotation_id": quotation_id},
+                actor_user_id=manager_uid,
             )
         return True, None
     except Exception as e:
@@ -644,12 +704,14 @@ def coordinator_mark_done(
                     SET status = 'DONE', coordinator_user_id = :actor_uid, coordinator_done_at = NOW(),
                         coordinator_note = :note, odoo_reference = :ref
                     WHERE quotation_id = :qid AND status = 'APPROVED'
-                    RETURNING quotation_id
+                    RETURNING quotation_id, rep_user_id, manager_user_id, quotation_number
                 """),
                 {"qid": quotation_id, "actor_uid": coordinator_uid, "note": note_val, "ref": ref},
             )
-            if result.fetchone() is None:
+            row = result.fetchone()
+            if row is None:
                 raise ValueError("This quotation was already resolved elsewhere. Refresh and try again.")
+            rep_user_id, manager_user_id, quotation_number = row[1], row[2], row[3]
             conn.execute(
                 text("""
                     INSERT INTO quotation_status_events
@@ -657,6 +719,19 @@ def coordinator_mark_done(
                     VALUES (:qid, 'MARKED_DONE', :actor_uid, 'APPROVED', 'DONE', :note, NULL)
                 """),
                 {"qid": quotation_id, "actor_uid": coordinator_uid, "note": note_val},
+            )
+
+            notify_users(
+                conn, [rep_user_id], category="quotation", event_type="MARKED_DONE",
+                title=f"Quotation {quotation_number} marked Done",
+                link_page="Quotations", link_params={"quotation_id": quotation_id},
+                actor_user_id=coordinator_uid,
+            )
+            notify_users(
+                conn, [manager_user_id], category="quotation", event_type="MARKED_DONE",
+                title=f"Quotation {quotation_number} marked Done",
+                link_page="Review Quotations", link_params={"quotation_id": quotation_id},
+                actor_user_id=coordinator_uid,
             )
         return True, None
     except IntegrityError:
