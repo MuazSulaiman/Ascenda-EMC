@@ -13,9 +13,12 @@ import streamlit as st
 
 from ui import section_header, status_badge
 from db_ops import query_df
-from app_pages.notification_helpers import list_notifications, mark_read, mark_all_read
+from app_pages.notification_helpers import (
+    list_notifications, mark_read, mark_all_read, count_notifications,
+)
 
 PAGE_NS = "notifications"
+PAGE_SIZE = 15
 
 
 def _load_notification(notification_id: int, uid: int) -> dict | None:
@@ -100,7 +103,8 @@ def page_notifications():
             mark_all_read(uid)
             st.rerun()
 
-    df = list_notifications(uid)
+    st.session_state.setdefault("_notif_loaded", PAGE_SIZE)
+    df = list_notifications(uid, limit=st.session_state["_notif_loaded"], offset=0)
     if df.empty:
         st.info("You have no notifications yet.")
         return
@@ -146,3 +150,14 @@ def page_notifications():
             f'</a>',
             unsafe_allow_html=True,
         )
+
+    # ── Load more ──────────────────────────────────────────────────────────────
+    total = count_notifications(uid)
+    loaded = st.session_state["_notif_loaded"]
+    if loaded < total:
+        remaining = min(PAGE_SIZE, total - loaded)
+        if st.button(f"Load {remaining} more", key=f"{PAGE_NS}_load_more"):
+            st.session_state["_notif_loaded"] += PAGE_SIZE
+            st.rerun()
+    else:
+        st.caption("You're all caught up")

@@ -104,7 +104,8 @@ def get_unread_count(uid: int) -> int:
     return int(count or 0)
 
 
-def list_notifications(uid: int, *, unread_only: bool = False, limit: int = 50) -> pd.DataFrame:
+def list_notifications(uid: int, *, unread_only: bool = False, limit: int = 50,
+                        offset: int = 0) -> pd.DataFrame:
     """Returns a DataFrame of the user's notifications, newest first
     (ORDER BY created_at DESC), each row carrying notification_id, category,
     event_type, title, body, link_page, link_params, is_read, created_at."""
@@ -124,9 +125,24 @@ def list_notifications(uid: int, *, unread_only: bool = False, limit: int = 50) 
             WHERE recipient_user_id = :uid {unread_clause}
             ORDER BY created_at DESC
             LIMIT :limit
+            OFFSET :offset
         """,
-        {"uid": uid, "limit": limit},
+        {"uid": uid, "limit": limit, "offset": offset},
     )
+
+
+def count_notifications(uid: int, *, unread_only: bool = False) -> int:
+    """Total row count for pagination — mirrors list_notifications's
+    unread_clause construction so both stay in sync. Returns 0 if uid is
+    None or on no rows."""
+    if uid is None:
+        return 0
+    unread_clause = "AND is_read = FALSE" if unread_only else ""
+    count = query_scalar(
+        f"SELECT COUNT(*) FROM notifications WHERE recipient_user_id = :uid {unread_clause}",
+        {"uid": uid},
+    )
+    return int(count or 0)
 
 
 def mark_read(notification_id: int, uid: int) -> None:
