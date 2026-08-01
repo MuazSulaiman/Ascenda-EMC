@@ -55,6 +55,17 @@ st.markdown("""
             background: none;
             height: 0;
         }
+        /* stHeader's height:0 only collapses the header's own box -- its
+           toolbar children (Deploy/rerun/menu icons) are positioned
+           independently and keep rendering + intercepting clicks in the
+           top-right corner, on top of the floating notification bell. */
+        [data-testid="stToolbar"],
+        [data-testid="stStatusWidget"],
+        [data-testid="stDecoration"] {
+            visibility: hidden !important;
+            pointer-events: none !important;
+            height: 0 !important;
+        }
         [data-testid="collapsedControl"] {
             visibility: visible !important;
             display: block !important;
@@ -176,7 +187,7 @@ st.markdown("""
     width: 44px; height: 44px; border-radius: 50%;
     background: #2667ff; display: flex; align-items: center; justify-content: center;
     box-shadow: 0 4px 16px rgba(38,103,255,0.35);
-    cursor: pointer; z-index: 999; transition: background 0.15s ease, box-shadow 0.15s ease;
+    cursor: pointer; z-index: 1000000; transition: background 0.15s ease, box-shadow 0.15s ease;
     text-decoration: none !important;
 }
 .notification-bell:hover { background: #1a50d4; box-shadow: 0 6px 20px rgba(38,103,255,0.45); }
