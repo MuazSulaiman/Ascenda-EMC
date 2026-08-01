@@ -297,7 +297,7 @@ def _insert_request_and_details(visit_id: int, requested_by: int, note: str, det
                 category="change_request", event_type="CR_SUBMITTED",
                 title=f"New change request submitted for visit #{visit_id}",
                 body=note,
-                link_page="Review Change Requests", link_params={"visit_id": visit_id},
+                link_page="Review Change Requests", link_params={"preselect": request_id},
                 actor_user_id=requested_by,
             )
     except IntegrityError:

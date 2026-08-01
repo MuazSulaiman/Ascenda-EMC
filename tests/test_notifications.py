@@ -203,6 +203,19 @@ def temp_visit(rep_user_id, any_objective_id, any_customer_id):
     exec_sql(
         "DELETE FROM notifications WHERE (link_params->>'visit_id')::int = :vid", {"vid": visit_id}
     )
+    # CR_SUBMITTED notifications (Task 4, fixed to deep-link admins by request_id)
+    # carry link_params={"preselect": request_id}, not visit_id, so they aren't
+    # caught by the visit_id-keyed DELETE above — clean them up via the
+    # request_changes rows for this visit before those rows are removed.
+    exec_sql(
+        """
+        DELETE FROM notifications
+        WHERE (link_params->>'preselect')::int IN (
+            SELECT request_id FROM request_changes WHERE visit_id = :vid
+        )
+        """,
+        {"vid": visit_id},
+    )
     exec_sql("DELETE FROM request_changes WHERE visit_id = :vid", {"vid": visit_id})
     exec_sql("DELETE FROM visits WHERE visit_id = :vid", {"vid": visit_id})
 
@@ -295,6 +308,22 @@ def _cr_recipients(visit_id: int, event_type: str) -> set[int]:
               AND (link_params->>'visit_id')::int = :vid
         """,
         {"et": event_type, "vid": visit_id},
+    )
+    return set(int(x) for x in df["recipient_user_id"])
+
+
+def _cr_recipients_by_request(request_id: int, event_type: str) -> set[int]:
+    """Like _cr_recipients, but for CR_SUBMITTED notifications, which link to
+    "Review Change Requests" via link_params={"preselect": request_id} (an
+    admin-facing deep link keyed by request_id, not visit_id — see
+    app_pages/change_request.py::_insert_request_and_details)."""
+    df = query_df(
+        """
+            SELECT recipient_user_id FROM notifications
+            WHERE category = 'change_request' AND event_type = :et
+              AND (link_params->>'preselect')::int = :rid
+        """,
+        {"et": event_type, "rid": request_id},
     )
     return set(int(x) for x in df["recipient_user_id"])
 
@@ -417,7 +446,7 @@ def test_change_request_submission_notifies_admins_excludes_submitter(
     )
     assert request_id is not None
 
-    recipients = _cr_recipients(temp_visit, "CR_SUBMITTED")
+    recipients = _cr_recipients_by_request(request_id, "CR_SUBMITTED")
     assert recipients == expected
     assert rep_user_id not in recipients
 
