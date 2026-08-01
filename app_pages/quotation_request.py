@@ -25,7 +25,6 @@ from app_pages.quotation_helpers import (
 
 
 PAGE_NS = "quotation_request"
-MAX_LINES = 14
 ALLOWED_ROLES = ("rep", "sales manager", "biomedical manager", "admin")
 
 _STATUS_LABELS = {
@@ -261,10 +260,10 @@ def _prefill_line_rows(ns: str, lines: list) -> None:
     then seeds each row's widget-backed session-state keys by that row's own
     ID — never by position, so there is nothing to shift later.
     """
-    row_ids = [_new_row_id() for _ in range(max(1, min(MAX_LINES, len(lines))) if lines else 1)]
+    row_ids = [_new_row_id() for _ in range(len(lines) if lines else 1)]
     st.session_state[_line_row_ids_key(ns)] = row_ids
 
-    for row_id, line in zip(row_ids, lines[:MAX_LINES]):
+    for row_id, line in zip(row_ids, lines):
         keys = _line_row_keys(ns, row_id)
         product_id = line.get("product_id")
         infer = _infer_bu_cat_bl_for_product(product_id) if product_id else None
@@ -447,12 +446,9 @@ def _render_line_items_editor(ns: str):
                 st.rerun()
         st.markdown("---")
 
-    if len(row_ids) < MAX_LINES:
-        if st.button("+ Add Line", key=f"{ns}_add_line"):
-            st.session_state[ids_key] = row_ids + [_new_row_id()]
-            st.rerun()
-    else:
-        st.caption(f"Maximum {MAX_LINES} lines reached.")
+    if st.button("+ Add Line", key=f"{ns}_add_line"):
+        st.session_state[ids_key] = row_ids + [_new_row_id()]
+        st.rerun()
 
     all_valid = rows_valid and len(lines) > 0 and not duplicate_found
     return lines, all_valid
