@@ -10,6 +10,7 @@ from ui import (
     capture_client_fingerprints,
     circular_fab,
     login_block,
+    notification_bell,
     show_footer,
     sidebar_nav,
 )
@@ -168,6 +169,25 @@ st.markdown("""
     text-decoration: none !important;
 }
 .ascenda-fab:hover { background: #1a50d4; box-shadow: 0 6px 20px rgba(38,103,255,0.45); }
+
+/* ── Floating notification bell (top-right, persistent across pages) ── */
+.notification-bell {
+    position: fixed; top: 20px; right: 20px;
+    width: 44px; height: 44px; border-radius: 50%;
+    background: #2667ff; display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(38,103,255,0.35);
+    cursor: pointer; z-index: 999; transition: background 0.15s ease, box-shadow 0.15s ease;
+    text-decoration: none !important;
+}
+.notification-bell:hover { background: #1a50d4; box-shadow: 0 6px 20px rgba(38,103,255,0.45); }
+.notification-bell-badge {
+    position: absolute; top: -4px; right: -4px;
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+    background: var(--status-danger-text); color: #ffffff !important;
+    font-size: 0.7rem; font-weight: 700; line-height: 1; flex-shrink: 0;
+    box-shadow: 0 0 0 2px var(--color-bg);
+}
 
 /* ── Radio groups as pills in main content (filter tabs, mode selectors) ── */
 [data-testid="stAppViewContainer"] div[role="radiogroup"] {
@@ -427,4 +447,5 @@ else:
         st.warning(f"Unknown page: {page}")
 
     circular_fab()
+    notification_bell()
     show_footer()

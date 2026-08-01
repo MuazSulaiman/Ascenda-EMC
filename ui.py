@@ -410,14 +410,6 @@ def sidebar_nav():
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;
         }
 
-        /* ── Notification bell badge ─────────────────────────────────────────── */
-        .sidebar-bell-badge {
-            display: inline-flex; align-items: center; justify-content: center;
-            min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
-            background: var(--status-danger-text); color: #ffffff !important;
-            font-size: 0.7rem; font-weight: 700; line-height: 1; flex-shrink: 0;
-        }
-
         /* ── Sign out button ─────────────────────────────────────────────────── */
         section[data-testid="stSidebar"] .stButton > button {
             background: transparent !important; border: none !important;
@@ -480,18 +472,6 @@ def sidebar_nav():
     # ── User & role ───────────────────────────────────────────────────────────
     user = st.session_state.get("user")
     role = (user.get("role") if user else "").lower().strip()
-
-    # ── Badge counts (cached 60 s) ────────────────────────────────────────────
-    uid = (user.get("user_id") or user.get("id")) if user else None
-    if uid:
-        if time.time() - st.session_state.get("_nav_counts_ts", 0) > 60:
-            try:
-                from app_pages import notification_helpers as _notif
-                st.session_state["_nav_unread_count"] = _notif.get_unread_count(int(uid))
-            except Exception:
-                pass
-            st.session_state["_nav_counts_ts"] = time.time()
-    unread_count = st.session_state.get("_nav_unread_count", 0) if uid else 0
 
     # ── Build grouped page sections by role ──────────────────────────────────
     main_pages = ["Dashboard"]
@@ -590,25 +570,6 @@ def sidebar_nav():
             href       = f"?page={page_param}&_sid={_nav_sid}" if _nav_sid else f"?page={page_param}"
             nav_html  += f'<a href="{href}" target="_self" class="{cls}">{icon}<span>{page}</span></a>'
         nav_html += '</div>'
-
-    # ── Notification bell (rendered as its own unlabeled nav row) ────────────
-    if user:
-        _bell_href = f"?page=Notifications&_sid={_nav_sid}" if _nav_sid else "?page=Notifications"
-        _bell_active = "nav-item active" if _on_notifications else "nav-item"
-        _bell_badge = (
-            f'<span class="sidebar-bell-badge">{unread_count if unread_count < 100 else "99+"}</span>'
-            if unread_count > 0 else ""
-        )
-        nav_html += (
-            f'<div class="nav-section-items" style="margin-top:2px;">'
-            f'<a href="{_bell_href}" target="_self" class="{_bell_active}">'
-            f'<svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>'
-            f'<path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>'
-            f'<span style="flex:1;">Notifications</span>'
-            f'{_bell_badge}'
-            f'</a>'
-            f'</div>'
-        )
 
     nav_html += '</nav>'
     st.sidebar.markdown(nav_html, unsafe_allow_html=True)
@@ -1202,6 +1163,45 @@ def circular_fab() -> None:
             <line x1="12" y1="5" x2="12" y2="19"/>
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def notification_bell() -> None:
+    """Render the fixed floating notification bell (top-right) — navigates to Notifications."""
+    user = st.session_state.get("user")
+    if not user:
+        return
+
+    uid = user.get("user_id") or user.get("id")
+    unread_count = 0
+    if uid:
+        if time.time() - st.session_state.get("_bell_unread_ts", 0) > 60:
+            try:
+                from app_pages import notification_helpers as _notif
+                st.session_state["_bell_unread_count"] = _notif.get_unread_count(int(uid))
+            except Exception:
+                pass
+            st.session_state["_bell_unread_ts"] = time.time()
+        unread_count = st.session_state.get("_bell_unread_count", 0)
+
+    _sid = st.session_state.get("_stored_sid", "")
+    href = f"?page=Notifications&_sid={_sid}" if _sid else "?page=Notifications"
+    _badge = (
+        f'<span class="notification-bell-badge">{unread_count if unread_count < 100 else "99+"}</span>'
+        if unread_count > 0 else ""
+    )
+    st.markdown(
+        f"""
+        <a href="{href}" target="_self" class="notification-bell" aria-label="Notifications">
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          {_badge}
         </a>
         """,
         unsafe_allow_html=True,
