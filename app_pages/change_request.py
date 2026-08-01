@@ -29,6 +29,7 @@ from app_pages.change_request_helpers import (
     _product_label_for_id, _objective_name_for_id_safe,
     _load_other_dept_options, _load_other_position_options,
 )
+from app_pages.notification_helpers import notify_role
 
 PAGE_NS = "change_request"
 TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
@@ -290,6 +291,15 @@ def _insert_request_and_details(visit_id: int, requested_by: int, note: str, det
                         "new_value": d.get("new_value"),
                     },
                 )
+
+            notify_role(
+                conn, ["admin"], exclude_user_id=requested_by,
+                category="change_request", event_type="CR_SUBMITTED",
+                title=f"New change request submitted for visit #{visit_id}",
+                body=note,
+                link_page="Review Change Requests", link_params={"visit_id": visit_id},
+                actor_user_id=requested_by,
+            )
     except IntegrityError:
         raise ValueError("A change request for this visit is already under review.")
 

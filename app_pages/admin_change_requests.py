@@ -21,6 +21,7 @@ from app_pages.change_request_helpers import (
     _fmt_field_label, _resolve_field_display_value,
     _load_other_dept_options, _load_other_position_options,
 )
+from app_pages.notification_helpers import notify_users
 
 _TITLE_OPTIONS = ["", "Dr.", "Mr.", "Ms.", "Mrs.", "Prof.", "Eng.", "Other"]
 
@@ -115,12 +116,22 @@ def _apply_changes(request_id: int, visit_id: int, admin_uid: int):
                     SET status = 'APPROVED', applied_at = NOW(), resolve_date = NOW(),
                         changed_by = :admin_uid, apply_error = NULL
                     WHERE request_id = :rid AND status = 'IN_REVIEW'
+                    RETURNING requested_by
                     """
                 ),
                 {"admin_uid": admin_uid, "rid": request_id},
             )
-            if resolved.rowcount == 0:
+            resolved_row = resolved.fetchone()
+            if resolved_row is None:
                 raise ValueError("This request was already resolved by another admin. Refresh and try again.")
+            requested_by = resolved_row[0]
+
+            notify_users(
+                conn, [requested_by], category="change_request", event_type="CR_APPROVED",
+                title="Your change request was approved",
+                link_page="My Change Requests", link_params={"visit_id": visit_id},
+                actor_user_id=admin_uid,
+            )
         return True, None
     except Exception as e:
         # Record error in a separate connection (main transaction rolled back)
@@ -149,11 +160,21 @@ def _reject_request(request_id: int, admin_uid: int, note: str) -> bool:
                     resolve_date = NOW(),
                     changed_by = :admin_uid
                 WHERE request_id = :rid AND status = 'IN_REVIEW'
+                RETURNING requested_by, visit_id
                 """
             ),
             {"note": note, "admin_uid": admin_uid, "rid": request_id},
         )
-    return result.rowcount > 0
+        row = result.fetchone()
+        if row is not None:
+            requested_by, visit_id = row[0], row[1]
+            notify_users(
+                conn, [requested_by], category="change_request", event_type="CR_REJECTED",
+                title="Your change request was rejected", body=note,
+                link_page="My Change Requests", link_params={"visit_id": visit_id},
+                actor_user_id=admin_uid,
+            )
+    return row is not None
 
 
 def _load_pending() -> pd.DataFrame:
