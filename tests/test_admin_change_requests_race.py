@@ -59,6 +59,15 @@ def temp_visit(rep_user_id, any_objective_id, any_customer_id):
             {"uid": rep_user_id, "cid": any_customer_id, "oid": any_objective_id, "marker": TEST_MARKER},
         ).scalar_one()
     yield int(visit_id)
+    # _apply_changes/_reject_request notify the real rep_user_id with
+    # link_params={"visit_id": ...} — notifications has no FK to visits, so
+    # these rows survive this fixture's own DELETE FROM visits unless removed
+    # explicitly, and would otherwise sit forever in a real staff member's
+    # notification list referencing a visit that no longer exists.
+    exec_sql(
+        "DELETE FROM notifications WHERE category = 'change_request' AND (link_params->>'visit_id')::int = :vid",
+        {"vid": visit_id},
+    )
     exec_sql("DELETE FROM visits WHERE visit_id = :vid", {"vid": visit_id})
 
 
@@ -86,6 +95,10 @@ def temp_request(temp_visit, rep_user_id):
             {"rid": request_id, "old": TEST_MARKER},
         )
     yield int(request_id), temp_visit
+    exec_sql(
+        "DELETE FROM notifications WHERE category = 'change_request' AND (link_params->>'preselect')::int = :rid",
+        {"rid": request_id},
+    )
     exec_sql("DELETE FROM request_changes WHERE request_id = :rid", {"rid": request_id})
 
 
