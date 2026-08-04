@@ -278,7 +278,13 @@ st.markdown("""
     background: #ffffff !important; border-color: #2667ff !important;
     box-shadow: 0 0 0 3px rgba(38,103,255,0.12) !important; outline: none !important;
 }
-/* Override base-web input container borders (the outer wrapper that shows red/blue rings) */
+/* Override base-web input container borders (the outer wrapper that shows red/blue rings).
+   Newer Streamlit releases added a further outer wrapper (stTextInputRootElement /
+   stNumberInputContainer) that carries its own default border independently of the
+   base-web divs below -- without stripping it too, that border shows alongside the
+   app's own border on the actual <input>, as two slightly offset rounded rectangles. */
+[data-testid="stTextInputRootElement"],
+[data-testid="stNumberInputContainer"],
 [data-testid="stTextInput"] [data-baseweb="input"],
 [data-testid="stTextInput"] [data-baseweb="base-input"],
 [data-testid="stTextArea"] [data-baseweb="textarea"],
@@ -287,6 +293,8 @@ st.markdown("""
     border: none !important; outline: none !important;
     box-shadow: none !important; background: transparent !important;
 }
+[data-testid="stTextInputRootElement"]:focus-within,
+[data-testid="stNumberInputContainer"]:focus-within,
 [data-testid="stTextInput"] [data-baseweb="input"]:focus-within,
 [data-testid="stTextInput"] [data-baseweb="base-input"]:focus-within,
 [data-testid="stTextArea"] [data-baseweb="textarea"]:focus-within,
