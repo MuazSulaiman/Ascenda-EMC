@@ -492,13 +492,13 @@ def _render_new_quotation_tab(u):
             "VAT Rate (%) *", min_value=0.0, max_value=100.0, value=0.0, step=0.5,
             format="%.2f", key=f"{ns}_vat_rate",
         )
+        customer_reference = st.text_input("Customer Reference No. (optional)", key=f"{ns}_customer_ref")
     with c2:
         validity_choice = st.selectbox(
             "Validity (days) *", [""] + [str(v) for v in VALIDITY_OPTIONS], key=f"{ns}_validity",
         )
         delivery_terms = st.selectbox("Delivery Terms *", [""] + DELIVERY_OPTIONS, key=f"{ns}_delivery")
         payment_terms = st.selectbox("Payment Terms *", [""] + PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
-    customer_reference = st.text_input("Customer Reference No. (optional)", key=f"{ns}_customer_ref")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     st.markdown(form_section(3, "Line Items"), unsafe_allow_html=True)
@@ -667,13 +667,13 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
         vat_rate = st.number_input(
             "VAT Rate (%) *", min_value=0.0, max_value=100.0, step=0.5, format="%.2f", key=f"{ns}_vat_rate",
         )
+        customer_reference = st.text_input("Customer Reference No. (optional)", key=f"{ns}_customer_ref")
     with c2:
         validity_choice = st.selectbox(
             "Validity (days) *", [""] + [str(v) for v in VALIDITY_OPTIONS], key=f"{ns}_validity",
         )
         delivery_terms = st.selectbox("Delivery Terms *", [""] + DELIVERY_OPTIONS, key=f"{ns}_delivery")
         payment_terms = st.selectbox("Payment Terms *", [""] + PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
-    customer_reference = st.text_input("Customer Reference No. (optional)", key=f"{ns}_customer_ref")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     lines, lines_valid = _render_line_items_editor(ns)
