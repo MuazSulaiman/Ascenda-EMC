@@ -498,6 +498,7 @@ def _render_new_quotation_tab(u):
         )
         delivery_terms = st.selectbox("Delivery Terms *", [""] + DELIVERY_OPTIONS, key=f"{ns}_delivery")
         payment_terms = st.selectbox("Payment Terms *", [""] + PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
+    customer_reference = st.text_input("Customer Reference No. (optional)", key=f"{ns}_customer_ref")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     st.markdown(form_section(3, "Line Items"), unsafe_allow_html=True)
@@ -520,6 +521,7 @@ def _render_new_quotation_tab(u):
             "quotation_date": quotation_date,
             "vat_rate": vat_rate_dec,
             "remarks": remarks,
+            "customer_reference": customer_reference,
             "validity_days": int(validity_choice),
             "delivery_terms": delivery_terms,
             "payment_terms": payment_terms,
@@ -623,6 +625,7 @@ def _prefill_resubmit_form(ns: str, qid: int, header: dict) -> None:
     except (TypeError, ValueError):
         st.session_state[f"{ns}_vat_rate"] = 0.0
     st.session_state[f"{ns}_remarks"] = _norm(latest.get("remarks"))
+    st.session_state[f"{ns}_customer_ref"] = _norm(latest.get("customer_reference"))
 
     validity = latest.get("validity_days")
     validity_norm = _norm(validity)
@@ -670,6 +673,7 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
         )
         delivery_terms = st.selectbox("Delivery Terms *", [""] + DELIVERY_OPTIONS, key=f"{ns}_delivery")
         payment_terms = st.selectbox("Payment Terms *", [""] + PAYMENT_TERMS_OPTIONS, key=f"{ns}_payment")
+    customer_reference = st.text_input("Customer Reference No. (optional)", key=f"{ns}_customer_ref")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     lines, lines_valid = _render_line_items_editor(ns)
@@ -690,6 +694,7 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
                 "quotation_date": quotation_date,
                 "vat_rate": vat_rate_dec,
                 "remarks": remarks,
+                "customer_reference": customer_reference,
                 "validity_days": int(validity_choice),
                 "delivery_terms": delivery_terms,
                 "payment_terms": payment_terms,

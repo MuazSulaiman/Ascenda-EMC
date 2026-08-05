@@ -457,6 +457,7 @@ CREATE TABLE IF NOT EXISTS quotation_requests (
     vat_rate          NUMERIC(5,2) NOT NULL DEFAULT 0 CHECK (vat_rate BETWEEN 0 AND 100),
 
     remarks           TEXT,
+    customer_reference TEXT,
     validity_days     INTEGER CHECK (validity_days IN (30, 60, 90, 180, 365)) NOT NULL,
     delivery_terms    TEXT CHECK (delivery_terms IN (
                            'Immediate', '15 Days', '30 Days', '45 Days',
@@ -516,6 +517,7 @@ CREATE TABLE IF NOT EXISTS quotation_revisions (
     quotation_date  DATE NOT NULL,
     vat_rate        NUMERIC(5,2) NOT NULL,
     remarks         TEXT,
+    customer_reference TEXT,
     validity_days   INTEGER NOT NULL,
     delivery_terms  TEXT NOT NULL,
     payment_terms   TEXT NOT NULL,

@@ -182,11 +182,11 @@ def submit_quotation(header: dict, lines: list[dict], actor_uid: int) -> tuple[i
             text("""
                 INSERT INTO quotation_requests
                     (quotation_number, customer_id, rep_user_id, quotation_date,
-                     vat_rate, remarks, validity_days, delivery_terms, payment_terms,
+                     vat_rate, remarks, customer_reference, validity_days, delivery_terms, payment_terms,
                      status, version, submitted_by)
                 VALUES
                     (:quotation_number, :customer_id, :actor_uid, :quotation_date,
-                     :vat_rate, :remarks, :validity_days, :delivery_terms, :payment_terms,
+                     :vat_rate, :remarks, :customer_reference, :validity_days, :delivery_terms, :payment_terms,
                      'IN_REVIEW', 0, :actor_uid)
                 RETURNING quotation_id
             """),
@@ -197,6 +197,7 @@ def submit_quotation(header: dict, lines: list[dict], actor_uid: int) -> tuple[i
                 "quotation_date": header.get("quotation_date"),
                 "vat_rate": vat_rate,
                 "remarks": _norm(header.get("remarks")) or None,
+                "customer_reference": _norm(header.get("customer_reference")) or None,
                 "validity_days": header.get("validity_days"),
                 "delivery_terms": header.get("delivery_terms"),
                 "payment_terms": header.get("payment_terms"),
@@ -224,11 +225,11 @@ def submit_quotation(header: dict, lines: list[dict], actor_uid: int) -> tuple[i
             text("""
                 INSERT INTO quotation_revisions
                     (quotation_id, revision_no, created_by, customer_id, quotation_date,
-                     vat_rate, remarks, validity_days, delivery_terms, payment_terms,
+                     vat_rate, remarks, customer_reference, validity_days, delivery_terms, payment_terms,
                      subtotal, vat_amount, grand_total)
                 VALUES
                     (:qid, 1, :actor_uid, :customer_id, :quotation_date,
-                     :vat_rate, :remarks, :validity_days, :delivery_terms, :payment_terms,
+                     :vat_rate, :remarks, :customer_reference, :validity_days, :delivery_terms, :payment_terms,
                      :subtotal, :vat_amount, :grand_total)
                 RETURNING revision_id
             """),
@@ -239,6 +240,7 @@ def submit_quotation(header: dict, lines: list[dict], actor_uid: int) -> tuple[i
                 "quotation_date": header.get("quotation_date"),
                 "vat_rate": vat_rate,
                 "remarks": _norm(header.get("remarks")) or None,
+                "customer_reference": _norm(header.get("customer_reference")) or None,
                 "validity_days": header.get("validity_days"),
                 "delivery_terms": header.get("delivery_terms"),
                 "payment_terms": header.get("payment_terms"),
@@ -351,6 +353,7 @@ def resubmit_quotation(
                     UPDATE quotation_requests
                     SET customer_id = :customer_id,
                         quotation_date = :quotation_date, vat_rate = :vat_rate, remarks = :remarks,
+                        customer_reference = :customer_reference,
                         validity_days = :validity_days, delivery_terms = :delivery_terms,
                         payment_terms = :payment_terms
                     WHERE quotation_id = :qid
@@ -361,6 +364,7 @@ def resubmit_quotation(
                     "quotation_date": header.get("quotation_date"),
                     "vat_rate": vat_rate,
                     "remarks": _norm(header.get("remarks")) or None,
+                    "customer_reference": _norm(header.get("customer_reference")) or None,
                     "validity_days": header.get("validity_days"),
                     "delivery_terms": header.get("delivery_terms"),
                     "payment_terms": header.get("payment_terms"),
@@ -373,11 +377,11 @@ def resubmit_quotation(
                 text("""
                     INSERT INTO quotation_revisions
                         (quotation_id, revision_no, created_by, customer_id, quotation_date,
-                         vat_rate, remarks, validity_days, delivery_terms, payment_terms,
+                         vat_rate, remarks, customer_reference, validity_days, delivery_terms, payment_terms,
                          subtotal, vat_amount, grand_total)
                     VALUES
                         (:qid, :revision_no, :actor_uid, :customer_id, :quotation_date,
-                         :vat_rate, :remarks, :validity_days, :delivery_terms, :payment_terms,
+                         :vat_rate, :remarks, :customer_reference, :validity_days, :delivery_terms, :payment_terms,
                          :subtotal, :vat_amount, :grand_total)
                     RETURNING revision_id
                 """),
@@ -389,6 +393,7 @@ def resubmit_quotation(
                     "quotation_date": header.get("quotation_date"),
                     "vat_rate": vat_rate,
                     "remarks": _norm(header.get("remarks")) or None,
+                    "customer_reference": _norm(header.get("customer_reference")) or None,
                     "validity_days": header.get("validity_days"),
                     "delivery_terms": header.get("delivery_terms"),
                     "payment_terms": header.get("payment_terms"),
@@ -906,6 +911,7 @@ _REVISION_HEADER_FIELDS = [
     ("quotation_date", "Quotation Date"),
     ("vat_rate", "VAT Rate (%)"),
     ("remarks", "Remarks"),
+    ("customer_reference", "Customer Reference No."),
     ("validity_days", "Validity (days)"),
     ("delivery_terms", "Delivery Terms"),
     ("payment_terms", "Payment Terms"),
@@ -1021,6 +1027,7 @@ def render_quotation_detail(quotation_id: int) -> None:
         st.write(f"**Delivery Terms:** {_norm(header.get('delivery_terms')) or '—'}")
         st.write(f"**Payment Terms:** {_norm(header.get('payment_terms')) or '—'}")
         st.write(f"**Remarks:** {_norm(header.get('remarks')) or '—'}")
+        st.write(f"**Customer Reference No.:** {_norm(header.get('customer_reference')) or '—'}")
 
     st.markdown("##### Line Items")
     if lines_df.empty:
@@ -1180,6 +1187,61 @@ def render_print_button(header: dict, ns: str) -> None:
         )
 
 
+def _place_quotation_stamp(page: fitz.Page, sig_line_width: int, website: str) -> None:
+    """
+    Overlay the company seal (static/Quotations_Stamp.png) beside the
+    signature block on the given page. Anchored off the actual rendered
+    "Prepared By" / "Approved By" labels (not the rep/manager names —
+    those can repeat elsewhere on the page, e.g. the "Sales Rep" meta
+    field, or collide with each other when the rep and manager are the
+    same person) plus the totals box and footer band, so placement stays
+    correct regardless of how much content pushed the signature block down
+    the page. Raises on any lookup failure — callers should treat stamp
+    placement as best-effort and catch broadly.
+    """
+    import io
+
+    from PIL import Image
+
+    stamp_path = Path(__file__).resolve().parent.parent / "static" / "Quotations_Stamp.png"
+
+    label1_rect = page.search_for("Prepared By")[0]
+    label2_rect = page.search_for("Approved By")[0]
+    footer_top = max(r.y0 for r in page.search_for(website))
+    totals_bottom = max(r.y1 for r in page.search_for("SAR"))
+
+    im = Image.open(stamp_path).convert("RGBA")
+    im = im.rotate(8, expand=True, resample=Image.BICUBIC)
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    stamp_pix = fitz.Pixmap(buf.getvalue())
+    aspect = im.height / im.width  # stamp_h / stamp_w
+
+    # Short quotations (few line items, short remarks) leave much less
+    # vertical room between the totals box and the footer than a long one
+    # does, so the stamp scales down to fit that gap rather than skipping
+    # outright — it should always appear, just smaller when space is tight.
+    available = (footer_top - 14) - (totals_bottom + 10)
+    if available < 45:
+        return  # truly no room on this layout — skip rather than force an overlap
+    stamp_w = min(118, available / aspect)
+    stamp_h = stamp_w * aspect
+
+    # Right of the (shortened) signature lines, vertically spanning the gap
+    # between the two rows, clamped so it can never drift into the totals
+    # box above or the footer band below.
+    line_end_x = label1_rect.x0 + sig_line_width
+    cx = line_end_x + 16 + stamp_w / 2
+    cy = (label1_rect.y0 + label2_rect.y0) / 2 - 8
+
+    max_cy = footer_top - 14 - stamp_h / 2
+    min_cy = totals_bottom + 10 + stamp_h / 2
+    cy = max(min_cy, min(cy, max_cy))
+
+    stamp_rect = fitz.Rect(cx - stamp_w / 2, cy - stamp_h / 2, cx + stamp_w / 2, cy + stamp_h / 2)
+    page.insert_image(stamp_rect, pixmap=stamp_pix, overlay=True)
+
+
 def generate_quotation_pdf(quotation_id: int) -> bytes:
     """
     Render a quotation as a print-ready PDF (Design C layout). Callers are
@@ -1248,9 +1310,17 @@ def generate_quotation_pdf(quotation_id: int) -> bytes:
     odoo_ref = _norm(header.get("odoo_reference"))
     odoo_line = f"Odoo Ref: <b>{odoo_ref}</b>" if odoo_ref else ""
 
+    customer_ref = _norm(header.get("customer_reference"))
+    customer_ref_row = (
+        f'<tr><td class="k">Customer Ref</td><td class="v">{customer_ref}</td></tr>' if customer_ref else ""
+    )
+
     status_val = _norm(header.get("status"))
     logo_b64 = _pdf_logo_b64()
     c = _PDF_COMPANY
+    rep_display = _norm(rep_name)
+    manager_display = _norm(manager_name)
+    SIG_LINE_WIDTH = 128  # px — shortened signature underline, leaves room for the stamp
 
     html = f"""
 <html><head><style>
@@ -1350,8 +1420,9 @@ def generate_quotation_pdf(quotation_id: int) -> bytes:
         </td>
         <td style="width:45%; vertical-align:top;">
           <table class="meta">
-            <tr><td class="k">Sales Rep / مندوب المبيعات</td><td class="v">{_norm(rep_name)}</td></tr>
+            <tr><td class="k">Sales Rep / مندوب المبيعات</td><td class="v">{rep_display}</td></tr>
             <tr><td class="k">VAT Rate / نسبة الضريبة</td><td class="v">{vat_rate}%</td></tr>
+            {customer_ref_row}
           </table>
         </td>
       </tr>
@@ -1408,13 +1479,13 @@ def generate_quotation_pdf(quotation_id: int) -> bytes:
               <tr>
                 <td>
                   <div class="lbl">Prepared By / أُعد بواسطة</div>
-                  <div class="name">{_norm(rep_name)}</div>
+                  <div class="name" style="width:{SIG_LINE_WIDTH}px;">{rep_display}</div>
                 </td>
               </tr>
               <tr>
                 <td>
                   <div class="lbl" style="margin-top:8px;">Approved By / اعتمد بواسطة</div>
-                  <div class="name">{_norm(manager_name) or '—'}</div>
+                  <div class="name" style="width:{SIG_LINE_WIDTH}px;">{manager_display or '—'}</div>
                 </td>
               </tr>
             </table>
@@ -1456,6 +1527,19 @@ def generate_quotation_pdf(quotation_id: int) -> bytes:
             fontsize=7, fontname="helv", color=(0.5, 0.5, 0.5),
             align=fitz.TEXT_ALIGN_CENTER,
         )
+
+    # Company stamp — only once a manager has actually approved (a real
+    # manager_display, not the "—" placeholder), placed beside the signature
+    # block on the last page. Anchored off the rendered text positions
+    # (rather than fixed coordinates) so it's correct regardless of how the
+    # quotation paginates; wrapped defensively so a placement quirk on some
+    # future layout can never break PDF generation itself.
+    if manager_display:
+        try:
+            _place_quotation_stamp(doc[-1], SIG_LINE_WIDTH, c["website"])
+        except Exception:
+            pass
+
     doc.saveIncr()
     doc.close()
 

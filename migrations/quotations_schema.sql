@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS quotation_requests (
     vat_rate          NUMERIC(5,2) NOT NULL DEFAULT 0 CHECK (vat_rate BETWEEN 0 AND 100),
 
     remarks           TEXT,
+    customer_reference TEXT,
     validity_days     INTEGER CHECK (validity_days IN (30, 60, 90, 180, 365)) NOT NULL,
     delivery_terms    TEXT CHECK (delivery_terms IN (
                            'Immediate', '15 Days', '30 Days', '45 Days',
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS quotation_revisions (
     quotation_date  DATE NOT NULL,
     vat_rate        NUMERIC(5,2) NOT NULL,
     remarks         TEXT,
+    customer_reference TEXT,
     validity_days   INTEGER NOT NULL,
     delivery_terms  TEXT NOT NULL,
     payment_terms   TEXT NOT NULL,
@@ -215,3 +217,9 @@ BEGIN
         ALTER TABLE quotation_lines ADD CONSTRAINT quotation_lines_line_no_check CHECK (line_no >= 1);
     END IF;
 END $$;
+
+-- ── Customer's own PO/RFQ reference number for this quotation — optional,
+-- ── free text, rep-entered at request time. Adds the column to the live
+-- ── table (the CREATE TABLE above is a no-op once the table already exists).
+ALTER TABLE quotation_requests  ADD COLUMN IF NOT EXISTS customer_reference TEXT;
+ALTER TABLE quotation_revisions ADD COLUMN IF NOT EXISTS customer_reference TEXT;

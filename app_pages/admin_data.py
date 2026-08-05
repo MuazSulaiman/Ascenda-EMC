@@ -602,7 +602,8 @@ def page_admin_data():
                 params["q_search"] = f"%{q_search}%"
                 where_parts.append(
                     "(qr.quotation_number ILIKE :q_search OR c.account_name ILIKE :q_search "
-                    "OR rep.name ILIKE :q_search OR qr.odoo_reference ILIKE :q_search)"
+                    "OR rep.name ILIKE :q_search OR qr.odoo_reference ILIKE :q_search "
+                    "OR qr.customer_reference ILIKE :q_search)"
                 )
             where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
@@ -635,6 +636,7 @@ def page_admin_data():
                         coord.name          AS coordinator,
                         qr.coordinator_done_at,
                         qr.odoo_reference,
+                        qr.customer_reference,
                         (
                             SELECT r.grand_total FROM quotation_revisions r
                             WHERE r.quotation_id = qr.quotation_id
