@@ -14,6 +14,7 @@ from widgets import (
     _fetch_cascade_customers,
     find_nearby_customers,
     render_visit_location_map,
+    _haversine_km,
 )
 from ui import section_header, status_badge, html_table
 
@@ -121,11 +122,13 @@ def page_review_other_customers():
             return None
         return 1.0 if a_n == b_n else 0.0
 
-    MATCH_WEIGHTS = {"name": 0.70, "region": 0.10, "city": 0.10, "sector": 0.10}
+    MATCH_WEIGHTS = {"name": 0.60, "region": 0.10, "city": 0.10, "sector": 0.10, "proximity": 0.10}
+    PROXIMITY_RADIUS_KM = 1.0  # same radius used by find_nearby_customers() for the location map
 
-    def composite_similarity(other_name, visit_region, visit_city, visit_sector, cand_row) -> float:
-        """Blend name similarity with region/city/sector exact-match agreement.
-        Missing signals (blank on either side) are excluded and their weight is
+    def composite_similarity(other_name, visit_region, visit_city, visit_sector, cand_row,
+                              visit_lat=None, visit_lon=None) -> float:
+        """Blend name similarity with region/city/sector exact-match agreement and GPS proximity.
+        Missing signals (blank/unavailable on either side) are excluded and their weight is
         redistributed across the remaining valid signals."""
         signals = {}
 
@@ -141,6 +144,15 @@ def page_review_other_customers():
             s = field_match_score(v_val, c_val)
             if s is not None:
                 signals[key] = s
+
+        # GPS proximity: full credit if the candidate is within the same radius used
+        # by the location map, no credit beyond it. Skipped (not excluded-as-missing)
+        # when the visit has no GPS or the candidate has no saved coordinates.
+        if visit_lat is not None and visit_lon is not None:
+            cand_lat, cand_lon = cand_row.get("latitude"), cand_row.get("longitude")
+            if pd.notna(cand_lat) and pd.notna(cand_lon):
+                dist_km = _haversine_km(visit_lat, visit_lon, float(cand_lat), float(cand_lon))
+                signals["proximity"] = 1.0 if dist_km <= PROXIMITY_RADIUS_KM else 0.0
 
         if not signals:
             return 0.0
@@ -354,8 +366,9 @@ def page_review_other_customers():
         '<p style="font-size:.875rem;font-weight:700;color:var(--color-text);margin:.75rem 0 .1rem;">'
         'Suggested Matches</p>'
         '<p style="font-size:.78rem;color:var(--color-text-subtle);margin:0 0 .5rem;">'
-        'Top 15 matches sorted by combined name + location similarity '
-        '(70% name, 10% each region/city/sector).</p>',
+        'Top 30 matches sorted by combined name + location similarity '
+        '(60% name, 10% each region/city/sector, 10% GPS proximity within '
+        f'{("%g" % PROXIMITY_RADIUS_KM)}km when available).</p>',
         unsafe_allow_html=True,
     )
 
@@ -368,12 +381,13 @@ def page_review_other_customers():
                 other_name,
                 visit_row.get("region"), visit_row.get("city"), visit_row.get("sector"),
                 r,
+                visit_lat=vlat, visit_lon=vlon,
             ),
             axis=1,
         )
         candidates_df = candidates_df.sort_values(by="similarity", ascending=False)
 
-        top_df = candidates_df.head(15).copy()
+        top_df = candidates_df.head(30).copy()
         top_df["Similarity"] = top_df["similarity"].map(lambda x: f"{x*100:.0f}%")
 
         st.markdown(
