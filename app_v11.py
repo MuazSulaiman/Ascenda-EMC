@@ -36,6 +36,9 @@ from app_pages.analytics import page_analytics
 from app_pages.quotation_request import page_quotation_request
 from app_pages.quotation_review import page_quotation_review
 from app_pages.quotation_handoff import page_quotation_handoff
+from app_pages.sample_request import page_sample_request
+from app_pages.sample_request_review import page_sample_request_review
+from app_pages.sample_request_handoff import page_sample_request_handoff
 from app_pages.notifications import page_notifications
 
 st.set_page_config(
@@ -423,6 +426,9 @@ else:
         "Quotations":               page_quotation_request,
         "Review Quotations":        page_quotation_review,
         "Quotation Handoff (Odoo)": page_quotation_handoff,
+        "Sample Requests":                 page_sample_request,
+        "Review Sample Requests":          page_sample_request_review,
+        "Sample Request Handoff (Odoo)":   page_sample_request_handoff,
         "Notifications":            page_notifications,
     }
 
@@ -440,6 +446,9 @@ else:
         "Quotations":               ["rep", "sales manager", "biomedical manager", "admin"],
         "Review Quotations":        ["sales manager", "admin"],
         "Quotation Handoff (Odoo)": ["sales coordinator", "admin"],
+        "Sample Requests":                 ["rep", "sales manager", "biomedical manager", "admin"],
+        "Review Sample Requests":          ["sales manager", "admin"],
+        "Sample Request Handoff (Odoo)":   ["sales coordinator", "admin"],
         "Submit Visit":             _NON_COORDINATOR_ROLES,
         "Check-In":                 _NON_COORDINATOR_ROLES,
         "My Visits":                _NON_COORDINATOR_ROLES,

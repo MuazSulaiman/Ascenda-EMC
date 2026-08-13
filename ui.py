@@ -449,6 +449,9 @@ def sidebar_nav():
         "Quotations":              '<svg viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="16" y2="15"/><line x1="8" y1="19" x2="12" y2="19"/></svg>',
         "Review Quotations":       '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h6"/><polyline points="14 2 14 8 20 8"/><circle cx="17" cy="17" r="3"/><line x1="19.5" y1="19.5" x2="22" y2="22"/></svg>',
         "Quotation Handoff (Odoo)": '<svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
+        "Sample Requests":         '<svg viewBox="0 0 24 24"><path d="M9 2H7a2 2 0 0 0-2 2v4h12V4a2 2 0 0 0-2-2h-2"/><path d="M5 8h14v2h-14z"/><path d="M5 12h14v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6z"/><circle cx="12" cy="15" r="1.5"/></svg>',
+        "Review Sample Requests":  '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M10 13h4"/><path d="M10 17h4"/><path d="M10 9h4"/></svg>',
+        "Sample Request Handoff (Odoo)": '<svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
         "App Settings":            '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
     }
     _ICON_DEFAULT = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg>'
@@ -485,6 +488,7 @@ def sidebar_nav():
         field_pages.append("My Change Requests")
     if role in ("rep", "sales manager", "biomedical manager", "admin"):
         field_pages.append("Quotations")
+        field_pages.append("Sample Requests")
 
     project_pages: list = []
     # project pages hidden for all users
@@ -498,8 +502,10 @@ def sidebar_nav():
         review_pages = ["Review Target Audiences", "Review Other Customers", "Review Change Requests"]
     if role in ("sales manager", "admin"):
         review_pages.append("Review Quotations")
+        review_pages.append("Review Sample Requests")
     if role in ("sales coordinator", "admin"):
         review_pages.append("Quotation Handoff (Odoo)")
+        review_pages.append("Sample Request Handoff (Odoo)")
 
     admin_pages: list = []
     if role == "admin":
