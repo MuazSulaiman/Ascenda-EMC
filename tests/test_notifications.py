@@ -35,6 +35,14 @@ from app_pages.quotation_helpers import (
     manager_return_for_revision,
     coordinator_mark_done,
 )
+from app_pages.sample_request_helpers import (
+    submit_sample_request,
+    manager_approve as sr_manager_approve,
+    manager_reject as sr_manager_reject,
+    manager_request_edit as sr_manager_request_edit,
+    manager_return_for_revision as sr_manager_return_for_revision,
+    coordinator_mark_done as sr_coordinator_mark_done,
+)
 from app_pages.change_request import _insert_request_and_details
 from app_pages.admin_change_requests import _apply_changes, _reject_request
 from app_pages.notification_helpers import (
@@ -93,15 +101,25 @@ def any_objective_id():
 def _delete_test_user(uid: int):
     """
     Delete a throwaway test user created by this file. Defensively removes any
-    quotation_requests rows still referencing this user (as rep/manager/
-    coordinator/submitted_by/withdrawn_by) and any notifications rows
-    referencing this user (as recipient or actor) first — both FKs to users
-    have no ON DELETE CASCADE, so a plain `DELETE FROM users` would 23503 if
-    a test left rows behind. Safe no-op otherwise.
+    quotation_requests and sample_requests rows still referencing this user
+    (as rep/manager/coordinator/submitted_by/withdrawn_by) and any
+    notifications rows referencing this user (as recipient or actor) first —
+    all of these FKs to users have no ON DELETE CASCADE, so a plain
+    `DELETE FROM users` would 23503 if a test left rows behind (e.g. if this
+    fixture's teardown runs before the sids/qids fixture's, which fixture
+    teardown LIFO ordering does not guarantee against). Safe no-op otherwise.
     """
     exec_sql(
         """
         DELETE FROM quotation_requests
+        WHERE rep_user_id = :uid OR manager_user_id = :uid
+           OR coordinator_user_id = :uid OR submitted_by = :uid OR withdrawn_by = :uid
+        """,
+        {"uid": uid},
+    )
+    exec_sql(
+        """
+        DELETE FROM sample_requests
         WHERE rep_user_id = :uid OR manager_user_id = :uid
            OR coordinator_user_id = :uid OR submitted_by = :uid OR withdrawn_by = :uid
         """,
@@ -181,6 +199,29 @@ def qids():
             {"qid": qid},
         )
         exec_sql("DELETE FROM quotation_requests WHERE quotation_id = :qid", {"qid": qid})
+
+
+@pytest.fixture
+def sids():
+    """List of sample_request_id created during a test; each is deleted in
+    teardown regardless of test outcome. sample_request_lines /
+    sample_request_revisions / sample_request_revision_lines /
+    sample_request_status_events all reference
+    sample_requests.sample_request_id with ON DELETE CASCADE, so deleting the
+    header row cascades to every child row for that sample request.
+
+    notifications has no FK to sample_requests (it only carries
+    sample_request_id inside the JSONB link_params column), so it isn't
+    reached by that cascade — it must be cleaned up explicitly, mirroring
+    the qids fixture above for quotations."""
+    ids: list[int] = []
+    yield ids
+    for sid in ids:
+        exec_sql(
+            "DELETE FROM notifications WHERE (link_params->>'sample_request_id')::int = :sid",
+            {"sid": sid},
+        )
+        exec_sql("DELETE FROM sample_requests WHERE sample_request_id = :sid", {"sid": sid})
 
 
 @pytest.fixture
@@ -300,6 +341,30 @@ def _quotation_actors(qid: int, event_type: str) -> set[int]:
     return set(int(x) for x in df["actor_user_id"])
 
 
+def _sample_recipients(sid: int, event_type: str) -> set[int]:
+    df = query_df(
+        """
+            SELECT recipient_user_id FROM notifications
+            WHERE category = 'sample_request' AND event_type = :et
+              AND (link_params->>'sample_request_id')::int = :sid
+        """,
+        {"et": event_type, "sid": sid},
+    )
+    return set(int(x) for x in df["recipient_user_id"])
+
+
+def _sample_actors(sid: int, event_type: str) -> set[int]:
+    df = query_df(
+        """
+            SELECT DISTINCT actor_user_id FROM notifications
+            WHERE category = 'sample_request' AND event_type = :et
+              AND (link_params->>'sample_request_id')::int = :sid
+        """,
+        {"et": event_type, "sid": sid},
+    )
+    return set(int(x) for x in df["actor_user_id"])
+
+
 def _cr_recipients(visit_id: int, event_type: str) -> set[int]:
     df = query_df(
         """
@@ -326,6 +391,27 @@ def _cr_recipients_by_request(request_id: int, event_type: str) -> set[int]:
         {"et": event_type, "rid": request_id},
     )
     return set(int(x) for x in df["recipient_user_id"])
+
+
+def _base_header_sr(customer_id: int, **overrides) -> dict:
+    header = {
+        "customer_id": customer_id,
+        "request_date": date.today(),
+        "remarks": TEST_MARKER,
+    }
+    header.update(overrides)
+    return header
+
+
+def _base_lines_sr(product_id: str, qty=2) -> list[dict]:
+    return [{"product_id": product_id, "quantity": qty, "delivery_date": None}]
+
+
+def _submit_sr(sids_list, rep_uid, customer_id, product_id, **header_overrides):
+    header = _base_header_sr(customer_id, **header_overrides)
+    sid, snum = submit_sample_request(header, _base_lines_sr(product_id), rep_uid)
+    sids_list.append(sid)
+    return sid, snum
 
 
 def _active_role_ids(roles: list[str], exclude_user_id: int | None = None) -> set[int]:
@@ -546,3 +632,113 @@ def test_mark_all_read_only_affects_calling_user(notif_owner_id, notif_other_id)
         "SELECT is_read FROM notifications WHERE recipient_user_id = :uid", {"uid": notif_other_id}
     )
     assert bool(other_unread.iloc[0]["is_read"]) is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# category="sample_request" fan-out (Task 8) — mirrors the quotation fan-out
+# tests above one-for-one, against app_pages/sample_request_helpers.py's
+# transition functions instead of quotation_helpers'.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_submit_sample_request_notifies_managers_and_admins_excludes_actor(
+    sids, sales_manager_a_id, any_customer_id, any_product_id
+):
+    """submit_sample_request must notify every active sales manager/admin, but
+    not the submitting actor even though that actor holds the 'sales manager'
+    role."""
+    expected = _active_role_ids(["sales manager", "admin"], exclude_user_id=sales_manager_a_id)
+    assert expected, "Need at least one other active sales manager/admin in DB"
+
+    sid, _ = _submit_sr(sids, sales_manager_a_id, any_customer_id, any_product_id)
+
+    recipients = _sample_recipients(sid, "SUBMITTED")
+    assert recipients == expected
+    assert sales_manager_a_id not in recipients
+    assert _sample_actors(sid, "SUBMITTED") == {sales_manager_a_id}
+
+
+def test_sample_manager_approve_notifies_rep_and_coordinators_and_admins(
+    sids, rep_user_id, sales_manager_a_id, coordinator_user_id, any_customer_id, any_product_id
+):
+    """manager_approve must notify the submitting rep AND every active sales
+    coordinator/admin."""
+    sid, _ = _submit_sr(sids, rep_user_id, any_customer_id, any_product_id)
+
+    expected_coord_admin = _active_role_ids(["sales coordinator", "admin"])
+    assert coordinator_user_id in expected_coord_admin
+    expected = expected_coord_admin | {rep_user_id}
+
+    ok, err = sr_manager_approve(sid, sales_manager_a_id)
+    assert ok, err
+
+    recipients = _sample_recipients(sid, "APPROVED")
+    assert recipients == expected
+    assert _sample_actors(sid, "APPROVED") == {sales_manager_a_id}
+
+
+def test_sample_manager_reject_notifies_rep_only(
+    sids, rep_user_id, sales_manager_a_id, any_customer_id, any_product_id
+):
+    sid, _ = _submit_sr(sids, rep_user_id, any_customer_id, any_product_id)
+
+    ok, err = sr_manager_reject(sid, sales_manager_a_id, "not a fit for this customer")
+    assert ok, err
+
+    recipients = _sample_recipients(sid, "REJECTED")
+    assert recipients == {rep_user_id}
+    assert _sample_actors(sid, "REJECTED") == {sales_manager_a_id}
+
+
+def test_sample_manager_request_edit_notifies_rep_only(
+    sids, rep_user_id, sales_manager_a_id, any_customer_id, any_product_id
+):
+    sid, _ = _submit_sr(sids, rep_user_id, any_customer_id, any_product_id)
+
+    ok, err = sr_manager_request_edit(sid, sales_manager_a_id, "please revise quantities")
+    assert ok, err
+
+    recipients = _sample_recipients(sid, "EDIT_REQUESTED")
+    assert recipients == {rep_user_id}
+    assert _sample_actors(sid, "EDIT_REQUESTED") == {sales_manager_a_id}
+
+
+def test_sample_manager_return_for_revision_notifies_rep_only(
+    sids, rep_user_id, sales_manager_a_id, any_customer_id, any_product_id
+):
+    sid, _ = _submit_sr(sids, rep_user_id, any_customer_id, any_product_id)
+    ok, err = sr_manager_approve(sid, sales_manager_a_id)
+    assert ok, err
+
+    ok2, err2 = sr_manager_return_for_revision(sid, sales_manager_a_id, "please adjust delivery date")
+    assert ok2, err2
+
+    recipients = _sample_recipients(sid, "RETURNED_FOR_REVISION")
+    assert recipients == {rep_user_id}
+    assert _sample_actors(sid, "RETURNED_FOR_REVISION") == {sales_manager_a_id}
+
+
+def test_sample_coordinator_mark_done_notifies_rep_and_deciding_manager(
+    sids, rep_user_id, sales_manager_a_id, coordinator_user_id, any_customer_id, any_product_id
+):
+    sid, _ = _submit_sr(sids, rep_user_id, any_customer_id, any_product_id)
+    ok, err = sr_manager_approve(sid, sales_manager_a_id)
+    assert ok, err
+
+    ok2, err2 = sr_coordinator_mark_done(sid, coordinator_user_id, None, None)
+    assert ok2, err2
+
+    recipients = _sample_recipients(sid, "MARKED_DONE")
+    assert recipients == {rep_user_id, sales_manager_a_id}
+    assert _sample_actors(sid, "MARKED_DONE") == {coordinator_user_id}
+
+
+def test_sample_inactive_user_never_notified(
+    sids, rep_user_id, inactive_sales_manager_id, any_customer_id, any_product_id
+):
+    """notify_role must filter on is_active = TRUE — a user whose role
+    matches but who is inactive must never receive a sample_request
+    notification either."""
+    sid, _ = _submit_sr(sids, rep_user_id, any_customer_id, any_product_id)
+
+    recipients = _sample_recipients(sid, "SUBMITTED")
+    assert inactive_sales_manager_id not in recipients
