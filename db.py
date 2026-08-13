@@ -128,6 +128,14 @@ def _run_migrations() -> None:
         with engine.begin() as conn:
             conn.execute(text(_quotations_sql))
 
+    # Sample Requests Workflow — schema migration
+    _sample_requests_migration_path = os.path.join(os.path.dirname(__file__), "migrations", "sample_requests_schema.sql")
+    if os.path.exists(_sample_requests_migration_path):
+        with open(_sample_requests_migration_path, "r") as _f:
+            _sample_requests_sql = _f.read()
+        with engine.begin() as conn:
+            conn.execute(text(_sample_requests_sql))
+
     # Notifications — schema migration
     _notifications_migration_path = os.path.join(os.path.dirname(__file__), "migrations", "notifications_schema.sql")
     if os.path.exists(_notifications_migration_path):
