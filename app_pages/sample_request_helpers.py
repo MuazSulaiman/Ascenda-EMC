@@ -1014,3 +1014,235 @@ def _status_badge_variant(status: str) -> str:
         "DONE": "success",
         "WITHDRAWN": "neutral",
     }.get(status, "neutral")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Warehouse pick-sheet export
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
+    """
+    Build a warehouse-facing pick sheet as an .xlsx workbook for an
+    APPROVED or DONE sample request. There is no quotation-PDF equivalent
+    to mirror here (quotations render a PDF via PyMuPDF) — this is a fresh
+    workbook via openpyxl. One row per physical unit: a line's quantity is
+    exploded into `quantity` separate SI.NO rows (Unit column reading
+    "1 of N".."N of N"), leaving Serial/Batch Number, Warehouse Name, and
+    Warehouse Location blank for the warehouse team to hand-fill.
+    """
+    import io
+
+    from openpyxl import Workbook
+
+    header = _load_sample_request_header(sample_request_id)
+    if not header:
+        raise ValueError(f"Sample request {sample_request_id} not found.")
+    status = _norm(header.get("status"))
+    if status not in ("APPROVED", "DONE"):
+        raise ValueError(
+            f"Pick sheet can only be generated for APPROVED or DONE sample requests "
+            f"(current status: {status})."
+        )
+
+    lines_df = _load_sample_request_lines(sample_request_id)
+
+    account_name = query_scalar(
+        "SELECT account_name FROM customers WHERE customer_id = :cid", {"cid": header.get("customer_id")}
+    )
+
+    item_lookup: dict = {}
+    product_ids = lines_df["product_id"].dropna().unique().tolist() if not lines_df.empty else []
+    if product_ids:
+        items_df = query_df(
+            "SELECT product_id, article_number, description FROM items WHERE product_id = ANY(:pids)",
+            {"pids": product_ids},
+        )
+        item_lookup = {
+            row["product_id"]: (row["article_number"], row["description"])
+            for _, row in items_df.iterrows()
+        }
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Warehouse Pick Sheet"
+
+    ws.append([f"Request No: {_norm(header.get('request_number'))}"])
+    ws.append([f"Date: {header.get('request_date')}"])
+    ws.append([f"Customer: {_norm(account_name) or '—'}"])
+    ws.append([])
+    ws.append([
+        "SI.NO", "Model No", "Item Description", "Unit", "Delivery Date",
+        "Serial/Batch Number", "Warehouse Name", "Warehouse Location",
+    ])
+
+    for _, line in lines_df.iterrows():
+        article_number, description = item_lookup.get(line.get("product_id"), (None, None))
+        quantity = int(line["quantity"])
+        delivery_date = line.get("delivery_date")
+        delivery_val = delivery_date if pd.notna(delivery_date) else ""
+        for k in range(1, quantity + 1):
+            ws.append([
+                int(line["line_no"]),
+                article_number or "",
+                description or "",
+                f"{k} of {quantity}",
+                delivery_val,
+                "", "", "",
+            ])
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Manager-insights aggregates (rep / customer sample stats)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sample_request_item_summary(sample_request_id: int) -> tuple[int, str]:
+    """
+    Per-request total quantity and a comma-joined item summary (e.g.
+    "Model A x2, Model B x1") for a single sample request's lines, built in
+    Python from a per-request line query rather than SQL string
+    aggregation, as specified in the Task 3 brief.
+    """
+    lines_df = query_df(
+        """
+        SELECT i.article_number, srl.quantity
+        FROM sample_request_lines srl
+        JOIN items i ON i.product_id = srl.product_id
+        WHERE srl.sample_request_id = :sid
+        ORDER BY srl.line_no
+        """,
+        {"sid": sample_request_id},
+    )
+    if lines_df.empty:
+        return 0, ""
+    total_qty = int(lines_df["quantity"].sum())
+    item_summary = ", ".join(
+        f"{_norm(row['article_number']) or '—'} x{int(row['quantity'])}"
+        for _, row in lines_df.iterrows()
+    )
+    return total_qty, item_summary
+
+
+def get_rep_sample_stats(rep_user_id: int) -> dict:
+    """
+    Manager-insights aggregate for a single rep: total sample quantity
+    handed off (status DONE) all-time and so far this calendar month
+    (bucketed by coordinator_done_at, i.e. when the coordinator actually
+    marked the request Done, not when it was submitted/approved), plus
+    the rep's 5 most-recent DONE requests. A rep with zero DONE history
+    returns an all-zero/empty shape, not an error.
+    """
+    all_time_qty = query_scalar(
+        """
+        SELECT COALESCE(SUM(srl.quantity), 0)
+        FROM sample_requests sr
+        JOIN sample_request_lines srl ON srl.sample_request_id = sr.sample_request_id
+        WHERE sr.rep_user_id = :rep_user_id AND sr.status = 'DONE'
+        """,
+        {"rep_user_id": rep_user_id},
+    )
+    this_month_qty = query_scalar(
+        """
+        SELECT COALESCE(SUM(srl.quantity), 0)
+        FROM sample_requests sr
+        JOIN sample_request_lines srl ON srl.sample_request_id = sr.sample_request_id
+        WHERE sr.rep_user_id = :rep_user_id AND sr.status = 'DONE'
+          AND sr.coordinator_done_at >= date_trunc('month', CURRENT_DATE)
+        """,
+        {"rep_user_id": rep_user_id},
+    )
+
+    recent_df = query_df(
+        """
+        SELECT sr.sample_request_id, sr.request_number, sr.coordinator_done_at,
+               c.account_name AS customer_name
+        FROM sample_requests sr
+        JOIN customers c ON c.customer_id = sr.customer_id
+        WHERE sr.rep_user_id = :rep_user_id AND sr.status = 'DONE'
+        ORDER BY sr.coordinator_done_at DESC
+        LIMIT 5
+        """,
+        {"rep_user_id": rep_user_id},
+    )
+
+    recent = []
+    for _, row in recent_df.iterrows():
+        total_qty, item_summary = _sample_request_item_summary(int(row["sample_request_id"]))
+        recent.append({
+            "request_number": row["request_number"],
+            "coordinator_done_at": row["coordinator_done_at"],
+            "customer_name": row["customer_name"],
+            "total_qty": total_qty,
+            "item_summary": item_summary,
+        })
+
+    return {
+        "all_time_qty": int(all_time_qty or 0),
+        "this_month_qty": int(this_month_qty or 0),
+        "recent": recent,
+    }
+
+
+def get_customer_sample_stats(customer_id: int) -> dict:
+    """
+    Same shape as get_rep_sample_stats, scoped by customer instead of rep.
+    Deliberately has no rep_user_id filter — a customer can receive DONE
+    samples from multiple different reps over time, and all of them should
+    count toward this customer's totals (cross-rep aggregation). Each
+    `recent` entry additionally carries rep_name so a manager can see who
+    handled each historical request.
+    """
+    all_time_qty = query_scalar(
+        """
+        SELECT COALESCE(SUM(srl.quantity), 0)
+        FROM sample_requests sr
+        JOIN sample_request_lines srl ON srl.sample_request_id = sr.sample_request_id
+        WHERE sr.customer_id = :customer_id AND sr.status = 'DONE'
+        """,
+        {"customer_id": customer_id},
+    )
+    this_month_qty = query_scalar(
+        """
+        SELECT COALESCE(SUM(srl.quantity), 0)
+        FROM sample_requests sr
+        JOIN sample_request_lines srl ON srl.sample_request_id = sr.sample_request_id
+        WHERE sr.customer_id = :customer_id AND sr.status = 'DONE'
+          AND sr.coordinator_done_at >= date_trunc('month', CURRENT_DATE)
+        """,
+        {"customer_id": customer_id},
+    )
+
+    recent_df = query_df(
+        """
+        SELECT sr.sample_request_id, sr.request_number, sr.coordinator_done_at,
+               c.account_name AS customer_name, u.name AS rep_name
+        FROM sample_requests sr
+        JOIN customers c ON c.customer_id = sr.customer_id
+        JOIN users u ON u.user_id = sr.rep_user_id
+        WHERE sr.customer_id = :customer_id AND sr.status = 'DONE'
+        ORDER BY sr.coordinator_done_at DESC
+        LIMIT 5
+        """,
+        {"customer_id": customer_id},
+    )
+
+    recent = []
+    for _, row in recent_df.iterrows():
+        total_qty, item_summary = _sample_request_item_summary(int(row["sample_request_id"]))
+        recent.append({
+            "request_number": row["request_number"],
+            "coordinator_done_at": row["coordinator_done_at"],
+            "customer_name": row["customer_name"],
+            "rep_name": row["rep_name"],
+            "total_qty": total_qty,
+            "item_summary": item_summary,
+        })
+
+    return {
+        "all_time_qty": int(all_time_qty or 0),
+        "this_month_qty": int(this_month_qty or 0),
+        "recent": recent,
+    }
