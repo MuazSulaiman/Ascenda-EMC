@@ -19,6 +19,7 @@ import streamlit as st
 
 from ui import section_header
 from db_ops import query_df
+from utils import to_local_str
 from app_pages.change_request_helpers import _norm
 from app_pages.sample_request_helpers import (
     manager_approve, manager_reject, manager_request_edit, manager_return_for_revision,
@@ -162,10 +163,9 @@ def _render_recent_table(recent: list, *, other_col: str, other_label: str) -> N
 
     rows = []
     for r in recent:
-        done_at = pd.to_datetime(r.get("coordinator_done_at"), errors="coerce")
         rows.append({
             "Request #": r.get("request_number"),
-            "Date": done_at.strftime("%d %b %Y") if pd.notna(done_at) else "—",
+            "Date": to_local_str(r.get("coordinator_done_at"), fmt="%d %b %Y"),
             other_label: r.get(other_col) or "—",
             "Items": r.get("item_summary") or "—",
             "Qty": r.get("total_qty"),

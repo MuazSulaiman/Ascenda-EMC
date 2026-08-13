@@ -21,6 +21,7 @@ from db_ops import query_df, query_scalar, exec_sql
 from app_pages.change_request_helpers import _norm, _sql_val
 from app_pages.notification_helpers import notify_role, notify_users
 from ui import compare_row, status_badge, visit_card
+from utils import to_local, to_local_str
 
 
 VALIDITY_OPTIONS = [30, 60, 90, 180, 365]
@@ -880,7 +881,7 @@ def render_quotation_list(
         status_label = status_labels.get(status_val, status_val)
         cards_html += visit_card(
             _norm(row.get("rep_name")),
-            row.get(date_col),
+            to_local(row.get(date_col)),
             _norm(row.get("account_name")) or "—",
             subtitle=_norm(row.get("quotation_number")),
             status=status_label,
@@ -1084,8 +1085,7 @@ def render_quotation_detail(quotation_id: int) -> None:
 
     for _, ev in events_df.iterrows():
         actor_name = name_map.get(ev.get("actor_user_id"), "—")
-        at_dt = pd.to_datetime(ev.get("at_utc"), errors="coerce")
-        at_str = at_dt.strftime("%d %b %Y, %H:%M UTC") if pd.notna(at_dt) else "—"
+        at_str = to_local_str(ev.get("at_utc"))
         comment = _norm(ev.get("comment"))
         from_s = _norm(ev.get("from_status")) or "—"
         to_s = _norm(ev.get("to_status"))

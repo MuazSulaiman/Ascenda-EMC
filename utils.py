@@ -56,6 +56,31 @@ def _local_now_str() -> str:
     return _local_now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def to_local(dt) -> Optional[datetime]:
+    """Convert a stored UTC timestamp (aware, or naive-and-assumed-UTC) to
+    the org's local timezone (config.TIMEZONE) for display — never use this
+    for storage or comparison, only for what a user reads on screen. Accepts
+    a datetime, a pandas Timestamp, or None/NaT; returns None for anything
+    that isn't a real timestamp."""
+    if dt is None or pd.isna(dt):
+        return None
+    if isinstance(dt, pd.Timestamp):
+        dt = dt.to_pydatetime()
+    if not isinstance(dt, datetime):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(tz.gettz(TIMEZONE))
+
+
+def to_local_str(dt, fmt: str = "%d %b %Y, %H:%M") -> str:
+    """Format a stored UTC timestamp in the org's local timezone. Returns
+    '—' for None/NaT, matching this codebase's existing display convention
+    for missing values."""
+    local_dt = to_local(dt)
+    return local_dt.strftime(fmt) if local_dt is not None else "—"
+
+
 def push_visit_to_pbi(row: dict) -> Tuple[bool, Optional[str]]:
     """
     Push a single visit to your Power BI streaming/push dataset.
