@@ -448,9 +448,9 @@ def _render_new_sample_request_tab(u):
     delivery_date = st.date_input(
         "Delivery Date (optional)", value=None, key=f"{ns}_delivery_date",
     )
-    dates_valid = delivery_date is None or delivery_date > request_date
+    dates_valid = delivery_date is None or delivery_date >= request_date
     if not dates_valid:
-        st.caption("⚠️ Delivery date must be after the request date.")
+        st.caption("⚠️ Delivery date cannot be before the request date.")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     st.markdown(form_section(3, "Line Items"), unsafe_allow_html=True)
@@ -603,9 +603,9 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
     delivery_date = st.date_input(
         "Delivery Date (optional)", key=f"{ns}_delivery_date",
     )
-    dates_valid = delivery_date is None or delivery_date > request_date
+    dates_valid = delivery_date is None or delivery_date >= request_date
     if not dates_valid:
-        st.caption("⚠️ Delivery date must be after the request date.")
+        st.caption("⚠️ Delivery date cannot be before the request date.")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     lines, lines_valid = _render_line_items_editor(ns)
