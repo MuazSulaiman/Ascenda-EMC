@@ -245,7 +245,7 @@ def test_submit_reject(sids, rep_user_id, sales_manager_id, any_customer_id, any
     assert list(events_df["event_type"]) == ["SUBMITTED", "REJECTED"]
 
 
-def test_submit_request_edit_resubmit_then_withdraw_is_blocked(
+def test_submit_edit_resubmit_approve_then_withdraw_is_blocked(
     sids, rep_user_id, sales_manager_id, any_customer_id, any_product_id, other_product_id
 ):
     sid, _ = _submit(sids, rep_user_id, any_customer_id, any_product_id)
@@ -275,9 +275,11 @@ def test_submit_request_edit_resubmit_then_withdraw_is_blocked(
     events_df = _load_status_events(sid)
     assert list(events_df["event_type"]) == ["SUBMITTED", "EDIT_REQUESTED", "RESUBMITTED"]
 
-    # Now IN_REVIEW again — withdraw should still work from IN_REVIEW...
-    # but exercise the "withdraw is now blocked" case via APPROVED instead,
-    # per the brief: submit -> request_edit -> resubmit -> withdraw-is-blocked.
+    # A resubmit lands back in IN_REVIEW, and withdraw_sample_request's guard
+    # (status IN ('IN_REVIEW', 'EDIT_REQUESTED')) explicitly allows IN_REVIEW —
+    # see test_withdraw_succeeds_immediately_after_resubmit below for that case
+    # covered on its own row. Here we advance one more step, to APPROVED, which
+    # the withdraw guard does *not* allow, to exercise the genuinely-blocked case.
     ok3, err3 = manager_approve(sid, sales_manager_id)
     assert ok3, err3
 
@@ -287,6 +289,38 @@ def test_submit_request_edit_resubmit_then_withdraw_is_blocked(
 
     header3 = _load_sample_request_header(sid)
     assert header3["status"] == "APPROVED"
+
+
+def test_withdraw_succeeds_immediately_after_resubmit(
+    sids, rep_user_id, sales_manager_id, any_customer_id, any_product_id, other_product_id
+):
+    """
+    withdraw_sample_request's guard is status IN ('IN_REVIEW', 'EDIT_REQUESTED')
+    — a resubmit lands the row back in IN_REVIEW, and that status is explicitly
+    still withdrawable at that point (unlike after a subsequent APPROVED, which
+    test_submit_edit_resubmit_approve_then_withdraw_is_blocked covers as the
+    blocked case). This is the previously-uncovered branch of that guard.
+    """
+    sid, _ = _submit(sids, rep_user_id, any_customer_id, any_product_id)
+
+    ok, err = manager_request_edit(sid, sales_manager_id, "please adjust quantities")
+    assert ok, err
+    header = _load_sample_request_header(sid)
+    version = int(header["version"])
+
+    ok2, err2 = resubmit_sample_request(
+        sid, _base_header(any_customer_id), _base_lines(other_product_id, qty=3), rep_user_id, version
+    )
+    assert ok2, err2
+    header2 = _load_sample_request_header(sid)
+    assert header2["status"] == "IN_REVIEW"
+
+    ok3, err3 = withdraw_sample_request(sid, rep_user_id, "changed my mind right after resubmit")
+    assert ok3, err3
+
+    header3 = _load_sample_request_header(sid)
+    assert header3["status"] == "WITHDRAWN"
+    assert int(header3["withdrawn_by"]) == rep_user_id
 
 
 def test_return_for_revision_from_approved(sids, rep_user_id, sales_manager_id, any_customer_id, any_product_id):
