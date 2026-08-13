@@ -81,6 +81,35 @@ def to_local_str(dt, fmt: str = "%d %b %Y, %H:%M") -> str:
     return local_dt.strftime(fmt) if local_dt is not None else "—"
 
 
+def refresh_default_date(key: str) -> None:
+    """Keep a `key=`-bound st.date_input's default pinned to "today" (the
+    org's local date, not the server's), without ever clobbering a date the
+    user deliberately picked. Call this once, right before instantiating
+    the widget — then give the widget only `key=`, no `value=`.
+
+    Needed because this app persists the Streamlit session id in
+    localStorage (see ui.py), so the same browser tab/device can carry one
+    session across a midnight rollover, or even across several days.
+    st.date_input's `value=` argument only seeds st.session_state[key] on
+    that key's very first render — after that, "today" freezes at whatever
+    day the widget first appeared for that session and never updates
+    again, which is what made a form default silently show yesterday's (or
+    older) date. This only resets the stored value when it still equals
+    the date we last auto-seeded it with; once a user changes it away from
+    that, their choice is left alone."""
+    today = _local_now().date()
+    seeded_key = f"{key}__seeded_on"
+    if key not in st.session_state:
+        st.session_state[key] = today
+        st.session_state[seeded_key] = today
+    elif (
+        st.session_state.get(seeded_key) != today
+        and st.session_state.get(key) == st.session_state.get(seeded_key)
+    ):
+        st.session_state[key] = today
+        st.session_state[seeded_key] = today
+
+
 def push_visit_to_pbi(row: dict) -> Tuple[bool, Optional[str]]:
     """
     Push a single visit to your Power BI streaming/push dataset.

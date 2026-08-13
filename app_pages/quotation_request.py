@@ -10,6 +10,7 @@ import streamlit as st
 from ui import section_header, form_section
 from widgets import customer_quick_find_module, customer_cascading_selectors
 from db_ops import query_df
+from utils import refresh_default_date
 from app_pages.admin_targets_db import (
     get_business_units, get_product_categories, get_business_lines, get_articles,
 )
@@ -487,7 +488,8 @@ def _render_new_quotation_tab(u):
     st.markdown(form_section(2, "Quotation Details"), unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
-        quotation_date = st.date_input("Quotation Date *", value=datetime.date.today(), key=f"{ns}_quotation_date")
+        refresh_default_date(f"{ns}_quotation_date")
+        quotation_date = st.date_input("Quotation Date *", key=f"{ns}_quotation_date")
         vat_rate = st.number_input(
             "VAT Rate (%) *", min_value=0.0, max_value=100.0, value=0.0, step=0.5,
             format="%.2f", key=f"{ns}_vat_rate",

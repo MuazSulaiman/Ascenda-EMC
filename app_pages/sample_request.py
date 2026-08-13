@@ -16,6 +16,7 @@ import streamlit as st
 from ui import section_header, form_section
 from widgets import customer_quick_find_module, customer_cascading_selectors
 from db_ops import query_df
+from utils import refresh_default_date
 from app_pages.admin_targets_db import (
     get_business_units, get_product_categories, get_business_lines, get_articles,
 )
@@ -444,7 +445,8 @@ def _render_new_sample_request_tab(u):
     customer_id = _render_customer_picker(ns)
 
     st.markdown(form_section(2, "Request Details"), unsafe_allow_html=True)
-    request_date = st.date_input("Request Date *", value=datetime.date.today(), key=f"{ns}_request_date")
+    refresh_default_date(f"{ns}_request_date")
+    request_date = st.date_input("Request Date *", key=f"{ns}_request_date")
     delivery_date = st.date_input(
         "Delivery Date (optional)", value=None, key=f"{ns}_delivery_date",
     )
