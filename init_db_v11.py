@@ -569,6 +569,7 @@ CREATE TABLE IF NOT EXISTS sample_requests (
     rep_user_id            INTEGER NOT NULL REFERENCES users(user_id),
 
     request_date            DATE    NOT NULL DEFAULT CURRENT_DATE,
+    delivery_date             DATE,
     remarks                   TEXT,
 
     status  TEXT NOT NULL DEFAULT 'IN_REVIEW' CHECK (status IN (
@@ -606,7 +607,6 @@ CREATE TABLE IF NOT EXISTS sample_request_lines (
     line_no            SMALLINT NOT NULL CHECK (line_no BETWEEN 1 AND 50),
     product_id         TEXT NOT NULL REFERENCES items(product_id),
     quantity           INTEGER NOT NULL CHECK (quantity > 0),
-    delivery_date      DATE,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (sample_request_id, line_no)
 );
@@ -619,6 +619,7 @@ CREATE TABLE IF NOT EXISTS sample_request_revisions (
     created_by            INTEGER NOT NULL REFERENCES users(user_id),
     customer_id            INTEGER NOT NULL REFERENCES customers(customer_id),
     request_date            DATE NOT NULL,
+    delivery_date             DATE,
     remarks                   TEXT,
     UNIQUE (sample_request_id, revision_no)
 );
@@ -630,8 +631,7 @@ CREATE TABLE IF NOT EXISTS sample_request_revision_lines (
     product_id                  TEXT NOT NULL REFERENCES items(product_id),
     article_number_snapshot      TEXT,
     description_snapshot          TEXT,
-    quantity                        INTEGER NOT NULL,
-    delivery_date                    DATE
+    quantity                        INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sample_request_status_events (

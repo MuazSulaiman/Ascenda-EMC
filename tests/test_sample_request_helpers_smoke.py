@@ -168,7 +168,7 @@ def _base_header(customer_id: int, **overrides) -> dict:
 
 
 def _base_lines(product_id: str, qty=2) -> list[dict]:
-    return [{"product_id": product_id, "quantity": qty, "delivery_date": None}]
+    return [{"product_id": product_id, "quantity": qty}]
 
 
 def _submit(sids_list, rep_uid, customer_id, product_id, **header_overrides):

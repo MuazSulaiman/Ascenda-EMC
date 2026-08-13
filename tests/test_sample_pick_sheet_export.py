@@ -108,8 +108,10 @@ def sids():
         exec_sql("DELETE FROM sample_requests WHERE sample_request_id = :sid", {"sid": sid})
 
 
-def _base_header(customer_id: int) -> dict:
-    return {"customer_id": customer_id, "request_date": date.today(), "remarks": TEST_MARKER}
+def _base_header(customer_id: int, **overrides) -> dict:
+    header = {"customer_id": customer_id, "request_date": date.today(), "remarks": TEST_MARKER}
+    header.update(overrides)
+    return header
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,11 +129,12 @@ def test_pick_sheet_multiline_quantities_produce_exploded_rows(
     """
     p1, p2, p3 = (product_ids * 2)[:3]  # tolerate fewer than 3 distinct ids by cycling
     lines = [
-        {"product_id": p1, "quantity": 2, "delivery_date": None},
-        {"product_id": p2, "quantity": 1, "delivery_date": date.today()},
-        {"product_id": p3, "quantity": 5, "delivery_date": None},
+        {"product_id": p1, "quantity": 2},
+        {"product_id": p2, "quantity": 1},
+        {"product_id": p3, "quantity": 5},
     ]
-    sid, snum = submit_sample_request(_base_header(any_customer_id), lines, rep_user_id)
+    header = _base_header(any_customer_id, delivery_date=date.today())
+    sid, snum = submit_sample_request(header, lines, rep_user_id)
     sids.append(sid)
 
     ok, err = manager_approve(sid, sales_manager_id)
@@ -146,17 +149,19 @@ def test_pick_sheet_multiline_quantities_produce_exploded_rows(
     ws = wb.active
 
     all_rows = list(ws.iter_rows(values_only=True))
-    # Row 1: Request No, Row 2: Date, Row 3: Customer, Row 4: blank, Row 5: column headers
+    # Row 1: Request No, Row 2: Date, Row 3: Delivery Date, Row 4: Customer,
+    # Row 5: blank, Row 6: column headers.
     assert all_rows[0][0] == f"Request No: {snum}"
     assert str(all_rows[1][0]).startswith("Date:")
-    assert str(all_rows[2][0]).startswith("Customer:")
-    assert all_rows[3] == (None,) or all(v is None for v in all_rows[3])
-    assert list(all_rows[4][:8]) == [
-        "SI.NO", "Model No", "Item Description", "Unit", "Delivery Date",
+    assert str(all_rows[2][0]).startswith("Delivery Date:")
+    assert str(all_rows[3][0]).startswith("Customer:")
+    assert all_rows[4] == (None,) or all(v is None for v in all_rows[4])
+    assert list(all_rows[5][:7]) == [
+        "SI.NO", "Model No", "Item Description", "Unit",
         "Serial/Batch Number", "Warehouse Name", "Warehouse Location",
     ]
 
-    data_rows = all_rows[5:]
+    data_rows = all_rows[6:]
     assert len(data_rows) == 8, f"expected 8 exploded rows (2+1+5), got {len(data_rows)}"
 
     line1_rows = data_rows[0:2]
@@ -174,14 +179,14 @@ def test_pick_sheet_multiline_quantities_produce_exploded_rows(
 
     # Last three columns (serial/batch, warehouse name, warehouse location) blank for hand-filling.
     for r in data_rows:
+        assert r[4] in (None, ""), r
         assert r[5] in (None, ""), r
         assert r[6] in (None, ""), r
-        assert r[7] in (None, ""), r
 
 
 def test_pick_sheet_rejects_non_approved_status(sids, rep_user_id, any_customer_id, product_ids):
     """Calling generate_sample_pick_sheet on an IN_REVIEW request must raise ValueError."""
-    lines = [{"product_id": product_ids[0], "quantity": 1, "delivery_date": None}]
+    lines = [{"product_id": product_ids[0], "quantity": 1}]
     sid, _ = submit_sample_request(_base_header(any_customer_id), lines, rep_user_id)
     sids.append(sid)
 

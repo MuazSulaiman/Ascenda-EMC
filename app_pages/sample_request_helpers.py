@@ -6,7 +6,8 @@ transitions, revision snapshots, status-event timeline, shared render
 helpers) against the sample_requests family of tables. There is
 deliberately no money math anywhere in this file: no unit_price,
 discount_pct, VAT, or totals — quantity is a plain int and lines carry
-only product_id / quantity / delivery_date.
+only product_id / quantity. delivery_date is a single request-level field
+(not per line) alongside request_date.
 """
 from datetime import datetime, timezone
 from urllib.parse import quote_plus
@@ -138,10 +139,10 @@ def submit_sample_request(header: dict, lines: list[dict], actor_uid: int) -> tu
         sample_request_id = conn.execute(
             text("""
                 INSERT INTO sample_requests
-                    (request_number, customer_id, rep_user_id, request_date,
+                    (request_number, customer_id, rep_user_id, request_date, delivery_date,
                      remarks, status, version, submitted_by)
                 VALUES
-                    (:request_number, :customer_id, :actor_uid, :request_date,
+                    (:request_number, :customer_id, :actor_uid, :request_date, :delivery_date,
                      :remarks, 'IN_REVIEW', 0, :actor_uid)
                 RETURNING sample_request_id
             """),
@@ -150,6 +151,7 @@ def submit_sample_request(header: dict, lines: list[dict], actor_uid: int) -> tu
                 "customer_id": header.get("customer_id"),
                 "actor_uid": actor_uid,
                 "request_date": header.get("request_date"),
+                "delivery_date": header.get("delivery_date"),
                 "remarks": _norm(header.get("remarks")) or None,
             },
         ).scalar_one()
@@ -158,24 +160,24 @@ def submit_sample_request(header: dict, lines: list[dict], actor_uid: int) -> tu
             conn.execute(
                 text("""
                     INSERT INTO sample_request_lines
-                        (sample_request_id, line_no, product_id, quantity, delivery_date)
-                    VALUES (:sid, :line_no, :product_id, :quantity, :delivery_date)
+                        (sample_request_id, line_no, product_id, quantity)
+                    VALUES (:sid, :line_no, :product_id, :quantity)
                 """),
                 {
                     "sid": sample_request_id,
                     "line_no": i,
                     "product_id": line["product_id"],
                     "quantity": int(line["quantity"]),
-                    "delivery_date": line.get("delivery_date"),
                 },
             )
 
         revision_id = conn.execute(
             text("""
                 INSERT INTO sample_request_revisions
-                    (sample_request_id, revision_no, created_by, customer_id, request_date, remarks)
+                    (sample_request_id, revision_no, created_by, customer_id, request_date,
+                     delivery_date, remarks)
                 VALUES
-                    (:sid, 1, :actor_uid, :customer_id, :request_date, :remarks)
+                    (:sid, 1, :actor_uid, :customer_id, :request_date, :delivery_date, :remarks)
                 RETURNING revision_id
             """),
             {
@@ -183,6 +185,7 @@ def submit_sample_request(header: dict, lines: list[dict], actor_uid: int) -> tu
                 "actor_uid": actor_uid,
                 "customer_id": header.get("customer_id"),
                 "request_date": header.get("request_date"),
+                "delivery_date": header.get("delivery_date"),
                 "remarks": _norm(header.get("remarks")) or None,
             },
         ).scalar_one()
@@ -196,10 +199,10 @@ def submit_sample_request(header: dict, lines: list[dict], actor_uid: int) -> tu
                 text("""
                     INSERT INTO sample_request_revision_lines
                         (revision_id, line_no, product_id, article_number_snapshot, description_snapshot,
-                         quantity, delivery_date)
+                         quantity)
                     VALUES
                         (:rid, :line_no, :product_id, :article_number, :description,
-                         :quantity, :delivery_date)
+                         :quantity)
                 """),
                 {
                     "rid": revision_id,
@@ -208,7 +211,6 @@ def submit_sample_request(header: dict, lines: list[dict], actor_uid: int) -> tu
                     "article_number": item_row["article_number"] if item_row else None,
                     "description": item_row["description"] if item_row else None,
                     "quantity": int(line["quantity"]),
-                    "delivery_date": line.get("delivery_date"),
                 },
             )
 
@@ -269,28 +271,29 @@ def resubmit_sample_request(
                 conn.execute(
                     text("""
                         INSERT INTO sample_request_lines
-                            (sample_request_id, line_no, product_id, quantity, delivery_date)
-                        VALUES (:sid, :line_no, :product_id, :quantity, :delivery_date)
+                            (sample_request_id, line_no, product_id, quantity)
+                        VALUES (:sid, :line_no, :product_id, :quantity)
                     """),
                     {
                         "sid": sample_request_id,
                         "line_no": i,
                         "product_id": line["product_id"],
                         "quantity": int(line["quantity"]),
-                        "delivery_date": line.get("delivery_date"),
                     },
                 )
 
             conn.execute(
                 text("""
                     UPDATE sample_requests
-                    SET customer_id = :customer_id, request_date = :request_date, remarks = :remarks
+                    SET customer_id = :customer_id, request_date = :request_date,
+                        delivery_date = :delivery_date, remarks = :remarks
                     WHERE sample_request_id = :sid
                 """),
                 {
                     "sid": sample_request_id,
                     "customer_id": header.get("customer_id"),
                     "request_date": header.get("request_date"),
+                    "delivery_date": header.get("delivery_date"),
                     "remarks": _norm(header.get("remarks")) or None,
                 },
             )
@@ -299,9 +302,11 @@ def resubmit_sample_request(
             revision_id = conn.execute(
                 text("""
                     INSERT INTO sample_request_revisions
-                        (sample_request_id, revision_no, created_by, customer_id, request_date, remarks)
+                        (sample_request_id, revision_no, created_by, customer_id, request_date,
+                         delivery_date, remarks)
                     VALUES
-                        (:sid, :revision_no, :actor_uid, :customer_id, :request_date, :remarks)
+                        (:sid, :revision_no, :actor_uid, :customer_id, :request_date,
+                         :delivery_date, :remarks)
                     RETURNING revision_id
                 """),
                 {
@@ -310,6 +315,7 @@ def resubmit_sample_request(
                     "actor_uid": actor_uid,
                     "customer_id": header.get("customer_id"),
                     "request_date": header.get("request_date"),
+                    "delivery_date": header.get("delivery_date"),
                     "remarks": _norm(header.get("remarks")) or None,
                 },
             ).scalar_one()
@@ -323,10 +329,10 @@ def resubmit_sample_request(
                     text("""
                         INSERT INTO sample_request_revision_lines
                             (revision_id, line_no, product_id, article_number_snapshot, description_snapshot,
-                             quantity, delivery_date)
+                             quantity)
                         VALUES
                             (:rid, :line_no, :product_id, :article_number, :description,
-                             :quantity, :delivery_date)
+                             :quantity)
                     """),
                     {
                         "rid": revision_id,
@@ -335,7 +341,6 @@ def resubmit_sample_request(
                         "article_number": item_row["article_number"] if item_row else None,
                         "description": item_row["description"] if item_row else None,
                         "quantity": int(line["quantity"]),
-                        "delivery_date": line.get("delivery_date"),
                     },
                 )
 
@@ -824,6 +829,7 @@ def render_sample_request_list(
 
 _REVISION_HEADER_FIELDS = [
     ("request_date", "Request Date"),
+    ("delivery_date", "Delivery Date"),
     ("remarks", "Remarks"),
 ]
 
@@ -858,8 +864,7 @@ def render_revision_diff(revision_a: dict, revision_b: dict) -> None:
             if not ln:
                 return "(none)"
             art = _norm(ln.get("article_number_snapshot")) or _norm(ln.get("product_id"))
-            delivery = _norm(ln.get("delivery_date")) or "—"
-            return f"{art} — qty {ln.get('quantity')} (delivery {delivery})"
+            return f"{art} — qty {ln.get('quantity')}"
 
         old_desc = _line_desc(la)
         new_desc = _line_desc(lb)
@@ -903,7 +908,7 @@ def render_sample_request_detail(sample_request_id: int) -> None:
     lines_df = query_df(
         """
         SELECT srl.line_no, srl.product_id, i.article_number, i.description, i.unit_of_measurement,
-               srl.quantity, srl.delivery_date
+               srl.quantity
         FROM sample_request_lines srl
         JOIN items i ON i.product_id = srl.product_id
         WHERE srl.sample_request_id = :id
@@ -932,6 +937,7 @@ def render_sample_request_detail(sample_request_id: int) -> None:
         st.write(f"**Sales Rep:** {_norm(rep_name) or '—'}")
     with col2:
         st.write(f"**Request Date:** {header.get('request_date') or '—'}")
+        st.write(f"**Delivery Date:** {header.get('delivery_date') or '—'}")
         st.write(f"**Remarks:** {_norm(header.get('remarks')) or '—'}")
 
     st.markdown("##### Line Items")
@@ -942,8 +948,7 @@ def render_sample_request_detail(sample_request_id: int) -> None:
         display_df["unit_of_measurement"] = display_df["unit_of_measurement"].fillna("")
         st.dataframe(
             display_df[
-                ["line_no", "article_number", "description", "unit_of_measurement",
-                 "quantity", "delivery_date"]
+                ["line_no", "article_number", "description", "unit_of_measurement", "quantity"]
             ],
             use_container_width=True,
             hide_index=True,
@@ -1066,27 +1071,28 @@ def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
     ws = wb.active
     ws.title = "Warehouse Pick Sheet"
 
+    delivery_date = header.get("delivery_date")
+    delivery_val = delivery_date if pd.notna(delivery_date) else "—"
+
     ws.append([f"Request No: {_norm(header.get('request_number'))}"])
     ws.append([f"Date: {header.get('request_date')}"])
+    ws.append([f"Delivery Date: {delivery_val}"])
     ws.append([f"Customer: {_norm(account_name) or '—'}"])
     ws.append([])
     ws.append([
-        "SI.NO", "Model No", "Item Description", "Unit", "Delivery Date",
+        "SI.NO", "Model No", "Item Description", "Unit",
         "Serial/Batch Number", "Warehouse Name", "Warehouse Location",
     ])
 
     for _, line in lines_df.iterrows():
         article_number, description = item_lookup.get(line.get("product_id"), (None, None))
         quantity = int(line["quantity"])
-        delivery_date = line.get("delivery_date")
-        delivery_val = delivery_date if pd.notna(delivery_date) else ""
         for k in range(1, quantity + 1):
             ws.append([
                 int(line["line_no"]),
                 article_number or "",
                 description or "",
                 f"{k} of {quantity}",
-                delivery_val,
                 "", "", "",
             ])
 

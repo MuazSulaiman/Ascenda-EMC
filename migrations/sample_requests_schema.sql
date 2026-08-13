@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS sample_requests (
     rep_user_id            INTEGER NOT NULL REFERENCES users(user_id),
 
     request_date            DATE    NOT NULL DEFAULT CURRENT_DATE,
+    delivery_date             DATE,
     remarks                   TEXT,
 
     status  TEXT NOT NULL DEFAULT 'IN_REVIEW' CHECK (status IN (
@@ -45,7 +46,6 @@ CREATE TABLE IF NOT EXISTS sample_request_lines (
     line_no            SMALLINT NOT NULL CHECK (line_no BETWEEN 1 AND 50),
     product_id         TEXT NOT NULL REFERENCES items(product_id),
     quantity           INTEGER NOT NULL CHECK (quantity > 0),
-    delivery_date      DATE,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (sample_request_id, line_no)
 );
@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS sample_request_revisions (
     created_by            INTEGER NOT NULL REFERENCES users(user_id),
     customer_id            INTEGER NOT NULL REFERENCES customers(customer_id),
     request_date            DATE NOT NULL,
+    delivery_date             DATE,
     remarks                   TEXT,
     UNIQUE (sample_request_id, revision_no)
 );
@@ -69,8 +70,7 @@ CREATE TABLE IF NOT EXISTS sample_request_revision_lines (
     product_id                  TEXT NOT NULL REFERENCES items(product_id),
     article_number_snapshot      TEXT,
     description_snapshot          TEXT,
-    quantity                        INTEGER NOT NULL,
-    delivery_date                    DATE
+    quantity                        INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sample_request_status_events (
@@ -92,6 +92,14 @@ CREATE TABLE IF NOT EXISTS sample_request_number_counters (
     year     INTEGER PRIMARY KEY,
     last_seq INTEGER NOT NULL DEFAULT 0
 );
+
+-- Schema evolution: delivery_date moved from per-line to request-level (one
+-- delivery date per request, not per item) — idempotent ALTERs for the case
+-- where these tables already existed with the old column shape.
+ALTER TABLE sample_requests ADD COLUMN IF NOT EXISTS delivery_date DATE;
+ALTER TABLE sample_request_lines DROP COLUMN IF EXISTS delivery_date;
+ALTER TABLE sample_request_revisions ADD COLUMN IF NOT EXISTS delivery_date DATE;
+ALTER TABLE sample_request_revision_lines DROP COLUMN IF EXISTS delivery_date;
 
 CREATE INDEX IF NOT EXISTS idx_sr_status        ON sample_requests(status);
 CREATE INDEX IF NOT EXISTS idx_sr_rep            ON sample_requests(rep_user_id);

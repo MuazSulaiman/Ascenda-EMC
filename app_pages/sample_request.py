@@ -3,8 +3,9 @@
 
 Mirrors app_pages/quotation_request.py's structure exactly, minus all money
 math (no unit_price/discount_pct/VAT/totals — sample request lines only
-carry product_id / quantity / optional delivery_date), and with up to 50
-line items instead of 14.
+carry product_id / quantity), and with up to 50 line items instead of 14.
+Delivery date is a single request-level field (alongside request date), not
+per line.
 """
 import datetime
 import uuid
@@ -241,7 +242,6 @@ def _line_row_keys(ns: str, row_id: str) -> dict:
         "bl": f"{ns}_row{row_id}_bl",
         "prod": f"{ns}_row{row_id}_prod",
         "qty": f"{ns}_row{row_id}_qty",
-        "delivery": f"{ns}_row{row_id}_delivery",
     }
 
 
@@ -251,7 +251,7 @@ def _clear_line_row_state(ns: str, row_id: str) -> None:
 
 
 def _prefill_line_rows(ns: str, lines: list) -> None:
-    """Prefill row widget state from prior line dicts (product_id/quantity/delivery_date).
+    """Prefill row widget state from prior line dicts (product_id/quantity).
 
     Builds a fresh list of stable row IDs (one per prior line, at least one),
     then seeds each row's widget-backed session-state keys by that row's own
@@ -273,21 +273,6 @@ def _prefill_line_rows(ns: str, lines: list) -> None:
             st.session_state[keys["qty"]] = int(line.get("quantity") or 0)
         except (TypeError, ValueError):
             st.session_state[keys["qty"]] = 0
-
-        delivery_raw = line.get("delivery_date")
-        delivery_val = None
-        if isinstance(delivery_raw, str) and delivery_raw:
-            try:
-                delivery_val = datetime.date.fromisoformat(delivery_raw)
-            except ValueError:
-                delivery_val = None
-        elif isinstance(delivery_raw, datetime.datetime):
-            delivery_val = delivery_raw.date()
-        elif isinstance(delivery_raw, datetime.date):
-            delivery_val = delivery_raw
-        elif delivery_raw is not None and hasattr(delivery_raw, "date") and pd.notna(delivery_raw):
-            delivery_val = delivery_raw.date()
-        st.session_state[keys["delivery"]] = delivery_val
 
 
 def _remove_line_row(ns: str, row_id: str) -> None:
@@ -407,15 +392,9 @@ def _render_line_items_editor(ns: str):
 
         keys = _line_row_keys(ns, row_id)
 
-        c1, c2 = st.columns(2)
-        with c1:
-            qty = st.number_input(
-                "Quantity", min_value=0, step=1, value=None, placeholder="e.g. 2", key=keys["qty"],
-            )
-        with c2:
-            delivery_date = st.date_input(
-                "Delivery Date (optional)", value=None, key=keys["delivery"],
-            )
+        qty = st.number_input(
+            "Quantity", min_value=0, step=1, value=None, placeholder="e.g. 2", key=keys["qty"],
+        )
         qty = qty or 0
 
         row_valid = bool(product_id) and qty > 0
@@ -424,7 +403,6 @@ def _render_line_items_editor(ns: str):
             lines.append({
                 "product_id": product_id,
                 "quantity": int(qty),
-                "delivery_date": delivery_date,
             })
 
         if len(row_ids) > 1:
@@ -467,19 +445,26 @@ def _render_new_sample_request_tab(u):
 
     st.markdown(form_section(2, "Request Details"), unsafe_allow_html=True)
     request_date = st.date_input("Request Date *", value=datetime.date.today(), key=f"{ns}_request_date")
+    delivery_date = st.date_input(
+        "Delivery Date (optional)", value=None, key=f"{ns}_delivery_date",
+    )
+    dates_valid = delivery_date is None or delivery_date > request_date
+    if not dates_valid:
+        st.caption("⚠️ Delivery date must be after the request date.")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     st.markdown(form_section(3, "Line Items"), unsafe_allow_html=True)
     lines, lines_valid = _render_line_items_editor(ns)
 
-    can_submit = bool(customer_id) and lines_valid
-    if not can_submit:
+    can_submit = bool(customer_id) and lines_valid and dates_valid
+    if not (bool(customer_id) and lines_valid):
         st.caption("Select a customer and complete at least one line item to enable submission.")
 
     if st.button("Submit Sample Request", key=f"{ns}_submit_btn", type="primary", disabled=not can_submit):
         header = {
             "customer_id": customer_id,
             "request_date": request_date,
+            "delivery_date": delivery_date,
             "remarks": remarks,
         }
         try:
@@ -565,18 +550,24 @@ def _prefill_resubmit_form(ns: str, sid: int, header: dict) -> None:
         latest = revisions_df.iloc[-1].to_dict()
         prior_lines = _load_revision_lines(int(latest["revision_id"])).to_dict("records")
 
-    rd_raw = latest.get("request_date")
-    if isinstance(rd_raw, str):
-        rd = datetime.date.fromisoformat(rd_raw)
-    elif isinstance(rd_raw, datetime.datetime):
-        rd = rd_raw.date()
-    elif isinstance(rd_raw, datetime.date):
-        rd = rd_raw
-    elif hasattr(rd_raw, "date"):
-        rd = rd_raw.date()
-    else:
-        rd = datetime.date.today()
-    st.session_state[f"{ns}_request_date"] = rd
+    def _parse_date_like(raw, default=None):
+        if isinstance(raw, str) and raw:
+            try:
+                return datetime.date.fromisoformat(raw)
+            except ValueError:
+                return default
+        if isinstance(raw, datetime.datetime):
+            return raw.date()
+        if isinstance(raw, datetime.date):
+            return raw
+        if raw is not None and hasattr(raw, "date") and pd.notna(raw):
+            return raw.date()
+        return default
+
+    st.session_state[f"{ns}_request_date"] = _parse_date_like(
+        latest.get("request_date"), default=datetime.date.today()
+    )
+    st.session_state[f"{ns}_delivery_date"] = _parse_date_like(latest.get("delivery_date"))
 
     st.session_state[f"{ns}_remarks"] = _norm(latest.get("remarks"))
 
@@ -609,11 +600,17 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
     customer_id = _render_customer_picker(ns)
 
     request_date = st.date_input("Request Date *", key=f"{ns}_request_date")
+    delivery_date = st.date_input(
+        "Delivery Date (optional)", key=f"{ns}_delivery_date",
+    )
+    dates_valid = delivery_date is None or delivery_date > request_date
+    if not dates_valid:
+        st.caption("⚠️ Delivery date must be after the request date.")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     lines, lines_valid = _render_line_items_editor(ns)
 
-    can_submit = bool(customer_id) and lines_valid
+    can_submit = bool(customer_id) and lines_valid and dates_valid
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -621,6 +618,7 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
             new_header = {
                 "customer_id": customer_id,
                 "request_date": request_date,
+                "delivery_date": delivery_date,
                 "remarks": remarks,
             }
             ok, err = resubmit_sample_request(

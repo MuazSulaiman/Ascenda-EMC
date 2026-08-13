@@ -139,7 +139,7 @@ def _base_header(customer_id: int) -> dict:
 
 
 def _submit_approve_done(sids_list, rep_uid, mgr_uid, coord_uid, customer_id, product_id, qty):
-    lines = [{"product_id": product_id, "quantity": qty, "delivery_date": None}]
+    lines = [{"product_id": product_id, "quantity": qty}]
     sid, snum = submit_sample_request(_base_header(customer_id), lines, rep_uid)
     sids_list.append(sid)
     ok, err = manager_approve(sid, mgr_uid)
@@ -172,7 +172,7 @@ def test_done_counts_but_approved_does_not(
     )
 
     # APPROVED-but-not-DONE request: must NOT count.
-    lines = [{"product_id": any_product_id, "quantity": 7, "delivery_date": None}]
+    lines = [{"product_id": any_product_id, "quantity": 7}]
     sid_approved, _ = submit_sample_request(_base_header(test_customer_id), lines, rep_a_id)
     sids.append(sid_approved)
     ok, err = manager_approve(sid_approved, sales_manager_id)
