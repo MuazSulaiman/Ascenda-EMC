@@ -17,7 +17,7 @@ them.
 import pandas as pd
 import streamlit as st
 
-from ui import section_header
+from ui import section_header, guarded_button
 from db_ops import query_df
 from utils import to_local_str
 from app_pages.change_request_helpers import _norm
@@ -202,8 +202,10 @@ def _render_pending_actions(uid: int, sid: int) -> None:
 
     with col_approve:
         st.markdown("**Approve**")
-        if st.button("Approve", type="primary", key=f"{ns}_approve_btn"):
+        approve_ns = f"{ns}_approve"
+        if guarded_button("Approve", approve_ns, type="primary"):
             ok, err = manager_approve(sid, manager_uid=uid)
+            st.session_state[f"_{approve_ns}_busy"] = False
             if ok:
                 st.toast("Sample request approved.", icon="✅")
                 st.rerun()
@@ -217,11 +219,14 @@ def _render_pending_actions(uid: int, sid: int) -> None:
             key=f"{ns}_reject_reason",
             placeholder="Explain why this sample request is rejected.",
         )
-        if st.button("Reject", type="secondary", key=f"{ns}_reject_btn"):
+        reject_ns = f"{ns}_reject"
+        if guarded_button("Reject", reject_ns, type="secondary"):
             if not (reject_reason or "").strip():
                 st.error("A rejection reason is required.")
+                st.session_state[f"_{reject_ns}_busy"] = False
             else:
                 ok, err = manager_reject(sid, manager_uid=uid, reason=reject_reason.strip())
+                st.session_state[f"_{reject_ns}_busy"] = False
                 if ok:
                     st.toast("Sample request rejected.", icon="✅")
                     st.rerun()
@@ -235,11 +240,14 @@ def _render_pending_actions(uid: int, sid: int) -> None:
             key=f"{ns}_edit_comment",
             placeholder="Explain what needs to change.",
         )
-        if st.button("Request Edit", type="secondary", key=f"{ns}_edit_btn"):
+        edit_ns = f"{ns}_edit"
+        if guarded_button("Request Edit", edit_ns, type="secondary"):
             if not (edit_comment or "").strip():
                 st.error("A comment explaining the requested edit is required.")
+                st.session_state[f"_{edit_ns}_busy"] = False
             else:
                 ok, err = manager_request_edit(sid, manager_uid=uid, comment=edit_comment.strip())
+                st.session_state[f"_{edit_ns}_busy"] = False
                 if ok:
                     st.toast("Edit requested.", icon="✅")
                     st.rerun()
@@ -276,10 +284,12 @@ def _render_return_for_revision_section(uid: int, sid: int) -> None:
         confirm = st.checkbox("I confirm I want to return this sample request for revision", key=f"{ns}_confirm")
         return_enabled = bool((reason or "").strip()) and confirm
 
-        if st.button(
-            "Return to Rep for Revision", key=f"{ns}_btn", type="secondary", disabled=not return_enabled
+        return_ns = f"{ns}_return"
+        if guarded_button(
+            "Return to Rep for Revision", return_ns, type="secondary", disabled=not return_enabled
         ):
             ok, err = manager_return_for_revision(sid, manager_uid=uid, reason=(reason or "").strip())
+            st.session_state[f"_{return_ns}_busy"] = False
             if ok:
                 st.toast("Sample request returned to rep for revision.", icon="✅")
                 st.rerun()

@@ -723,8 +723,12 @@ def filter_sample_requests_df(
 
 
 def sample_request_detail_href(page_name: str, sample_request_id: int) -> str:
-    """URL to a single sample request's routed detail view (?page=...&sample_request_id=...)."""
-    return f"?page={quote_plus(page_name)}&sample_request_id={int(sample_request_id)}"
+    """URL to a single sample request's routed detail view (?page=...&sample_request_id=...&_sid=...)."""
+    href = f"?page={quote_plus(page_name)}&sample_request_id={int(sample_request_id)}"
+    nav_sid = st.session_state.get("_stored_sid", "")
+    if nav_sid:
+        href += f"&_sid={nav_sid}"
+    return href
 
 
 def render_sample_request_list(

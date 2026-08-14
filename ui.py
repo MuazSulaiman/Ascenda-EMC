@@ -744,6 +744,36 @@ def compare_row(field: str, original: str, requested: str, changed: bool = False
     )
 
 
+def guarded_button(
+    label: str,
+    ns_key: str,
+    *,
+    type: str = "secondary",
+    disabled: bool = False,
+    help: str | None = None,
+) -> bool:
+    """Two-phase busy-locked button.
+
+    A plain `st.button` re-arms as soon as the script reruns, so a slow request
+    (or an impatient double-click) can fire the same action twice before the
+    first result comes back. This renders disabled immediately after the first
+    click (via an extra `st.rerun()` before any work happens) and stays
+    disabled until the caller resets `st.session_state["_{ns_key}_busy"]` to
+    False once the action has finished — success or error.
+    """
+    busy_key = f"_{ns_key}_busy"
+    st.session_state.setdefault(busy_key, False)
+    clicked = st.button(
+        label, type=type, key=f"{ns_key}_btn",
+        disabled=disabled or st.session_state[busy_key],
+        help=help,
+    )
+    if clicked and not st.session_state[busy_key]:
+        st.session_state[busy_key] = True
+        st.rerun()
+    return st.session_state[busy_key]
+
+
 def show_footer():
     st.markdown(
         """

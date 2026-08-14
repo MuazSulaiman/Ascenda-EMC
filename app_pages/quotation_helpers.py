@@ -803,8 +803,12 @@ def filter_quotations_df(
 
 
 def quotation_detail_href(page_name: str, quotation_id: int) -> str:
-    """URL to a single quotation's routed detail view (?page=...&quotation_id=...)."""
-    return f"?page={quote_plus(page_name)}&quotation_id={int(quotation_id)}"
+    """URL to a single quotation's routed detail view (?page=...&quotation_id=...&_sid=...)."""
+    href = f"?page={quote_plus(page_name)}&quotation_id={int(quotation_id)}"
+    nav_sid = st.session_state.get("_stored_sid", "")
+    if nav_sid:
+        href += f"&_sid={nav_sid}"
+    return href
 
 
 def render_quotation_list(
