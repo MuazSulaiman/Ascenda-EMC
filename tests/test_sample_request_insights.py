@@ -10,7 +10,6 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import uuid
-from datetime import date
 
 import pytest
 from sqlalchemy import text
@@ -135,7 +134,7 @@ def sids():
 
 
 def _base_header(customer_id: int) -> dict:
-    return {"customer_id": customer_id, "request_date": date.today(), "remarks": TEST_MARKER}
+    return {"customer_id": customer_id, "remarks": TEST_MARKER}
 
 
 def _submit_approve_done(sids_list, rep_uid, mgr_uid, coord_uid, customer_id, product_id, qty):

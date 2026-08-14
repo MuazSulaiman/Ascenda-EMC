@@ -109,7 +109,7 @@ def sids():
 
 
 def _base_header(customer_id: int, **overrides) -> dict:
-    header = {"customer_id": customer_id, "request_date": date.today(), "remarks": TEST_MARKER}
+    header = {"customer_id": customer_id, "remarks": TEST_MARKER}
     header.update(overrides)
     return header
 

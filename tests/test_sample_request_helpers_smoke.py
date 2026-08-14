@@ -15,7 +15,6 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import uuid
-from datetime import date
 
 import pandas as pd
 import pytest
@@ -160,7 +159,6 @@ def sids():
 def _base_header(customer_id: int, **overrides) -> dict:
     header = {
         "customer_id": customer_id,
-        "request_date": date.today(),
         "remarks": TEST_MARKER,
     }
     header.update(overrides)

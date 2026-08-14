@@ -4,8 +4,14 @@
 Mirrors app_pages/quotation_request.py's structure exactly, minus all money
 math (no unit_price/discount_pct/VAT/totals — sample request lines only
 carry product_id / quantity), and with up to 50 line items instead of 14.
-Delivery date is a single request-level field (alongside request date), not
-per line.
+
+Unlike Quotations, Request Date is never rep-entered — sample_request_helpers
+.submit_sample_request captures it server-side as the org's local "today" at
+submission, and it stays fixed for the request's lifetime (never editable,
+including on resubmit). There is no validity/expiration math tied to it for
+samples the way quotation_date drives quotations' validity_days, so there's
+no need for the rep to control it. Delivery date is a separate, rep-editable,
+request-level field (not per line).
 """
 import datetime
 import uuid
@@ -16,7 +22,7 @@ import streamlit as st
 from ui import section_header, form_section
 from widgets import customer_quick_find_module, customer_cascading_selectors
 from db_ops import query_df
-from utils import refresh_default_date
+from utils import _local_now
 from app_pages.admin_targets_db import (
     get_business_units, get_product_categories, get_business_lines, get_articles,
 )
@@ -445,14 +451,14 @@ def _render_new_sample_request_tab(u):
     customer_id = _render_customer_picker(ns)
 
     st.markdown(form_section(2, "Request Details"), unsafe_allow_html=True)
-    refresh_default_date(f"{ns}_request_date")
-    request_date = st.date_input("Request Date *", key=f"{ns}_request_date")
+    st.caption("Request Date is captured automatically as today when you submit.")
     delivery_date = st.date_input(
         "Delivery Date (optional)", value=None, key=f"{ns}_delivery_date",
     )
-    dates_valid = delivery_date is None or delivery_date >= request_date
+    today = _local_now().date()
+    dates_valid = delivery_date is None or delivery_date >= today
     if not dates_valid:
-        st.caption("⚠️ Delivery date cannot be before the request date.")
+        st.caption("⚠️ Delivery date cannot be before today's request date.")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
 
     st.markdown(form_section(3, "Line Items"), unsafe_allow_html=True)
@@ -465,7 +471,6 @@ def _render_new_sample_request_tab(u):
     if st.button("Submit Sample Request", key=f"{ns}_submit_btn", type="primary", disabled=not can_submit):
         header = {
             "customer_id": customer_id,
-            "request_date": request_date,
             "delivery_date": delivery_date,
             "remarks": remarks,
         }
@@ -543,6 +548,21 @@ def _render_my_sample_request_detail_body(u, header: dict) -> None:
     # APPROVED / DONE / REJECTED / WITHDRAWN — read-only, no action buttons.
 
 
+def _parse_date_like(raw, default=None):
+    if isinstance(raw, str) and raw:
+        try:
+            return datetime.date.fromisoformat(raw)
+        except ValueError:
+            return default
+    if isinstance(raw, datetime.datetime):
+        return raw.date()
+    if isinstance(raw, datetime.date):
+        return raw
+    if raw is not None and hasattr(raw, "date") and pd.notna(raw):
+        return raw.date()
+    return default
+
+
 def _prefill_resubmit_form(ns: str, sid: int, header: dict) -> None:
     revisions_df = _load_revisions(sid)
     if revisions_df.empty:
@@ -552,23 +572,6 @@ def _prefill_resubmit_form(ns: str, sid: int, header: dict) -> None:
         latest = revisions_df.iloc[-1].to_dict()
         prior_lines = _load_revision_lines(int(latest["revision_id"])).to_dict("records")
 
-    def _parse_date_like(raw, default=None):
-        if isinstance(raw, str) and raw:
-            try:
-                return datetime.date.fromisoformat(raw)
-            except ValueError:
-                return default
-        if isinstance(raw, datetime.datetime):
-            return raw.date()
-        if isinstance(raw, datetime.date):
-            return raw
-        if raw is not None and hasattr(raw, "date") and pd.notna(raw):
-            return raw.date()
-        return default
-
-    st.session_state[f"{ns}_request_date"] = _parse_date_like(
-        latest.get("request_date"), default=datetime.date.today()
-    )
     st.session_state[f"{ns}_delivery_date"] = _parse_date_like(latest.get("delivery_date"))
 
     st.session_state[f"{ns}_remarks"] = _norm(latest.get("remarks"))
@@ -599,13 +602,14 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
         st.session_state[init_flag] = True
 
     st.markdown("##### Edit & Resubmit")
+    st.caption(f"Request Date: {header.get('request_date') or '—'} (set automatically at submission, not editable)")
     customer_id = _render_customer_picker(ns)
 
-    request_date = st.date_input("Request Date *", key=f"{ns}_request_date")
+    original_request_date = _parse_date_like(header.get("request_date"), default=_local_now().date())
     delivery_date = st.date_input(
         "Delivery Date (optional)", key=f"{ns}_delivery_date",
     )
-    dates_valid = delivery_date is None or delivery_date >= request_date
+    dates_valid = delivery_date is None or delivery_date >= original_request_date
     if not dates_valid:
         st.caption("⚠️ Delivery date cannot be before the request date.")
     remarks = st.text_area("Remarks", key=f"{ns}_remarks")
@@ -619,7 +623,6 @@ def _render_edit_resubmit_section(uid: int, header: dict) -> None:
         if st.button("Resubmit", key=f"{ns}_resubmit_btn", type="primary", disabled=not can_submit):
             new_header = {
                 "customer_id": customer_id,
-                "request_date": request_date,
                 "delivery_date": delivery_date,
                 "remarks": remarks,
             }

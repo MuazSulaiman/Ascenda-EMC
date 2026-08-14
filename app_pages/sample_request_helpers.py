@@ -9,7 +9,6 @@ discount_pct, VAT, or totals — quantity is a plain int and lines carry
 only product_id / quantity. delivery_date is a single request-level field
 (not per line) alongside request_date.
 """
-from datetime import datetime, timezone
 from urllib.parse import quote_plus
 
 import pandas as pd
@@ -22,7 +21,7 @@ from db_ops import query_df, query_scalar, exec_sql
 from app_pages.change_request_helpers import _norm, _sql_val
 from app_pages.notification_helpers import notify_role, notify_users
 from ui import compare_row, status_badge, visit_card
-from utils import to_local, to_local_str
+from utils import to_local, to_local_str, _local_now
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -125,14 +124,14 @@ def submit_sample_request(header: dict, lines: list[dict], actor_uid: int) -> tu
     lines, revision #1 (+ revision lines), and a SUBMITTED status event, all
     inside one atomic transaction. Pure insert — no status guard needed.
     Returns (sample_request_id, request_number).
+
+    request_date is captured here, server-side, as the org's local "today"
+    (never taken from the caller) — the rep does not choose it, matching the
+    product decision that this field records when the request was actually
+    made, not something editable at submission time.
     """
-    request_date = header.get("request_date")
-    if isinstance(request_date, str):
-        year = datetime.fromisoformat(request_date).year
-    elif request_date is not None and hasattr(request_date, "year"):
-        year = request_date.year
-    else:
-        year = datetime.now(timezone.utc).year
+    request_date = _local_now().date()
+    year = request_date.year
 
     with engine.begin() as conn:
         request_number = _next_sample_request_number(conn, year)
@@ -151,7 +150,7 @@ def submit_sample_request(header: dict, lines: list[dict], actor_uid: int) -> tu
                 "request_number": request_number,
                 "customer_id": header.get("customer_id"),
                 "actor_uid": actor_uid,
-                "request_date": header.get("request_date"),
+                "request_date": request_date,
                 "delivery_date": header.get("delivery_date"),
                 "remarks": _norm(header.get("remarks")) or None,
             },
@@ -185,7 +184,7 @@ def submit_sample_request(header: dict, lines: list[dict], actor_uid: int) -> tu
                 "sid": sample_request_id,
                 "actor_uid": actor_uid,
                 "customer_id": header.get("customer_id"),
-                "request_date": header.get("request_date"),
+                "request_date": request_date,
                 "delivery_date": header.get("delivery_date"),
                 "remarks": _norm(header.get("remarks")) or None,
             },
@@ -244,6 +243,8 @@ def resubmit_sample_request(
     WHERE clause — the only mechanism that decides whether this call wins the
     race. Everything (line replace, header update, new revision snapshot,
     event) happens in the same transaction; any failure rolls all of it back.
+    request_date is never touched here — it's set once at submit_sample_request
+    time and stays fixed for the life of the request, including every resubmit.
     """
     try:
         with engine.begin() as conn:
@@ -253,7 +254,7 @@ def resubmit_sample_request(
                     SET version = version + 1, status = 'IN_REVIEW'
                     WHERE sample_request_id = :sid AND status = 'EDIT_REQUESTED'
                       AND version = :expected_version AND rep_user_id = :actor_uid
-                    RETURNING version, request_number
+                    RETURNING version, request_number, request_date
                 """),
                 {"sid": sample_request_id, "expected_version": expected_version, "actor_uid": actor_uid},
             )
@@ -262,6 +263,7 @@ def resubmit_sample_request(
                 raise ValueError("This sample request was already changed elsewhere. Refresh and try again.")
             new_version = row[0]
             request_number = row[1]
+            request_date = row[2]  # immutable — set once at submission, never editable on resubmit
 
             conn.execute(
                 text("DELETE FROM sample_request_lines WHERE sample_request_id = :sid"),
@@ -286,14 +288,12 @@ def resubmit_sample_request(
             conn.execute(
                 text("""
                     UPDATE sample_requests
-                    SET customer_id = :customer_id, request_date = :request_date,
-                        delivery_date = :delivery_date, remarks = :remarks
+                    SET customer_id = :customer_id, delivery_date = :delivery_date, remarks = :remarks
                     WHERE sample_request_id = :sid
                 """),
                 {
                     "sid": sample_request_id,
                     "customer_id": header.get("customer_id"),
-                    "request_date": header.get("request_date"),
                     "delivery_date": header.get("delivery_date"),
                     "remarks": _norm(header.get("remarks")) or None,
                 },
@@ -315,7 +315,7 @@ def resubmit_sample_request(
                     "revision_no": revision_no,
                     "actor_uid": actor_uid,
                     "customer_id": header.get("customer_id"),
-                    "request_date": header.get("request_date"),
+                    "request_date": request_date,
                     "delivery_date": header.get("delivery_date"),
                     "remarks": _norm(header.get("remarks")) or None,
                 },

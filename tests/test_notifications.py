@@ -396,7 +396,6 @@ def _cr_recipients_by_request(request_id: int, event_type: str) -> set[int]:
 def _base_header_sr(customer_id: int, **overrides) -> dict:
     header = {
         "customer_id": customer_id,
-        "request_date": date.today(),
         "remarks": TEST_MARKER,
     }
     header.update(overrides)
