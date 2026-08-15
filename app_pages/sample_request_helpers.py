@@ -1029,19 +1029,33 @@ def _status_badge_variant(status: str) -> str:
 # Warehouse pick-sheet export
 # ─────────────────────────────────────────────────────────────────────────────
 
+_PICK_SHEET_COLUMNS = 7  # SI.NO .. Warehouse Location
+
+
+def _pick_sheet_fmt_date(val) -> str:
+    if val is None or (isinstance(val, float) and pd.isna(val)) or pd.isna(val):
+        return "—"
+    if hasattr(val, "strftime"):
+        return val.strftime("%d %b %Y")
+    return str(val)
+
+
 def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
     """
-    Build a warehouse-facing pick sheet as an .xlsx workbook for an
+    Build a warehouse-facing pick sheet as a styled .xlsx workbook for an
     APPROVED or DONE sample request. There is no quotation-PDF equivalent
     to mirror here (quotations render a PDF via PyMuPDF) — this is a fresh
     workbook via openpyxl. One row per physical unit: a line's quantity is
     exploded into `quantity` separate SI.NO rows (Unit column reading
     "1 of N".."N of N"), leaving Serial/Batch Number, Warehouse Name, and
-    Warehouse Location blank for the warehouse team to hand-fill.
+    Warehouse Location blank for the warehouse team to hand-fill (those
+    three columns are shaded to flag them as hand-fill fields).
     """
     import io
 
     from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
 
     header = _load_sample_request_header(sample_request_id)
     if not header:
@@ -1071,34 +1085,124 @@ def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
             for _, row in items_df.iterrows()
         }
 
+    # ── styles ──────────────────────────────────────────────────────────────
+    NAVY = "1F3864"
+    STEEL = "2E5395"
+    BAND = "F2F5FA"
+    HANDFILL = "FFF6D9"
+    THIN = Side(style="thin", color="B7C3D6")
+    BORDER_ALL = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+
+    title_font = Font(bold=True, size=15, color="FFFFFF")
+    title_fill = PatternFill("solid", fgColor=NAVY)
+    label_font = Font(bold=True, size=10, color="1F3864")
+    value_font = Font(size=10, color="000000")
+    value_font_strong = Font(bold=True, size=11, color="000000")
+    info_fill = PatternFill("solid", fgColor=BAND)
+    col_header_font = Font(bold=True, size=10.5, color="FFFFFF")
+    col_header_fill = PatternFill("solid", fgColor=STEEL)
+    handfill_fill = PatternFill("solid", fgColor=HANDFILL)
+    band_fill = PatternFill("solid", fgColor=BAND)
+    footer_font = Font(italic=True, size=8.5, color="6B7280")
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Warehouse Pick Sheet"
 
-    delivery_date = header.get("delivery_date")
-    delivery_val = delivery_date if pd.notna(delivery_date) else "—"
+    for i, width in enumerate([9, 14, 42, 12, 20, 18, 22], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = width
 
-    ws.append([f"Request No: {_norm(header.get('request_number'))}"])
-    ws.append([f"Date: {header.get('request_date')}"])
-    ws.append([f"Delivery Date: {delivery_val}"])
-    ws.append([f"Customer: {_norm(account_name) or '—'}"])
-    ws.append([])
-    ws.append([
+    # ── title band ──────────────────────────────────────────────────────────
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=_PICK_SHEET_COLUMNS)
+    title_cell = ws.cell(row=1, column=1, value="WAREHOUSE PICK SHEET")
+    title_cell.font = title_font
+    title_cell.fill = title_fill
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 30
+    for col in range(1, _PICK_SHEET_COLUMNS + 1):
+        ws.cell(row=1, column=col).fill = title_fill
+
+    ws.row_dimensions[2].height = 6  # thin spacer
+
+    # ── info block: two label/value pairs per row ──────────────────────────
+    def _info_row(row: int, left_label: str, left_val: str, right_label: str, right_val: str, strong=False):
+        ws.cell(row=row, column=1, value=left_label).font = label_font
+        ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=3)
+        c = ws.cell(row=row, column=2, value=left_val)
+        c.font = value_font_strong if strong else value_font
+
+        ws.cell(row=row, column=4, value=right_label).font = label_font
+        ws.merge_cells(start_row=row, start_column=5, end_row=row, end_column=_PICK_SHEET_COLUMNS)
+        c2 = ws.cell(row=row, column=5, value=right_val)
+        c2.font = value_font_strong if strong else value_font
+
+        for col in range(1, _PICK_SHEET_COLUMNS + 1):
+            ws.cell(row=row, column=col).fill = info_fill
+
+    _info_row(
+        3,
+        "Request No:", _norm(header.get("request_number")) or "—",
+        "Date:", _pick_sheet_fmt_date(header.get("request_date")),
+        strong=True,
+    )
+    _info_row(
+        4,
+        "Delivery Date:", _pick_sheet_fmt_date(header.get("delivery_date")),
+        "Customer:", _norm(account_name) or "—",
+        strong=True,
+    )
+    ws.row_dimensions[5].height = 8  # thin spacer
+
+    # ── table header ─────────────────────────────────────────────────────────
+    header_row = 6
+    col_labels = [
         "SI.NO", "Model No", "Item Description", "Unit",
         "Serial/Batch Number", "Warehouse Name", "Warehouse Location",
-    ])
+    ]
+    for col, label in enumerate(col_labels, start=1):
+        c = ws.cell(row=header_row, column=col, value=label)
+        c.font = col_header_font
+        c.fill = col_header_fill
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = BORDER_ALL
+    ws.row_dimensions[header_row].height = 22
+    ws.freeze_panes = f"A{header_row + 1}"
 
-    for _, line in lines_df.iterrows():
+    # ── data rows (banded per line item, hand-fill columns tinted) ─────────
+    r = header_row + 1
+    for line_idx, (_, line) in enumerate(lines_df.iterrows()):
         article_number, description = item_lookup.get(line.get("product_id"), (None, None))
         quantity = int(line["quantity"])
+        band = band_fill if line_idx % 2 == 0 else None
         for k in range(1, quantity + 1):
-            ws.append([
-                int(line["line_no"]),
-                article_number or "",
-                description or "",
-                f"{k} of {quantity}",
-                "", "", "",
-            ])
+            values = [
+                int(line["line_no"]), article_number or "", description or "",
+                f"{k} of {quantity}", "", "", "",
+            ]
+            for col, val in enumerate(values, start=1):
+                c = ws.cell(row=r, column=col, value=val)
+                c.border = BORDER_ALL
+                c.font = value_font
+                if col in (1, 4):
+                    c.alignment = Alignment(horizontal="center", vertical="center")
+                else:
+                    c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=(col == 3))
+                if col in (5, 6, 7):
+                    c.fill = handfill_fill
+                elif band is not None:
+                    c.fill = band
+            r += 1
+
+    # ── footer note ──────────────────────────────────────────────────────────
+    ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=_PICK_SHEET_COLUMNS)
+    note = ws.cell(
+        row=r + 1, column=1,
+        value="Fields shaded in yellow (Serial/Batch Number, Warehouse Name, Warehouse Location) "
+              "are completed by the Warehouse Team.",
+    )
+    note.font = footer_font
+
+    ws.sheet_view.showGridLines = False
 
     buffer = io.BytesIO()
     wb.save(buffer)

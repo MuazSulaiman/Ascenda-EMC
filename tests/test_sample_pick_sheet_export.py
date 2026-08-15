@@ -149,19 +149,25 @@ def test_pick_sheet_multiline_quantities_produce_exploded_rows(
     ws = wb.active
 
     all_rows = list(ws.iter_rows(values_only=True))
-    # Row 1: Request No, Row 2: Date, Row 3: Delivery Date, Row 4: Customer,
-    # Row 5: blank, Row 6: column headers.
-    assert all_rows[0][0] == f"Request No: {snum}"
-    assert str(all_rows[1][0]).startswith("Date:")
-    assert str(all_rows[2][0]).startswith("Delivery Date:")
-    assert str(all_rows[3][0]).startswith("Customer:")
-    assert all_rows[4] == (None,) or all(v is None for v in all_rows[4])
+    # Row 1: title band, Row 2: spacer, Row 3: Request No / Date,
+    # Row 4: Delivery Date / Customer, Row 5: spacer, Row 6: column headers.
+    assert all_rows[0][0] == "WAREHOUSE PICK SHEET"
+    assert all(v is None for v in all_rows[1])
+
+    assert all_rows[2][0] == "Request No:"
+    assert all_rows[2][1] == snum
+    assert all_rows[2][3] == "Date:"
+
+    assert all_rows[3][0] == "Delivery Date:"
+    assert all_rows[3][3] == "Customer:"
+
+    assert all(v is None for v in all_rows[4])
     assert list(all_rows[5][:7]) == [
         "SI.NO", "Model No", "Item Description", "Unit",
         "Serial/Batch Number", "Warehouse Name", "Warehouse Location",
     ]
 
-    data_rows = all_rows[6:]
+    data_rows = all_rows[6:14]
     assert len(data_rows) == 8, f"expected 8 exploded rows (2+1+5), got {len(data_rows)}"
 
     line1_rows = data_rows[0:2]

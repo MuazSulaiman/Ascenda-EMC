@@ -440,10 +440,17 @@ def _clear_ns_state(ns: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _render_new_sample_request_tab(u):
-    ns = f"{PAGE_NS}_new"
+    # Widget keys are scoped to an "epoch" that's bumped on every successful
+    # submit (see below). Deleting a widget's session_state key and calling
+    # st.rerun() resets its value server-side, but Streamlit's frontend can
+    # still show the previous value for some widget types (date_input,
+    # selectbox) since the underlying component isn't guaranteed to remount.
+    # Giving every field a brand-new key each cycle forces a real remount.
+    epoch = st.session_state.get(f"{PAGE_NS}_new_epoch", 0)
+    ns = f"{PAGE_NS}_new_{epoch}"
     uid = int(u.get("user_id") or u.get("id"))
 
-    success_msg = st.session_state.pop(f"{ns}_success_msg", None)
+    success_msg = st.session_state.pop(f"{PAGE_NS}_new_success_msg", None)
     if success_msg:
         st.success(success_msg)
 
@@ -480,7 +487,8 @@ def _render_new_sample_request_tab(u):
             st.error(f"Submission failed: {e}")
         else:
             _clear_ns_state(ns)
-            st.session_state[f"{ns}_success_msg"] = f"Sample request {request_number} submitted for review."
+            st.session_state[f"{PAGE_NS}_new_epoch"] = epoch + 1
+            st.session_state[f"{PAGE_NS}_new_success_msg"] = f"Sample request {request_number} submitted for review."
             st.rerun()
 
 
