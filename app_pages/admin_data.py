@@ -251,14 +251,21 @@ def page_admin_data():
     _rep_names  = query_df("SELECT name FROM users ORDER BY name")["name"].tolist()
     _cust_names = query_df("SELECT account_name FROM customers ORDER BY account_name")["account_name"].tolist()
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
-        "Visits", "Users", "Customers", "Target Audiences",
-        "Business Units", "Business Lines",
-        "Items", "Objectives", "Home Visits", "Shelf Movement", "Quotations",
-    ])
+    # NOTE:
+    # st.tabs() resets visually to the first tab whenever any widget reruns the page.
+    # A session-state controlled segmented control keeps the selected section stable
+    # after searching/filtering inside any tab (see admin_change_requests.py for the
+    # same fix).
+    active_tab = st.radio(
+        "Data Browser Section",
+        ["Visits", "Users", "Customers", "Target Audiences",
+         "Business Units", "Business Lines",
+         "Items", "Objectives", "Home Visits", "Shelf Movement", "Quotations"],
+        key="admin_data_active_tab", horizontal=True, label_visibility="collapsed",
+    )
 
     # ------------------------------------------------------------------ Visits
-    with tab1:
+    if active_tab == "Visits":
         where_sql, params = _date_rep_cust_where("v", _rep_names, _cust_names)
 
         v_search = st.text_input("Search", placeholder="type to filter…", key="v_search", label_visibility="collapsed")
@@ -333,12 +340,12 @@ def page_admin_data():
         )
 
     # ------------------------------------------------------------------ Users
-    with tab2:
+    elif active_tab == "Users":
         df = query_df("SELECT user_id, email, name, region, role, is_active FROM users ORDER BY user_id DESC")
         _reference_table(df, "search_users", "users.csv", "dl_users", "users")
 
     # --------------------------------------------------------------- Customers
-    with tab3:
+    elif active_tab == "Customers":
         df = query_df("SELECT * FROM customers ORDER BY account_name")
 
         # ---- Sector / Region / City filters ----
@@ -369,7 +376,7 @@ def page_admin_data():
         _reference_table(df, "search_customers", "customers.csv", "dl_customers", "customers")
 
     # --------------------------------------------------- Target Audiences
-    with tab4:
+    elif active_tab == "Target Audiences":
         df = query_df("""
             SELECT ta.audience_id, ta.customer_id, c.account_name,
                    ta.name, ta.department, ta.position, ta.is_active
@@ -401,12 +408,12 @@ def page_admin_data():
         _reference_table(df, "search_audiences", "target_audiences.csv", "dl_audiences", "audiences")
 
     # --------------------------------------------------- Business Units
-    with tab5:
+    elif active_tab == "Business Units":
         df = query_df("SELECT business_unit_id, name, is_active FROM business_units ORDER BY name")
         _reference_table(df, "search_bus", "business_units.csv", "dl_business_units", "bus")
 
     # --------------------------------------------------- Business Lines
-    with tab6:
+    elif active_tab == "Business Lines":
         df = query_df("""
             SELECT bl.business_line_id, bu.name AS business_unit,
                    bl.name AS business_line, bl.category, bl.supplier,
@@ -418,7 +425,7 @@ def page_admin_data():
         _reference_table(df, "search_bls", "business_lines.csv", "dl_business_lines", "bls")
 
     # --------------------------------------------------------------- Items
-    with tab7:
+    elif active_tab == "Items":
         df = query_df("""
             SELECT i.product_id, i.article_number, i.description, i.is_active,
                    bl.name AS business_line, pc.name AS product_category, bu.name AS business_unit
@@ -431,12 +438,12 @@ def page_admin_data():
         _reference_table(df, "search_items", "items.csv", "dl_items", "items")
 
     # ----------------------------------------------------------- Objectives
-    with tab8:
+    elif active_tab == "Objectives":
         df = query_df("SELECT * FROM objectives ORDER BY objective_id")
         _reference_table(df, "search_objectives", "objectives.csv", "dl_objectives", "objectives")
 
     # --------------------------------------------------------------- Home Visits
-    with tab9:
+    elif active_tab == "Home Visits":
         where_sql, params = _date_rep_cust_where("hv", _rep_names, _cust_names)
 
         _transactional_table(
@@ -475,10 +482,14 @@ def page_admin_data():
         )
 
     # --------------------------------------------------------- Shelf Movement
-    with tab10:
-        sub1, sub2 = st.tabs(["Headers (per visit)", "Lines (per product)"])
+    elif active_tab == "Shelf Movement":
+        active_sm_tab = st.radio(
+            "Shelf Movement Section",
+            ["Headers (per visit)", "Lines (per product)"],
+            key="admin_data_shelf_movement_active_tab", horizontal=True, label_visibility="collapsed",
+        )
 
-        with sub1:
+        if active_sm_tab == "Headers (per visit)":
             where_sql, params = _date_rep_cust_where("sm_h", _rep_names, _cust_names)
 
             _transactional_table(
@@ -521,7 +532,7 @@ def page_admin_data():
                 dl_key      = "dl_sm_headers",
             )
 
-        with sub2:
+        elif active_sm_tab == "Lines (per product)":
             where_sql, params = _date_rep_cust_where("sm_l", _rep_names, _cust_names)
 
             _transactional_table(
@@ -565,10 +576,14 @@ def page_admin_data():
             )
 
     # --------------------------------------------------------------- Quotations
-    with tab11:
-        sub_h, sub_l = st.tabs(["Header", "Line Items"])
+    elif active_tab == "Quotations":
+        active_q_tab = st.radio(
+            "Quotations Section",
+            ["Header", "Line Items"],
+            key="admin_data_quotations_active_tab", horizontal=True, label_visibility="collapsed",
+        )
 
-        with sub_h:
+        if active_q_tab == "Header":
             q_search = st.text_input(
                 "Search", placeholder="quotation #, customer, rep, or Odoo reference…",
                 key="q_search", label_visibility="collapsed",
@@ -656,7 +671,7 @@ def page_admin_data():
                 dl_key      = "dl_quotations",
             )
 
-        with sub_l:
+        elif active_q_tab == "Line Items":
             ql_search = st.text_input(
                 "Search", placeholder="quotation #, customer, rep, or article…",
                 key="ql_search", label_visibility="collapsed",

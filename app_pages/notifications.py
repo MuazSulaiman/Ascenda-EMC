@@ -8,11 +8,11 @@ st.query_params-driven detail-view routing used elsewhere in this app
 """
 import json
 
-import pandas as pd
 import streamlit as st
 
 from ui import section_header, status_badge
 from db_ops import query_df
+from utils import to_local_str
 from app_pages.notification_helpers import (
     list_notifications, mark_read, mark_all_read, count_notifications,
 )
@@ -116,11 +116,7 @@ def page_notifications():
         is_read = bool(row.get("is_read"))
         title = row.get("title") or "Notification"
         body = row.get("body") or ""
-        created = row.get("created_at")
-        try:
-            created_str = pd.to_datetime(created).strftime("%d %b %Y, %H:%M") if created is not None else ""
-        except Exception:
-            created_str = str(created) if created is not None else ""
+        created_str = to_local_str(row.get("created_at"))
 
         href = (
             f"?page=Notifications&notif_id={nid}&_sid={_nav_sid}"
