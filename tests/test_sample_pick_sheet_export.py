@@ -162,9 +162,9 @@ def test_pick_sheet_multiline_quantities_produce_exploded_rows(
     assert all_rows[3][3] == "Customer:"
 
     assert all(v is None for v in all_rows[4])
-    assert list(all_rows[5][:7]) == [
+    assert list(all_rows[5][:8]) == [
         "SI.NO", "Model No", "Item Description", "Unit",
-        "Serial/Batch Number", "Warehouse Name", "Warehouse Location",
+        "Serial/Batch Number", "Warehouse Name", "Warehouse Location", "Remarks",
     ]
 
     data_rows = all_rows[6:14]
@@ -183,11 +183,12 @@ def test_pick_sheet_multiline_quantities_produce_exploded_rows(
     assert [r[3] for r in line3_rows] == ["1 of 5", "2 of 5", "3 of 5", "4 of 5", "5 of 5"]
     assert all(r[0] == 3 for r in line3_rows)
 
-    # Last three columns (serial/batch, warehouse name, warehouse location) blank for hand-filling.
+    # Last four columns (serial/batch, warehouse name, warehouse location, remarks) blank for hand-filling.
     for r in data_rows:
         assert r[4] in (None, ""), r
         assert r[5] in (None, ""), r
         assert r[6] in (None, ""), r
+        assert r[7] in (None, ""), r
 
 
 def test_pick_sheet_rejects_non_approved_status(sids, rep_user_id, any_customer_id, product_ids):

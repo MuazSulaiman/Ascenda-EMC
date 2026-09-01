@@ -1029,7 +1029,7 @@ def _status_badge_variant(status: str) -> str:
 # Warehouse pick-sheet export
 # ─────────────────────────────────────────────────────────────────────────────
 
-_PICK_SHEET_COLUMNS = 7  # SI.NO .. Warehouse Location
+_PICK_SHEET_COLUMNS = 8  # SI.NO .. Remarks
 
 
 def _pick_sheet_fmt_date(val) -> str:
@@ -1047,9 +1047,10 @@ def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
     to mirror here (quotations render a PDF via PyMuPDF) — this is a fresh
     workbook via openpyxl. One row per physical unit: a line's quantity is
     exploded into `quantity` separate SI.NO rows (Unit column reading
-    "1 of N".."N of N"), leaving Serial/Batch Number, Warehouse Name, and
-    Warehouse Location blank for the warehouse team to hand-fill (those
-    three columns are shaded to flag them as hand-fill fields).
+    "1 of N".."N of N"), leaving Serial/Batch Number, Warehouse Name,
+    Warehouse Location, and Remarks blank for the warehouse team to
+    hand-fill (those four columns are shaded to flag them as hand-fill
+    fields).
     """
     import io
 
@@ -1109,7 +1110,7 @@ def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
     ws = wb.active
     ws.title = "Warehouse Pick Sheet"
 
-    for i, width in enumerate([9, 14, 42, 12, 20, 18, 22], start=1):
+    for i, width in enumerate([9, 14, 42, 12, 20, 18, 22, 28], start=1):
         ws.column_dimensions[get_column_letter(i)].width = width
 
     # ── title band ──────────────────────────────────────────────────────────
@@ -1157,7 +1158,7 @@ def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
     header_row = 6
     col_labels = [
         "SI.NO", "Model No", "Item Description", "Unit",
-        "Serial/Batch Number", "Warehouse Name", "Warehouse Location",
+        "Serial/Batch Number", "Warehouse Name", "Warehouse Location", "Remarks",
     ]
     for col, label in enumerate(col_labels, start=1):
         c = ws.cell(row=header_row, column=col, value=label)
@@ -1177,7 +1178,7 @@ def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
         for k in range(1, quantity + 1):
             values = [
                 int(line["line_no"]), article_number or "", description or "",
-                f"{k} of {quantity}", "", "", "",
+                f"{k} of {quantity}", "", "", "", "",
             ]
             for col, val in enumerate(values, start=1):
                 c = ws.cell(row=r, column=col, value=val)
@@ -1186,8 +1187,8 @@ def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
                 if col in (1, 4):
                     c.alignment = Alignment(horizontal="center", vertical="center")
                 else:
-                    c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=(col == 3))
-                if col in (5, 6, 7):
+                    c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=(col in (3, 8)))
+                if col in (5, 6, 7, 8):
                     c.fill = handfill_fill
                 elif band is not None:
                     c.fill = band
@@ -1197,7 +1198,7 @@ def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
     ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=_PICK_SHEET_COLUMNS)
     note = ws.cell(
         row=r + 1, column=1,
-        value="Fields shaded in yellow (Serial/Batch Number, Warehouse Name, Warehouse Location) "
+        value="Fields shaded in yellow (Serial/Batch Number, Warehouse Name, Warehouse Location, Remarks) "
               "are completed by the Warehouse Team.",
     )
     note.font = footer_font
