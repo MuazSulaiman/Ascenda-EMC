@@ -1070,8 +1070,18 @@ def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
 
     lines_df = _load_sample_request_lines(sample_request_id)
 
-    account_name = query_scalar(
-        "SELECT account_name FROM customers WHERE customer_id = :cid", {"cid": header.get("customer_id")}
+    cust_df = query_df(
+        "SELECT account_name, region, sector, city FROM customers WHERE customer_id = :cid",
+        {"cid": header.get("customer_id")},
+    )
+    cust_row = cust_df.iloc[0].to_dict() if not cust_df.empty else {}
+    account_name = cust_row.get("account_name")
+    location_str = " / ".join(
+        p for p in (_norm(cust_row.get("region")), _norm(cust_row.get("sector")), _norm(cust_row.get("city"))) if p
+    ) or "—"
+
+    rep_name = query_scalar(
+        "SELECT name FROM users WHERE user_id = :uid", {"uid": header.get("rep_user_id")}
     )
 
     item_lookup: dict = {}
@@ -1110,7 +1120,7 @@ def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
     ws = wb.active
     ws.title = "Warehouse Pick Sheet"
 
-    for i, width in enumerate([9, 14, 42, 12, 20, 18, 22, 28], start=1):
+    for i, width in enumerate([15, 14, 42, 20, 20, 18, 22, 28], start=1):
         ws.column_dimensions[get_column_letter(i)].width = width
 
     # ── title band ──────────────────────────────────────────────────────────
@@ -1152,10 +1162,15 @@ def generate_sample_pick_sheet(sample_request_id: int) -> bytes:
         "Customer:", _norm(account_name) or "—",
         strong=True,
     )
-    ws.row_dimensions[5].height = 8  # thin spacer
+    _info_row(
+        5,
+        "Sales Rep:", _norm(rep_name) or "—",
+        "Region/Sector/City:", location_str,
+    )
+    ws.row_dimensions[6].height = 8  # thin spacer
 
     # ── table header ─────────────────────────────────────────────────────────
-    header_row = 6
+    header_row = 7
     col_labels = [
         "SI.NO", "Model No", "Item Description", "Unit",
         "Serial/Batch Number", "Warehouse Name", "Warehouse Location", "Remarks",
