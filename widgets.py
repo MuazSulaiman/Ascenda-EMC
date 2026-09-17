@@ -17,7 +17,7 @@ except Exception:
     _get_geo_js = None
 
 from db_ops import query_df
-from config import ACCURACY_METERS, TIMEZONE
+from config import ACCURACY_METERS, TIMEZONE, CARTO_POSITRON_TILES, CARTO_ATTR
 from utils import _local_now, safe_str
 
 
@@ -668,7 +668,8 @@ def get_location_block(k) -> Tuple[Optional[float], Optional[float], Optional[fl
         m = folium.Map(
             location=[flat, flon],
             zoom_start=17,
-            tiles="CartoDB positron",
+            tiles=CARTO_POSITRON_TILES,
+            attr=CARTO_ATTR,
             control_scale=True,
         )
 
@@ -736,7 +737,8 @@ def render_visit_location_map(
     m = folium.Map(
         location=[visit_lat, visit_lon],
         zoom_start=16,
-        tiles="CartoDB positron",
+        tiles=CARTO_POSITRON_TILES,
+        attr=CARTO_ATTR,
         control_scale=True,
     )
 

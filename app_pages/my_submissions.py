@@ -7,7 +7,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from auth import resolve_session_user, get_url_param, set_url_param
-from config import TIMEZONE
+from config import TIMEZONE, CARTO_POSITRON_TILES, CARTO_ATTR
 from db_ops import query_df
 from ui import section_header, visit_card, status_badge
 from widgets import set_current_page
@@ -274,7 +274,8 @@ def _show_visit_detail(visit_id_str: str, uid: int) -> None:
         m = folium.Map(
             location=[flat, flon],
             zoom_start=17,
-            tiles="CartoDB positron",
+            tiles=CARTO_POSITRON_TILES,
+            attr=CARTO_ATTR,
             control_scale=True,
         )
         if facc is not None:

@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from streamlit_folium import st_folium
 
 from auth import resolve_session_user
-from config import TIMEZONE
+from config import TIMEZONE, CARTO_POSITRON_TILES, CARTO_ATTR
 from db_ops import query_df, exec_sql
 from db import engine
 from utils import _utcnow_iso, _local_now_str, _utcnow
@@ -248,7 +248,13 @@ def _render_location_view(lat, lon, acc):
         return
 
     try:
-        m = folium.Map(location=[float(lat), float(lon)], zoom_start=15, control_scale=True)
+        m = folium.Map(
+            location=[float(lat), float(lon)],
+            zoom_start=15,
+            tiles=CARTO_POSITRON_TILES,
+            attr=CARTO_ATTR,
+            control_scale=True,
+        )
         folium.Marker([float(lat), float(lon)], tooltip="Visit Location").add_to(m)
         st_folium(m, width="100%", height=280)
     except Exception:

@@ -32,6 +32,7 @@ from db_ops import (
     get_visit_locations_for_map,
     query_df,
 )
+from config import CARTO_POSITRON_TILES, CARTO_ATTR
 from ui import html_table, section_header, subsection_label
 from utils import _local_now
 
@@ -984,7 +985,7 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
         if not cust_df.empty:
             m1 = folium.Map(
                 location=[cust_df["latitude"].mean(), cust_df["longitude"].mean()],
-                zoom_start=5, tiles="CartoDB positron",
+                zoom_start=5, tiles=CARTO_POSITRON_TILES, attr=CARTO_ATTR,
             )
             from folium.plugins import MarkerCluster as _MC
             cluster1 = _MC().add_to(m1)
@@ -1004,7 +1005,7 @@ def _tab_visits_detail(uid, role, date_from, date_to, filters, rep_ids):
         if not visit_loc_df.empty:
             m2 = folium.Map(
                 location=[visit_loc_df["latitude"].mean(), visit_loc_df["longitude"].mean()],
-                zoom_start=5, tiles="CartoDB positron",
+                zoom_start=5, tiles=CARTO_POSITRON_TILES, attr=CARTO_ATTR,
             )
             cluster2 = _MC().add_to(m2)
             for _, row in visit_loc_df.iterrows():
